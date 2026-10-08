@@ -206,6 +206,8 @@ export interface ClusterListItem {
   counts: Partial<Counts>;
   findings_by_severity: Partial<SeverityCounts>;
   empty_reason: string | null;
+  /** the raw logs it was built from are still on disk, so it can be analyzed again */
+  raw_available?: boolean;
 }
 
 export interface Table<R> {
@@ -654,6 +656,7 @@ export const api = {
   health: () => get<{ ok: boolean; version: string }>('/health'),
   clusters: () => get<ClusterListItem[]>('/clusters'),
   analyze: (body: { log_root: string; cluster_id: string } | { cluster_dir: string }) => post<Summary>('/analyze', body),
+  reanalyze: (cid: string) => post<Summary>(`${c(cid)}/reanalyze`, {}),
   download: (body: { volume: string; cluster_id: string; profile: string | null; build: boolean }) =>
     post<DownloadResult>('/download', body),
   summary: (cid: string, s?: AbortSignal) => get<Summary>(`${c(cid)}/summary`, undefined, s),

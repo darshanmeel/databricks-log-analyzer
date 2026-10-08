@@ -604,6 +604,13 @@ _CLUSTER_KEYS = (
 )
 
 
+def _has_files(d: Path) -> bool:
+    try:
+        return d.is_dir() and any(f.is_file() for f in d.rglob("*"))
+    except OSError:
+        return False
+
+
 def list_clusters(store: Store) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     root = store.output_root
@@ -619,6 +626,9 @@ def list_clusters(store: Store) -> list[dict[str, Any]]:
             continue
         row = {k: s.get(k) for k in _CLUSTER_KEYS}
         row["cluster_id"] = row["cluster_id"] or d.name
+        # the raw logs it was built from (a local folder or the download cache): can it be analyzed again?
+        raw = s.get("input_dir")
+        row["raw_available"] = bool(raw) and _has_files(Path(raw))
         row["_mtime"] = p.stat().st_mtime
         out.append(row)
     out.sort(key=lambda r: (str(r.get("built_at") or ""), r["_mtime"]), reverse=True)

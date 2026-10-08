@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type FormEvent, type MouseEvent, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api, isMissing, type ClusterListItem, type SourceCluster, type SourceInfo, type Summary } from '../api';
 import { useClusters } from '../components/Shell';
@@ -32,7 +32,45 @@ function StatusWhy({ c }: { c: ClusterListItem }) {
   return ft ? <div className="muted small">after {fmtNum(ft)} task {ft === 1 ? 'retry' : 'retries'}</div> : null;
 }
 
-function ClustersTable({ clusters }: { clusters: ClusterListItem[] }) {
+/** Analyze a cluster again from the raw logs it was built from (the local folder or the download cache), so new
+ * analyzer versions apply to it. Disabled when those logs are gone. */
+function ReanalyzeCell({ c, onDone }: { c: ClusterListItem; onDone: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const elapsed = useElapsed(busy);
+  const raw = c.raw_available !== false;
+  const run = async (e: MouseEvent) => {
+    e.stopPropagation();
+    setBusy(true);
+    setErr(null);
+    try {
+      await api.reanalyze(c.cluster_id);
+      onDone();
+    } catch (e2) {
+      setErr((e2 as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div onClick={(e) => e.stopPropagation()}>
+      <button
+        className="btn small"
+        type="button"
+        disabled={busy || !raw}
+        onClick={run}
+        title={raw ? 'Analyze again from the raw logs this was built from, with this version of the analyzer' : 'The raw logs it was built from are no longer on disk. Analyze it again from its source above.'}
+      >
+        {busy && <span className="spinner sm" />}
+        {busy ? `Analyzing… ${fmtDuration(elapsed)}` : 'Analyze again'}
+      </button>
+      {!raw && <div className="muted small">Raw logs gone</div>}
+      {err && <div className="inline-error small" role="alert">{err}</div>}
+    </div>
+  );
+}
+
+function ClustersTable({ clusters, reload }: { clusters: ClusterListItem[]; reload: () => void }) {
   const nav = useNavigate();
   if (!clusters.length)
     return <Empty title="No clusters analyzed yet">Pick a source above and analyze a cluster. It shows up here when the analysis finishes.</Empty>;
@@ -49,6 +87,7 @@ function ClustersTable({ clusters }: { clusters: ClusterListItem[] }) {
             <th className="num" title="Task attempts that failed. Spark runs a failed task again, so these do not fail the cluster unless a job or query failed too.">Task attempts retried</th>
             <th>Findings</th>
             <th>Analyzed</th>
+            <th />
           </tr>
         </thead>
         <tbody>
@@ -76,6 +115,9 @@ function ClustersTable({ clusters }: { clusters: ClusterListItem[] }) {
                 <FindingsCell c={c} />
               </td>
               <td className="nowrap muted small">{fmtTs(toMs(c.built_at))}</td>
+              <td className="nowrap">
+                <ReanalyzeCell c={c} onDone={reload} />
+              </td>
             </tr>
           ))}
         </tbody>
@@ -431,7 +473,7 @@ export default function Home() {
             </button>
           }
         >
-          {error ? <ErrorState error={error} onRetry={reload} /> : clusters === undefined ? <Loading label="Loading clusters…" /> : <ClustersTable clusters={clusters} />}
+          {error ? <ErrorState error={error} onRetry={reload} /> : clusters === undefined ? <Loading label="Loading clusters…" /> : <ClustersTable clusters={clusters} reload={reload} />}
         </Panel>
       </div>
     </div>

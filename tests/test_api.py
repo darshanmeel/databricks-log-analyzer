@@ -365,6 +365,28 @@ def test_analyze_endpoint(tmp_path, fixture_root, cache_root):
         assert ids == [mf.HEALTHY]
 
 
+def test_reanalyze_from_raw_logs(tmp_path, fixture_root, cache_root):
+    """A cluster can be analyzed again from the raw logs it was built from, while they are still on disk."""
+    import shutil
+
+    raw = tmp_path / "raw"
+    shutil.copytree(fixture_root / mf.HEALTHY, raw / mf.HEALTHY)
+    app = server.create_app(tmp_path / "out", cache_root)
+    with TestClient(app) as c:
+        assert c.post("/api/analyze", json={"log_root": str(raw), "cluster_id": mf.HEALTHY}).status_code == 200
+        [row] = c.get("/api/clusters").json()
+        assert row["raw_available"] is True
+        r = c.post(f"/api/clusters/{mf.HEALTHY}/reanalyze")
+        assert r.status_code == 200, r.text
+        assert r.json()["cluster_id"] == mf.HEALTHY
+        shutil.rmtree(raw / mf.HEALTHY)
+        [row] = c.get("/api/clusters").json()
+        assert row["raw_available"] is False
+        r = c.post(f"/api/clusters/{mf.HEALTHY}/reanalyze")
+        assert r.status_code == 409 and "no longer" in r.json()["detail"]
+        assert c.post("/api/clusters/nope-not-there/reanalyze").status_code == 404
+
+
 def test_source_clusters_ignores_root_sent_as_option(tmp_path, fixture_root, cache_root):
     """The UI once sent the root among the options too; that must not fail with 'unknown option root'."""
     app = server.create_app(tmp_path / "out", cache_root)

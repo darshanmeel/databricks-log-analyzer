@@ -185,6 +185,18 @@ def create_app(output_root: Path, cache_root: Path, *, frontend_dist: Optional[P
             raise HTTPException(400, f"cannot derive a cluster id from folder name {cluster_dir.resolve().name!r}")
         return _build(cluster_dir.resolve(), cid)
 
+    @app.post("/api/clusters/{cid}/reanalyze")
+    def reanalyze(cid: str):
+        """Build an analyzed cluster again from the raw logs it was built from, when they are still there."""
+        summary = Q.read_summary(store, cid)
+        raw = summary.get("input_dir")
+        if not raw:
+            raise HTTPException(409, "this analysis does not record where its raw logs were; analyze it again from the source")
+        cluster_dir = Path(raw)
+        if not cluster_dir.is_dir() or not Q._has_files(cluster_dir):
+            raise HTTPException(409, f"the raw logs are no longer at {cluster_dir}; analyze it again from the source")
+        return _build(cluster_dir.resolve(), summary.get("cluster_id") or cid)
+
     @app.post("/api/download")
     def download(body: dict = Body(...)):
         volume = body.get("volume")
