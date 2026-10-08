@@ -128,9 +128,13 @@ def attach_run_keys(cid: str, d: dict) -> list[dict]:
         root = q.get("root_execution_id")
         if q["run_key"] and not is_null(root) and int(root) != q["sql_execution_id"]:
             query_key.setdefault((q["spark_context_id"], int(root)), q["run_key"])
-    for q in queries:
+    for q in queries:  # the root, then the other job-less queries under it
         if q["run_key"] is None:
             q["run_key"] = query_key.get((q["spark_context_id"], q["sql_execution_id"]))
+    for q in queries:
+        root = q.get("root_execution_id")
+        if q["run_key"] is None and not is_null(root):
+            q["run_key"] = query_key.get((q["spark_context_id"], int(root)))
     op_key = {(j["spark_context_id"], j.get("connect_operation_id")): j["run_key"] for j in jobs
               if j.get("connect_operation_id")}
     for o in d["connect_operations"]:

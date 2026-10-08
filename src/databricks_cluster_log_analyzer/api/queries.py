@@ -4256,13 +4256,19 @@ def table_stats(store: Store, con, cid: str, run: str | None = None, query: tupl
     qsch = store.schema(con, qpath)
     by_run = run is not None and "run_key" in qsch
     rk = "q.run_key" if "run_key" in qsch else "NULL"
+    # a streaming batch's root query holds the file scan but runs no job, so older outputs left it without a run: it
+    # takes the run of the queries under the same root, so a table the cluster lists is listed by its run too
+    qsrc = store.src(qpath)
+    if "run_key" in qsch and "root_execution_id" in qsch:
+        qsrc = (f"(SELECT spark_context_id, sql_execution_id, coalesce(run_key, max(run_key) OVER (PARTITION BY "
+                f"spark_context_id, coalesce(root_execution_id, sql_execution_id))) AS run_key FROM {qsrc})")
     qw, qp = ("", [])
     if query is not None:
         qw, qp = " AND q.spark_context_id = ? AND q.sql_execution_id = ?", [query[0], int(query[1])]
     elif by_run:
         qw, qp = " AND q.run_key = ?", [run]
     rows = store.rows(con, f"SELECT n.spark_context_id, n.sql_execution_id, n.name, n.metrics_json, {rk} AS run_key "
-                           f"FROM {store.src(npath)} n JOIN {store.src(qpath)} q USING (spark_context_id, sql_execution_id) "
+                           f"FROM {store.src(npath)} n JOIN {qsrc} q USING (spark_context_id, sql_execution_id) "
                            f"WHERE (n.name LIKE 'Scan %' OR n.name LIKE 'PhotonScan %'){qw}", qp)
     # per scan (a query's scans of one table): files read and the table's size, for rows per file
     per_scan: dict[tuple, dict[str, int]] = {}
