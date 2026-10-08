@@ -29,7 +29,7 @@ const CLASSES: [RegExp, ErrorClass][] = [
     { key: 'query', label: 'query or schema', effect: 2, hint: 'Spark could not run the query as written: a missing table or column, a schema mismatch, a syntax error.' }],
   [/NumberFormat|CAST_INVALID|Cast|ArithmeticException|DIVIDE_BY_ZERO|NullPointer|ArrayIndexOutOfBounds|Malformed/i,
     { key: 'data', label: 'bad data', effect: 2, hint: 'A value did not fit what the code expected: a failed cast, a null, a malformed record.' }],
-  [/ConcurrentModification|ConcurrentAppend|ConcurrentDelete|DELTA_CONCURRENT/i,
+  [/DeltaConcurrent|io\.delta\S*Concurrent|Concurrent(Append|DeleteRead|DeleteDelete|Transaction|Write)Exception|MetadataChangedException|ProtocolChangedException|DELTA_CONCURRENT/,
     { key: 'conflict', label: 'concurrent write', effect: 2, hint: 'Two writers changed the same Delta table at once; one lost.' }],
   [/PythonException|Py4JJavaError|Traceback/i,
     { key: 'python', label: 'Python error', effect: 2, hint: 'Raised in Python code (a UDF or the notebook); the stack shows the line.' }],

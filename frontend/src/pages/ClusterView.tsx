@@ -473,7 +473,8 @@ function ExecutorsBusy({ cid, compute, heaps }: { cid: string; compute: ComputeU
     ?? heaps.find((h) => h.executor_id === r.executor_id);
   const coreH = (ms: number) => `${(ms / 3_600_000).toFixed(1)} core-hours`;
   const MB = 1024 ** 2;
-  const full = rows.filter((r) => { const h = heapOf(r)?.heap_mb; return h && (r.max_heap_after_mb ?? 0) / h >= 0.9; });
+  // the median heap left after a Full GC: a young GC can leave a full heap for a moment without a problem
+  const full = rows.filter((r) => ((r as ExecutorProfileRow & { full_gc_heap_after_p50?: number | null }).full_gc_heap_after_p50 ?? 0) >= 0.85);
   return (
     <Panel title="Executors: how busy, and their memory"
       note="Busy: the share of each executor's cores' time spent running tasks while it was up. Memory: its heap, the most still in use right after a garbage collection (what the JVM could not free), GC pauses, the most one task held, and spill.">
@@ -485,9 +486,9 @@ function ExecutorsBusy({ cid, compute, heaps }: { cid: string; compute: ComputeU
       )}
       {full.length > 0 && (
         <p className="st-crit" style={{ margin: '0 0 10px' }}>
-          <b>{full.length} of {rows.length} executors were 90% full or more right after garbage collection</b> (exec {full.map((r) => r.executor_id).join(', ')}):
+          <b>{full.length} of {rows.length} executors had their heap still 85% full or more after a Full GC (median)</b> (exec {full.map((r) => r.executor_id).join(', ')}):
           the heap held data the JVM could not free, so it kept pausing to collect{full.some((r) => (r.full_gcs ?? 0) > 0) ? ` (${fmtNum(full.reduce((a, r) => a + (r.full_gcs ?? 0), 0))} Full GCs)` : ''}.
-          Fewer cores per executor, more memory per core (memory-optimised workers) or more shuffle partitions so each task holds less.
+          Look for a cache or a broadcast held in memory; then fewer cores per executor or more memory per core (memory-optimised workers).
         </p>
       )}
       <div className="table-wrap">

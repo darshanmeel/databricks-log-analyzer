@@ -22,7 +22,7 @@ const TOP = 5;
 const GB = 1024 ** 3;
 const BAD_GONE = ['oom', 'lost', 'killed'];
 
-export interface TopExecutor { executor_id: string; cores: number | null; removal_category: string | null; removed_time: number | null }
+export interface TopExecutor { executor_id: string; cores: number | null; removal_category: string | null; removed_time: number | null; added_time?: number | null }
 
 interface Program {
   name: string; runs: RunRow[]; failed: number; slow: number; running: number; waiting: number; took: number;
@@ -30,6 +30,10 @@ interface Program {
 }
 
 const sum = (rs: RunRow[], f: (r: RunRow) => number | null | undefined) => rs.reduce((a, r) => a + (f(r) ?? 0), 0);
+type Reads = RunRow & { storage_read?: number | null; cache_read?: number | null };
+/** What a run read from storage (files and tables) and from a DataFrame cache; older analyses have only the input. */
+const storageOf = (r: RunRow) => (r as Reads).storage_read ?? r.input_bytes ?? 0;
+const cacheOf = (r: RunRow) => (r as Reads).cache_read ?? 0;
 
 
 function programs(runs: RunRow[]): Program[] {
@@ -71,7 +75,9 @@ export function ClusterTop({ cid, runs, executors, compute, onPick, find, more, 
   const spill = sum(runs, (r) => r.disk_spill);
   const shufR = sum(runs, (r) => r.shuffle_read), shufW = sum(runs, (r) => r.shuffle_write);
   const lost = executors.filter((e) => BAD_GONE.includes(e.removal_category ?? ''));
-  const cores = Math.max(0, ...[executors.reduce((a, e) => a + (e.cores ?? 0), 0)]);
+  // the executors (and their cores) up when the most runs went at once, not every executor the cluster ever had
+  const atPeak = executors.filter((e) => (e.added_time == null || e.added_time <= peak.at) && (e.removed_time == null || e.removed_time >= peak.at));
+  const cores = atPeak.reduce((a, e) => a + (e.cores ?? 0), 0);
   const t0 = Math.min(...runs.map((r) => r.start_time ?? Infinity));
   const t1 = Math.max(...runs.map((r) => r.end_time ?? r.start_time ?? 0));
 
@@ -89,7 +95,7 @@ export function ClusterTop({ cid, runs, executors, compute, onPick, find, more, 
   // the numbers that say little on the first screen: under Details
   const moreTiles = (
     <div className="kpis">
-      <Tile label="At once" value={fmtNum(peak.n)} foot={`at ${fmtTime(peak.at).slice(0, 5)}`} title={`Most runs going at once, on ${fmtNum(executors.length)} executors`} />
+      <Tile label="At once" value={fmtNum(peak.n)} foot={`at ${fmtTime(peak.at).slice(0, 5)}`} title={`Most runs going at once, on the ${fmtNum(atPeak.length)} executors up then`} />
       <Tile label="Tasks" value={fmtNum(sum(runs, (r) => r.tasks))} foot={failedTasks ? `${fmtNum(failedTasks)} attempts failed` : 'none failed'} tone={failedTasks ? 'warn' : undefined} />
       <Tile label="Shuffle" value={fmtBytes(Math.max(shufR, shufW))} foot={`read ${fmtBytes(shufR)} · write ${fmtBytes(shufW)}`} />
       <Tile label="Idle compute" value={compute?.idle_share != null ? fmtPct(compute.idle_share, 0) : '–'}
@@ -104,7 +110,7 @@ export function ClusterTop({ cid, runs, executors, compute, onPick, find, more, 
       <div className="ro-hero">
         <section className="ro-hero-box">
           <span className={`ro-eyebrow ${slow.length || waitShare >= 0.2 ? 'warn' : ''}`}>{slow.length || waitShare >= 0.2 ? 'Why runs were slow' : 'Where the time went'}</span>
-          <WhySlow cid={cid} progs={progs} waiting={waiting} took={took} running={running} peak={peak.n} execs={executors.length} cores={cores} slow={slow} />
+          <WhySlow cid={cid} progs={progs} waiting={waiting} took={took} running={running} peak={peak.n} execs={atPeak.length} cores={cores} slow={slow} />
         </section>
         <section className="ro-hero-box">
           <span className={`ro-eyebrow ${failed.length || lost.length ? 'bad' : ''}`}>How the runs ended</span>
@@ -119,7 +125,7 @@ export function ClusterTop({ cid, runs, executors, compute, onPick, find, more, 
           foot={[failed.length ? `${fmtNum(failed.length)} failed` : '', slow.length ? `${fmtNum(slow.length)} slow` : '', !failed.length && !slow.length ? (retried.length ? `${fmtNum(retried.length)} after retries` : 'none failed') : ''].filter(Boolean).join(' · ')}
           tone={failed.length ? 'bad' : slow.length ? 'warn' : undefined} title={slow.length ? `${fmtNum(slow.length)} took 2× their usual or more` : undefined} />
         {waitShare >= 0.05 && <Tile label="Waiting for cores" value={fmtPct(waitShare, 0)} foot={`${fmtDuration(waiting)} added up`} tone={waitShare >= 0.2 ? 'warn' : undefined} title={waitTitle} />}
-        {peak.n >= 10 && <Tile label="At once" value={fmtNum(peak.n)} foot={`runs, on ${fmtNum(executors.length)} executors`} tone="warn" />}
+        {peak.n >= 10 && <Tile label="At once" value={fmtNum(peak.n)} foot={`runs, on ${fmtNum(atPeak.length)} ${atPeak.length === 1 ? 'executor' : 'executors'}`} tone="warn" />}
         {spill > 0 && <Tile label="Disk spill" value={fmtBytes(spill)} foot="all runs" tone={spill >= GB ? 'warn' : undefined} />}
         {failedTasks > 0 && <Tile label="Tasks" value={fmtNum(sum(runs, (r) => r.tasks))} foot={`${fmtNum(failedTasks)} ${failedTasks === 1 ? 'attempt' : 'attempts'} failed`} tone="warn" />}
       </div>
@@ -155,7 +161,7 @@ function WhySlow({ cid, progs, waiting, took, running, peak, execs, cores, slow 
     <>
       <ul className="ro-points">
         {share >= 0.1 && <li><b>{fmtDuration(waiting)} waiting for a free core</b> <span className="muted">· added up over runs, {fmtPct(share, 0)} of their {fmtDuration(took)}</span></li>}
-        {share >= 0.1 && <li>Up to <b>{fmtNum(peak)} runs at once</b> <span className="muted">on {fmtNum(execs)} executors{cores ? ` (${fmtNum(cores)} cores)` : ''}</span></li>}
+        {share >= 0.1 && <li>Up to <b>{fmtNum(peak)} runs at once</b> <span className="muted">on {fmtNum(execs)} {execs === 1 ? 'executor' : 'executors'}{cores ? ` (${fmtNum(cores)} cores)` : ''}</span></li>}
         {top && <li><b>{top.name}</b> {topShare >= 0.4 ? 'did most of the work' : 'did the most work'} <span className="muted">· {fmtDuration(top.running)} running tasks, added up over {fmtNum(top.runs.length)} runs{top.spill >= GB ? `, spilled ${fmtBytes(top.spill)}` : ''}</span></li>}
         {worst && <li><b>{slow.length === 1 ? 'One run' : `${fmtNum(slow.length)} runs`} 2× usual or more</b>; worst <Link to={inRun(to.overview(cid), worst.run_key)}>{runName(worst)}</Link> <span className="muted">· {fmtDuration(worst.duration_ms)}, {usualX(worst)!.toFixed(1)}×</span></li>}
         {!top && !worst && share < 0.1 ? <li>No run was slow: none waited long for cores, none took twice its usual time</li> : null}
@@ -278,10 +284,12 @@ function TimeWent({ cid, runs, took, waiting, running, t0, t1, compute, peak, ca
                     <td><WaitRanBar took={t} wait={w} ran={r.running_ms ?? Math.max(0, t - w)} max={maxT} /></td>
                     <td className={`num ${(x ?? 0) >= 2 ? 'st-warn' : 'muted'}`} style={{ fontWeight: (x ?? 0) >= 2 ? 600 : undefined }}>{x !== null ? `${x.toFixed(1)}×` : '–'}</td>
                     <td className="num">{fmtNum(r.tasks)}</td>
-                    {/* a source without read bytes (JDBC) reports rows: show those, not its shuffle */}
+                    {/* a source without read bytes (JDBC) reports rows: show those, not its shuffle. Storage reads are
+                        apart from DataFrame-cache reads (Spark counts both as input) */}
                     <td className="num">{!r.input_bytes && (r.input_records ?? 0) > 0
                       ? <span title={r.shuffle_read ? `shuffle read ${fmtBytes(r.shuffle_read)}` : undefined}>{fmtRows(r.input_records)} rows</span>
-                      : r.input_bytes ? <span title={r.shuffle_read ? `plus shuffle read ${fmtBytes(r.shuffle_read)}` : undefined}>{fmtBytes(r.input_bytes)}</span> : '–'}</td>
+                      : r.input_bytes ? <span title={r.shuffle_read ? `plus shuffle read ${fmtBytes(r.shuffle_read)}` : undefined}>{fmtBytes(storageOf(r))}</span> : '–'}
+                      {cacheOf(r) >= GB / 4 ? <div className="muted small">+ {fmtBytes(cacheOf(r))} from a DataFrame cache</div> : null}</td>
                     <td>
                       <div className="qs-lane">
                         <span className="qs-run" style={{ left: pct(r.start_time ?? t0), width: width(r.start_time ?? t0, r.end_time ?? t1) }} />
@@ -291,7 +299,7 @@ function TimeWent({ cid, runs, took, waiting, running, t0, t1, compute, peak, ca
                       {r.status === 'failed' && <span className="ro-flag bad">failed</span>}
                       {(r.disk_spill ?? 0) >= GB / 4 && <span className="ro-flag spill">spilled {fmtBytes(r.disk_spill)}</span>}
                       {w / Math.max(1, t) >= 0.3 && t >= 60_000 && <span className="ro-flag">{fmtPct(w / t, 0)} waiting</span>}
-                      {(r.max_task_input ?? 0) > 256 * 1024 ** 2 && <span className="ro-flag bad">a task read {fmtBytes(r.max_task_input)} of files</span>}
+                      {(r.max_task_input ?? 0) > 256 * 1024 ** 2 && cacheOf(r) < GB / 4 && <span className="ro-flag bad">a task read {fmtBytes(r.max_task_input)} of files</span>}
                       {(r.max_task_shuffle ?? 0) > 256 * 1024 ** 2 && <span className="ro-flag bad">a task read {fmtBytes(r.max_task_shuffle)} of shuffle</span>}
                       {r.failed_tasks ? <span className="ro-flag warn">{fmtNum(r.failed_tasks)} {r.failed_tasks === 1 ? 'attempt' : 'attempts'} failed</span> : null}
                     </td>

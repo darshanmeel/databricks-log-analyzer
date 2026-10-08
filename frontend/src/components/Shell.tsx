@@ -7,6 +7,8 @@ import { fmtDuration, fmtNum, fmtTime } from '../format';
 import { ErrorState, Loading, StatusBadge } from './ui';
 import { runGroup, runName, runOption, usualX } from '../runName';
 import { clusterVerdict, runVerdict, type Verdict } from '../status';
+/** The analyzer revision this UI expects (summary.json `analyzer_revision`); older builds lack the newer numbers. */
+const ANALYZER_REVISION = 19;
 
 /* ------------------------------------------------------------ theme */
 
@@ -531,6 +533,9 @@ function ClusterEnd({ summary, runs, end }: { summary: Summary; runs: RunRow[]; 
   return (
     <>
       <VerdictChip v={v} />
+      {(((summary as Summary & { analyzer_revision?: number }).analyzer_revision ?? 0) < ANALYZER_REVISION) && (
+        <span className="muted small" title="Newer numbers and findings need Analyze again (from the raw logs), or refresh-findings on the command line">built with an older analyzer: Analyze again on Home</span>
+      )}
       {after !== null && after >= 0 && after < 10 * 60_000 ? <span className="muted small">the cluster stopped {fmtDuration(after)} after the last run ended</span> : null}
     </>
   );

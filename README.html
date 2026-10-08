@@ -234,7 +234,12 @@ dbx-log-analyzer ui --output ./demo_out --cache ./demo_cache</code></pre>
       path, then the cluster (it lists them with their last change), then Analyze. Remote logs are copied to a local
       cache incrementally. With no cluster analyzed yet, the steps are open from the start.</li>
     <li><b>Analyze again:</b> rebuilds a cluster from the raw logs it was built from, with the newest version of the
-      tool. The button is greyed out, with "Raw logs gone", when those logs are no longer on disk.</li>
+      tool. The button is greyed out, with "Raw logs gone", when those logs are no longer on disk. A cluster built
+      with an older analyzer says so next to its status.</li>
+    <li><b>No raw logs any more?</b> <code>dbx-log-analyzer refresh-findings</code> brings an older analysis up to date
+      from its own datasets: the status, the stage numbers taken from the tasks (skew from successful attempts, the
+      storage and DataFrame-cache split), the MERGE, capacity and workload findings, and the diagnosis. Log lines
+      and incidents need the raw logs.</li>
   </ul>
 
   <h2 id="cluster">Cluster overview</h2>
@@ -283,7 +288,7 @@ dbx-log-analyzer ui --output ./demo_out --cache ./demo_cache</code></pre>
   <ul class="look">
     <li><b>The headline:</b> how many tables, the bytes and rows pulled from files, the task time, and the costliest
       table with its share of the time.</li>
-    <li><b>Flags:</b> files over 1 GB on average (a MERGE rewrites whole files) or a largest file over 1 GB (some
+    <li><b>Flags:</b> files over 1 GB on average (a MERGE without deletion vectors rewrites whole files) or a largest file over 1 GB (some
       files need compacting), a big table read whole with no files skipped, a
       table that isn't partitioned, and a table scanned several times in one run or query.</li>
     <li><b>The list:</b> top 10 first. Columns: size, files, per file, rows per file, scans, runs, files skipped,
@@ -300,6 +305,24 @@ dbx-log-analyzer ui --output ./demo_out --cache ./demo_cache</code></pre>
     <li><b>On a run,</b> the Pruning column of <i>What it read and wrote</i> also shows each query's smallest and
       largest file read.</li>
   </ul>
+
+  <div class="punch">
+    <span class="kicker">How the numbers are counted</span>
+    <ul>
+      <li><b>Read from storage</b> is what came from files and tables. Spark also counts a read from a DataFrame cache
+        as input; that part is shown apart ("+ 120 GB from a DataFrame cache"), so a cached table read ten times does
+        not look like ten big reads.</li>
+      <li><b>Skew and task times</b> come from the successful attempts, as in Spark's own stage summary: a failed
+        attempt stuck in GC is not a skewed task. The time buckets of the cause bar count failed attempts once, as
+        their own part.</li>
+      <li><b>A MERGE</b> has one set of numbers on every page: the target read (not the copy of the source it reads
+        again), the files touched of the files in the table, and, with deletion vectors, "matched rows marked
+        deleted" instead of "rewrote the files". With Change Data Feed on, the change rows are counted apart; rows
+        updated and inserted are shown only when they can be derived, and then marked derived.</li>
+      <li><b>The status</b>, on a cluster with runs, counts a failed query only when it ran a stage or belongs to a run; a platform's own
+        query that failed in a few milliseconds is still listed, outside any run.</li>
+    </ul>
+  </div>
 
   <h2 id="run">One run</h2>
   <figure><img src="docs/screenshots/run-overview.png" alt="Run overview: tiles, why it was slow, how it ended, the cause, the fixes and where the time went" loading="lazy">
@@ -692,7 +715,8 @@ dbx-log-analyzer download --source s3 --root s3://my-bucket/cluster-logs --clust
 # parse a local folder
 dbx-log-analyzer build --input ./cache/0101-000000-abcd1234 [--output ./output] [--duckdb]
 
-# older outputs: add newer findings from their datasets, without the raw logs
+# older outputs: bring them up to date from their own datasets, without the raw logs (status, stage numbers,
+# storage vs DataFrame-cache reads, MERGE, capacity and workload findings, diagnosis)
 dbx-log-analyzer refresh-findings --output ./output [--cluster &lt;id&gt;]
 
 # which source types are available (is the optional SDK installed?)
