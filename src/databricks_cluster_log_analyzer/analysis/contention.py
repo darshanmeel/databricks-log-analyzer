@@ -3,8 +3,8 @@
   cores_full        per Spark context: runs spent a large share of their time waiting for a free core (more runs than
                     the executors could take), with how many ran at once, the cores there were, and autoscaling.
   waited_for_cores  per run: it spent a large share of its time with a stage submitted and no core free.
-  merge_rewrite     per Delta MERGE that rewrote files: it read far more of the target than its source, because the
-                    merge condition does not let Delta skip files.
+  merge_rewrite     per Delta MERGE that read far more of the target than its source, because the merge condition
+                    does not let Delta skip files (numbers from analysis.merge.merge_facts).
 
 Waiting for a core: a stage was submitted and its first task had not started yet, while none of the run's (or the
 query's) other stages ran a task. Running: at least one of its stages ran tasks.
@@ -19,6 +19,7 @@ from typing import Any
 
 from ..config import SEVERITY_RANK, Rules
 from ..util import fmt_bytes, fmt_words
+from .merge import files_text, merge_facts, merge_fix, wrote_text
 
 GB = 1 << 30
 
@@ -33,12 +34,12 @@ FIX = {
     "waited_for_cores": (
         "Its stages waited for cores held by other runs on the same cluster: see the 'cores were full' finding. Give "
         "the cluster more cores when the runs start, or run fewer at once."),
+    # the general fix; each finding carries its own, from what the logs show about that MERGE (analysis.merge)
     "merge_rewrite": (
-        "Let Delta skip files: add the target's partition or clustering column to the MERGE ON condition (for example "
-        "t.load_date >= the oldest date in the source), cluster the target on the merge key (Liquid Clustering, or "
-        "ZORDER BY). If deletion vectors are off, turn them on so a matched row does not rewrite its whole file (when "
-        "the MERGE wrote far less than it read, they are already on and the read is the cost). The rewrite's tasks are "
-        "also large: see the large tasks finding for the shuffle partitions."),
+        "Let Delta skip files: if the target has a partition or clustering column, add it to the MERGE ON condition "
+        "(only if a key's rows never fall outside the bound, else NOT MATCHED inserts duplicates); otherwise cluster "
+        "the target on the merge key (Liquid Clustering), which helps only if each batch's keys fall in a narrow range. "
+        "If deletion vectors are off, turn them on so a matched row does not rewrite its whole file."),
 }
 
 
@@ -138,7 +139,9 @@ def _run_name(r: Mapping) -> str:
 
 def contention_findings(cid: str, stages: list[dict], firsts: Mapping[tuple, int], runs: list[dict],
                         executors: list[dict], queries: list[dict], cluster_info: list[dict] | None,
-                        rules: Rules) -> list[dict]:
+                        rules: Rules, plan_nodes: list[dict] | None = None) -> list[dict]:
+    """`queries` should carry final_plan for the MERGE queries and `plan_nodes` their scan nodes (sql_plan_nodes):
+    the MERGE finding reads deletion vectors, CDF and the files touched from them."""
     out: list[dict] = []
     per_run = wait_and_run(stages, firsts, lambda s: s.get("run_key"))
     stages_of: dict[str, list[dict]] = {}
@@ -246,30 +249,50 @@ def contention_findings(cid: str, stages: list[dict], firsts: Mapping[tuple, int
     by_run_q: dict[Any, list[dict]] = {}
     for q in queries:
         by_run_q.setdefault(q.get("run_key"), []).append(q)
+    nodes_of: dict[tuple, list[dict]] = {}
+    for n in plan_nodes or []:
+        nodes_of.setdefault((n.get("spark_context_id"), n.get("sql_execution_id")), []).append(n)
+    stages_q: dict[tuple, list[dict]] = {}
+    for s in stages:
+        stages_q.setdefault((s.get("spark_context_id"), s.get("sql_execution_id")), []).append(s)
     for q in queries:
         desc = q.get("description") or ""
-        read = q.get("input_bytes") or 0
-        if "MERGE" not in desc or not re.search(r"(?i)rewriting", desc) or read < rules.merge_read_min_bytes:
+        if "MERGE" not in desc or not re.search(r"(?i)rewriting", desc) or (q.get("input_bytes") or 0) < rules.merge_read_min_bytes:
             continue
         sib = [x for x in by_run_q.get(q.get("run_key"), []) if x is not q]
+        keys = [(x.get("spark_context_id"), x.get("sql_execution_id")) for x in [q, *sib]]
+        mf = merge_facts(q, sib, [st for k in keys for st in stages_q.get(k, [])],
+                         nodes=[n for k in keys for n in nodes_of.get(k, [])])
+        # the target only: the step also reads its source copy back, which is not the target
+        read = mf["target_bytes"]
+        if read < rules.merge_read_min_bytes:
+            continue
         src = max((x.get("input_bytes") or 0 for x in sib if re.search(r"(?i)materiali[sz]e source", x.get("description") or "")), default=0)
-        scan = sum(x.get("input_bytes") or 0 for x in sib if re.search(r"(?i)scanning files", x.get("description") or ""))
+        scan = mf["scan_bytes"]
         if src and read < rules.merge_read_ratio * src:
             continue
-        m = re.search(r"(?i)rewriting (\d+) files", desc)
-        rows = q.get("input_records")
+        rows = mf["target_rows"]
         spill = q.get("disk_spill") or 0
-        ev = (f"The MERGE {'rewrote ' + m.group(1) + ' files: it ' if m else ''}read {fmt_bytes(read)} of the target"
+        ft = files_text(mf)
+        ev = (f"The MERGE {'rewrote ' + str(mf['files_touched']) + ' files: it ' if mf['files_touched'] and not mf['dv_on'] else ''}"
+              f"read {fmt_bytes(read)} of the target"
               + (f" ({rows:,.0f} rows)" if rows else "")
               + f" and wrote {fmt_bytes(q.get('output_bytes') or 0)}"
               + (f", spilling {fmt_bytes(spill)} to disk" if spill >= GB else "")
               + (f", to merge a source of {fmt_bytes(src)} ({read / src:,.0f}x less)" if src else "")
+              + (f". {ft[:1].upper() + ft[1:]}" if ft else "")
               + (f". Finding the matching files scanned another {fmt_bytes(scan)}" if scan >= GB else "")
-              + ". The merge condition does not let Delta skip files, so most of the target is read and rewritten.")
+              + (f". The source copy was read again: {fmt_bytes(mf['copy_bytes'])}, not counted as target"
+                 if mf["copy_bytes"] >= GB else "")
+              + (f". {wrote_text(mf)[:1].upper() + wrote_text(mf)[1:]}" if mf["dv_on"] else "")
+              + (". The merge condition does not let Delta skip files, so most of the target is read."
+                 if mf["dv_on"] else
+                 ". The merge condition does not let Delta skip files, so most of the target is read and rewritten."))
         sev = "high" if read >= 100 * GB or spill >= rules.spill_high_bytes else "medium"
+        name = f"MERGE into {mf['target']}" if mf["target"] else "MERGE"
         out.append(_f(cid, q.get("spark_context_id"), sev, "merge_rewrite",
-                      f"query {q['sql_execution_id']}: {desc[:80]}", ev, to_ms(q.get("start_time")),
-                      run_key=q.get("run_key"), sql_execution_id=q["sql_execution_id"]))
+                      f"{name} (query {q['sql_execution_id']})", ev, to_ms(q.get("start_time")),
+                      run_key=q.get("run_key"), sql_execution_id=q["sql_execution_id"], fix=" ".join(merge_fix(mf))))
     return out
 
 

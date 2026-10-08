@@ -221,7 +221,7 @@ def build(cluster_dir: str | os.PathLike, output_root: str | os.PathLike, *, clu
     later += init_found
     bound = {f["run_key"] for f in later if f["category"] == "capacity_bound"}
     later += [f for f in contention_findings(cid, stages, first_tasks(tdf), runs, executors, queries,
-                                             ds["cluster_info"], rules)
+                                             ds["cluster_info"], rules, ds["sql_plan_nodes"])
               if not (f["category"] == "waited_for_cores" and f.get("run_key") in bound)]
     findings = add_findings(findings, runs, later)
 
