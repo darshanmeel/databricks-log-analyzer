@@ -21,3 +21,4 @@ sample_data/
 *.log.gz
 tests/fixtures/clusters/
 .playwright-mcp/
+.claude/worktrees/
