@@ -1,6 +1,9 @@
 import { useMemo, useState } from 'react';
 import { api, type FindingRow, type IncidentRow, type Severity } from '../api';
-import { useCluster } from '../components/Shell';
+import { Link } from 'react-router-dom';
+import { useCluster, useRunScopeCtx } from '../components/Shell';
+import { inRun } from '../components/TopFinder';
+import { runName } from '../runName';
 import { HBars } from '../components/charts';
 import { Async, DataLink, Empty, EntityChips, Panel, SeverityBadge, ToggleChips, sevColor, useScrollTo } from '../components/ui';
 import { fmtDuration, fmtNum, fmtTime, fmtTs, tickLabel, timeTicks } from '../format';
@@ -16,6 +19,8 @@ const SEVS: Severity[] = ['high', 'medium', 'low'];
 /** Findings, grouped into incidents (root cause -> effects) by default, or the flat list. */
 export default function Findings() {
   const { cid } = useCluster();
+  const { runs, run } = useRunScopeCtx();
+  const whole = !run && runs.length > 1;
   const [sp, setQ] = useQueryState();
   const focus = sp.get('finding');
   const view = sp.get('view') === 'all' ? 'all' : 'incidents';
@@ -37,7 +42,7 @@ export default function Findings() {
     <div className="page">
       <div className="page-head">
         <div>
-          <h1>Findings</h1>
+          <h1>Findings{whole ? <span className="muted"> · every run on the cluster</span> : null}</h1>
           <details className="sub"><summary>About this page</summary>
             What went wrong and why. Findings that are the same problem are merged, and problems are chained cause → effect, so each incident starts from its most
             likely root cause.
@@ -77,6 +82,15 @@ export default function Findings() {
 
 // ---------------------------------------------------------------------------------------------- incidents
 
+/** On the whole cluster's page: the run a problem happened in, linking to that run's own findings. */
+function RunOf({ cid, f }: { cid: string; f: Joined }) {
+  const { runs, run } = useRunScopeCtx();
+  const key = (f as Joined & { run_key?: string | null }).run_key;
+  const r = !run && runs.length > 1 && key ? runs.find((x) => x.run_key === key) : undefined;
+  if (!r) return null;
+  return <Link className="tchip small" to={inRun(to.findings(cid, f.finding_id), r.run_key)} title="Open this run's findings">{runName(r)}</Link>;
+}
+
 function Incidents({ cid, rows, focus }: { cid: string; rows: Joined[]; focus: string | null }) {
   const incs = useMemo(() => groupIncidents(rows), [rows]);
   const failed = incs.filter((i) => i.problems.some((p) => FAILURE_KINDS.has(p.lead.inc!.kind)));
@@ -112,6 +126,7 @@ function LooseFindings({ cid, rows, focus }: { cid: string; rows: Joined[]; focu
             <div className="problem-head">
               <span className={`kind sev-${f.severity}`}>{f.category}</span>
               {f.entity && <span className="entity">{f.entity}</span>}
+              <RunOf cid={cid} f={f} />
             </div>
             {f.evidence && <p className="evidence">{cleanEvidence(f.evidence)}</p>}
             {f.fix && <p className="small" style={{ margin: '4px 0' }}><b>Fix:</b> {f.fix}</p>}
@@ -214,6 +229,7 @@ function IncidentCard({ cid, inc, focus }: { cid: string; inc: Incident; focus: 
         <SeverityBadge sev={h.incident_severity} />
         <span className="fid">{inc.id}</span>
         <h2>{h.incident_title}</h2>
+        <RunOf cid={cid} f={root.lead} />
         <span className="grow" />
         <span className="muted small nowrap">
           {fmtTime(h.incident_start)}

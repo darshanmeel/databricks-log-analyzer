@@ -24,7 +24,7 @@ export default function Errors() {
   const { cid, summary } = useCluster();
   const [sp, setQ] = useQueryState();
   const focus = sp.get('fingerprint');
-  const scopedRun = useRunScopeCtx().run;
+  const { run: scopedRun, runs: allRuns } = useRunScopeCtx();
   const view = sp.get('view') === 'all' ? 'all' : 'problems';
   const st = useAsync(
     async (s) => {
@@ -45,7 +45,7 @@ export default function Errors() {
     <div className="page">
       <div className="page-head">
         <div>
-          <h1>{scopedRun ? 'Errors in this run' : 'Errors'}</h1>
+          <h1>{scopedRun ? 'Errors in this run' : 'Errors'}{!scopedRun && allRuns.length > 1 ? <span className="muted"> · every run on the cluster</span> : null}</h1>
           {scopedRun && (
             <p className="sub small">
               Only the lines that hit this run: on an executor while one of its tasks ran there, or from the driver while it ran.

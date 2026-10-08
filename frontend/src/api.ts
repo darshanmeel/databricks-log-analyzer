@@ -477,7 +477,7 @@ export interface SourceCluster { cluster_id: string; last_modified: Ms; analyzed
 export interface SourceRequest { type: string; root: string; options: Record<string, string> }
 export interface IngestResult { download: Record<string, unknown> | null; summary: Summary }
 
-/* ---------------------------------------------------- Data / Debug steps */
+/* ---------------------------------------------------- Raw data steps */
 
 export interface StepInfo { id: string; group: string; step: string; title: string; description: string | null; rows: number | null }
 
@@ -607,7 +607,7 @@ export type SpillShuffleRaw =
       series?: SpillShuffleSeries[]; buckets?: SpillShuffleBucket[]; rows?: SpillShuffleBucket[]; totals?: Partial<SpillShuffleBucket>;
     };
 
-/** Every dataset the Data / Debug tab lists (older backends may not have the Revision 3 ones). */
+/** Every dataset the Raw data tab lists (older backends may not have the Revision 3 ones). */
 export const DATASETS: { name: string; note: string }[] = [
   { name: 'files', note: 'Every file found in the cluster folder' },
   { name: 'file_lines', note: 'Line, level and thread-dump counts per log file' },
@@ -707,7 +707,7 @@ export const api = {
   sources: (s?: AbortSignal) => get<SourceInfo[]>('/sources', undefined, s),
   sourceClusters: (body: SourceRequest) => post<SourceCluster[]>('/sources/clusters', body),
   ingest: (body: SourceRequest & { cluster_id: string }) => post<IngestResult>('/ingest', body),
-  // Data / Debug
+  // Raw data
   steps: (cid: string, s?: AbortSignal) => get<StepInfo[]>(`${c(cid)}/steps`, undefined, s),
   step: <R = Record<string, unknown>>(cid: string, id: string, params?: Params, s?: AbortSignal) =>
     get<Table<R>>(`${c(cid)}/steps/${enc(id)}`, params, s),

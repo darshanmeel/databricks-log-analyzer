@@ -72,7 +72,7 @@ export function RemovalBadge({ category, reason }: { category: string | null | u
   );
 }
 
-/** "Full table ↗" link to Tables (debug), shown under charts that summarize a dataset. */
+/** "Full table ↗" link to Raw data, shown under charts that summarize a dataset. */
 export function DataLink({ cid, dataset, step, q, label }: { cid: string; dataset?: string; step?: string; q?: string | null; label?: string }) {
   return (
     <Link className="data-link" to={to.data(cid, { dataset: dataset ?? null, step: step ?? null, q: q ?? null })}>

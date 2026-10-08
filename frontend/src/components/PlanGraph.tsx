@@ -341,7 +341,7 @@ export function PlanGraph({ cid, ctx, id }: { cid: string; ctx: string; id: stri
               return (
                 <g key={n.row.node_id} transform={`translate(${p.x},${p.y})`} style={{ cursor: 'pointer', opacity: hiSeg !== null && segOfNode(n.row.node_id)?.id !== hiSeg ? 0.3 : 1 }} onClick={() => setSel(on ? null : n.row.node_id)}>
                   <title>{n.row.detail ?? n.row.name}</title>
-                  <rect width={NW} height={NH} rx={8} style={{ fill: 'var(--surface)', stroke: on ? 'var(--accent, var(--series-1))' : n.row.spill_bytes ? 'var(--st-warn)' : 'var(--border)', strokeWidth: on ? 2 : 1, strokeDasharray: none ? '3 3' : undefined, filter: on ? 'drop-shadow(0 2px 6px rgba(0,0,0,.18))' : undefined }} />
+                  <rect width={NW} height={NH} rx={8} style={{ fill: 'var(--surface)', stroke: on ? 'var(--accent, var(--series-1))' : n.row.spill_bytes ? 'var(--spill)' : 'var(--border)', strokeWidth: on ? 2 : 1, strokeDasharray: none ? '3 3' : undefined, filter: on ? 'drop-shadow(0 2px 6px rgba(0,0,0,.18))' : undefined }} />
                   {(() => {
                     const sg = segOfNode(n.row.node_id);
                     if (!sg || !staged.length) return null;

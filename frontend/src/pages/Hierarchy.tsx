@@ -648,6 +648,19 @@ export default function HierarchyPage() {
   const tabQ = sp.get('tab');
   const tab = isQuery && tabQ === 'plan' ? 'plan' : tabQ === 'trace' && unit?.kind !== 'orphans' ? 'trace' : 'stages';
   const stageIds = useMemo(() => new Set((unit?.stages ?? []).map((s) => s.stageId).filter((v): v is number => v !== null)), [unit]);
+  type View = 'flow' | 'time' | 'chain' | 'trace' | 'plan';
+  const view: View = tab !== 'stages' ? tab : mode === 'time' ? 'time' : chain && nb ? 'chain' : 'flow';
+  const views: [View, string, string][] = [
+    ['flow', 'Flow', 'This query with its jobs and stages, and what came just before and after it'],
+    ['time', 'Time', 'Its jobs and stages on the clock'],
+    ...(nb ? [['chain', 'Chain of queries', 'Only queries: every query linked to this one, upstream and downstream'] as [View, string, string]] : []),
+    ...(unit?.kind !== 'orphans' ? [['trace', 'Trace', 'Every stage on one time axis, with what held it up'] as [View, string, string]] : []),
+    ...(isQuery ? [['plan', 'SQL plan', 'The query plan with its operators'] as [View, string, string]] : []),
+  ];
+  const pickView = (k: View) => {
+    setChain(k === 'chain');
+    setQ({ tab: k === 'trace' || k === 'plan' ? k : null, mode: k === 'time' ? 'time' : null }, true);
+  };
   const parent = unit?.kind === 'job' ? units.find((u) => u.kind !== 'job' && u.jobs.some((j) => j.id === unit.id)) : undefined;
   const counts = useMemo(() => {
     if (!full) return null;
@@ -780,21 +793,14 @@ export default function HierarchyPage() {
           </div>
           <div className="focus-main">
             <UnitHeader u={unit} cid={cid} />
-            {unit.kind !== 'orphans' && (
-              <div className="seg tabs" role="tablist" aria-label="Query views">
-                {(
-                  [
-                    ['stages', 'Stages and executors'],
-                    ['trace', 'Trace'],
-                    ...(isQuery ? ([['plan', 'SQL plan']] as const) : []),
-                  ] as const
-                ).map(([k, label]) => (
-                  <button key={k} role="tab" aria-selected={tab === k} className={tab === k ? 'on' : ''} onClick={() => setQ({ tab: k === 'stages' ? null : k }, true)}>
-                    {label}
-                  </button>
-                ))}
-              </div>
-            )}
+            {/* one row of views: the graph laid out as a flow or on a clock, the chain of queries, the trace, the plan */}
+            <div className="seg tabs" role="tablist" aria-label="Query views">
+              {views.map(([k, label, title]) => (
+                <button key={k} role="tab" aria-selected={view === k} className={view === k ? 'on' : ''} title={title} onClick={() => pickView(k)}>
+                  {label}
+                </button>
+              ))}
+            </div>
             {tab === 'plan' && unit.node?.execId !== null && unit.node ? (
               <QueryPlanTab cid={cid} ctx={model.ctx} id={String(unit.node.execId)} />
             ) : tab === 'trace' ? (
@@ -812,33 +818,13 @@ export default function HierarchyPage() {
             ) : (
               <>
                 {queryLevel && level}
-                <div className="graph-bar">
-                  <div className="seg" role="group" aria-label="Layout">
-                    <button className={mode === 'flow' ? 'on' : ''} aria-pressed={mode === 'flow'} onClick={() => setQ({ mode: null })}>
-                      Flow
-                    </button>
-                    <button className={mode === 'time' ? 'on' : ''} aria-pressed={mode === 'time'} onClick={() => setQ({ mode: 'time' })}>
-                      Time
-                    </button>
-                  </div>
-                  {mode === 'flow' && around && (
-                    <div className="seg" role="group" aria-label="What to show around it">
-                      <button className={!chain ? 'on' : ''} aria-pressed={!chain} onClick={() => setChain(false)}
-                        title="This query with its jobs and stages, and what came just before and after it">
-                        Query with its jobs
-                      </button>
-                      <button className={chain ? 'on' : ''} aria-pressed={chain} onClick={() => setChain(true)}
-                        title="Only queries: every query linked to this one, upstream and downstream, without their jobs and stages">
-                        Chain of queries
-                      </button>
-                    </div>
-                  )}
-                  {parent && (
+                {parent && (
+                  <div className="graph-bar">
                     <button className="btn small ghost" onClick={() => pickUnit(parent.id)}>
                       ← All {fmtNum(parent.jobs.length)} jobs of {parent.title}
                     </button>
-                  )}
-                </div>
+                  </div>
+                )}
                 <div className={`graph-layout ${node && !['stage', 'job', 'query'].includes(node.type) ? 'with-panel' : ''}`}>
                   <div className="panel graph-panel">
                     {around && around.siblings.length > 0 && <SameLevel sib={around.siblings} parent={around.parentLabel} onPick={pickUnit} />}

@@ -100,7 +100,7 @@ export function ClusterTop({ cid, runs, executors, compute, onPick, find, more, 
       <Tile label="Shuffle" value={fmtBytes(Math.max(shufR, shufW))} foot={`read ${fmtBytes(shufR)} · write ${fmtBytes(shufW)}`} />
       <Tile label="Idle compute" value={compute?.idle_share != null ? fmtPct(compute.idle_share, 0) : '–'}
         foot={compute ? `of ${(compute.core_ms_up / 3_600_000).toFixed(1)} core-hours` : 'no tasks'} tone={(compute?.idle_share ?? 0) >= 0.3 ? 'warn' : undefined}
-        title={use ? `Worker core-seconds paid for (${fmtNum(use.worker_core_s)}) per core-second of successful tasks (${fmtNum(use.useful_task_s)}): ${use.core_s_per_useful}` : undefined} />
+        title={use ? `Worker core-seconds from each executor's start (${fmtNum(use.worker_core_s)}) per core-second of successful tasks (${fmtNum(use.useful_task_s)}): ${use.core_s_per_useful}. The machines were billed from before their executors started, so the paid figure is somewhat higher.` : undefined} />
     </div>
   );
 
@@ -204,6 +204,7 @@ function HowEnded({ cid, runs, failed, retried, lost, compute, t1, onPick }: {
         {failed[0] && <button className="linkish" onClick={() => onPick(failed[0])}>Open the first failed run →</button>}
         <a href="#cv-errors">All errors ↓</a>
         {worst ? <Link to={inRun(to.errors(cid), worst.run_key)}>Errors in the worst run ({truncate(runName(worst), 30)}) →</Link> : null}
+        <Link to={to.findings(cid)}>All findings →</Link>
         <Link to={to.executors(cid)}>Executors →</Link>
       </div>
     </>

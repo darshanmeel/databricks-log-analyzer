@@ -140,7 +140,7 @@ export default function Stages() {
                 />
                 <p className="muted small" style={{ marginTop: 10 }}>
                   Showing {fmtNum(st.data.rows.length)} of {fmtNum(st.data.total)} stage attempts. Every column for every stage is in{' '}
-                  <Link to={to.data(cid, { dataset: 'stages' })}>Tables (debug)</Link>.
+                  <Link to={to.data(cid, { dataset: 'stages' })}>Raw data</Link>.
                 </p>
               </>
             )}

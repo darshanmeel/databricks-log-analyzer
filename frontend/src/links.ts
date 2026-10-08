@@ -25,7 +25,7 @@ export const to = {
   logs: (cid: string, filters: Record<string, string | number | null | undefined> = {}) => `${base(cid)}/logs${qs(filters)}`,
   findings: (cid: string, finding?: string | null) => `${base(cid)}/findings${qs({ finding })}`,
   errors: (cid: string, fingerprint?: string | null) => `${base(cid)}/errors${qs({ fingerprint })}`,
-  /** Data / Debug tab: a notebook step (`step`) or a raw dataset (`dataset`), optionally pre-filtered by text. */
+  /** Raw data tab: a notebook step (`step`) or a raw dataset (`dataset`), optionally pre-filtered by text. */
   data: (cid: string, p: { step?: string | null; dataset?: string | null; q?: string | null } = {}) => `${base(cid)}/data${qs(p)}`,
 };
 

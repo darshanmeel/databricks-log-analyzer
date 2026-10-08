@@ -147,7 +147,7 @@ const TABS: Tab[] = [
     alert: (r, s) => (r ? r.status === 'failed' : (s.counts.failed_jobs ?? 0) > 0) },
   { label: 'Events & timeline', routes: ['story', 'timeline'], sub: [['story', 'Events'], ['timeline', 'Timeline']] },
   { label: 'Executors', routes: ['executors'], count: (r, s) => (r ? undefined : s.counts.executors), alert: (r, s) => { const c = s.counts as Summary['counts'] & { executors_oom?: number; executors_killed?: number }; return !r && (c.executors_lost ?? 0) + (c.executors_oom ?? 0) + (c.executors_killed ?? 0) > 0; } },
-  { label: 'Logs & tables', routes: ['logs', 'data'], sub: [['logs', 'Logs'], ['data', 'Tables (debug)']] },
+  { label: 'Logs & raw data', routes: ['logs', 'data'], sub: [['logs', 'Logs'], ['data', 'Raw data']] },
 ];
 
 function compact(n: number): string {
@@ -176,15 +176,15 @@ function storeRun(cid: string, run: string) {
   }
 }
 
-/** Every page but the Overview, Logs and Tables looks at one run. The Overview with no run picked is the cluster; the
- * analysis pages always have a run (the worst one when none was picked), so there is no "whole cluster" or "group"
- * choice on them. Logs and Tables show the whole cluster when no run is picked. */
-const RUN_PAGES = new Set(['story', 'timeline', 'hierarchy', 'findings', 'errors', 'stages', 'queries']);
+/** The analysis pages look at one run (the worst one when none was picked), so there is no "whole cluster" or "group"
+ * choice on them. The Overview, Findings, Errors, Logs and Raw data show the whole cluster when no run is picked. */
+const RUN_PAGES = new Set(['story', 'timeline', 'hierarchy', 'stages', 'queries']);
 /** Revision 18: executors are shared by every run on the cluster, so with several runs their page is the cluster's (a
  * run's own work per executor is on its stage, job and query pages). */
 const CLUSTER_PAGES = new Set(['executors']);
-/** Raw pages that work both ways: the whole cluster (from the cluster's tabs) or cut to one run (from a run's tabs). */
-const EITHER_PAGES = new Set(['logs', 'data']);
+/** Pages that work both ways: the whole cluster (from the cluster's tabs) or cut to one run (from a run's tabs). The
+ * cluster's findings and errors are every run's together, so "All 111 problems" never opens one run's 15. */
+const EITHER_PAGES = new Set(['findings', 'errors', 'logs', 'data']);
 
 export interface RunScope { runs: RunRow[]; run: string | null; choose: (r: string | null) => void; clock?: RunClock | null }
 const RunScopeContext = createContext<RunScope>({ runs: [], run: null, choose: () => {} });
@@ -379,7 +379,7 @@ function RunTitle({ r }: { r: RunRow }) {
 
 /** The cluster's own tabs: its overview, and the raw pages for the whole cluster. */
 function ClusterTabs({ base, section }: { base: string; section: string }) {
-  const tabs: [string, string][] = [['', 'Overview'], ['executors', 'Executors (all runs)'], ['logs', 'Logs (whole cluster)'], ['data', 'Tables (debug)']];
+  const tabs: [string, string][] = [['', 'Overview'], ['findings', 'Findings'], ['errors', 'Errors'], ['executors', 'Executors'], ['logs', 'Logs'], ['data', 'Raw data']];
   return (
     <div className="tabs" role="tablist">
       {tabs.map(([r, l]) => (

@@ -510,7 +510,7 @@ export function SpillShuffleMini({ cid, ctx }: { cid: string; ctx: string | null
         ) : (
           width > 0 && (
             <div className="ss-mini">
-              <Strip label="Spill, disk + memory" cells={agg.cells} pick={(c) => c.v.disk_spill + c.v.mem_spill} t0={agg.t0} t1={agg.t1} width={width} color="var(--seq-3)" />
+              <Strip label="Spill, disk + memory" cells={agg.cells} pick={(c) => c.v.disk_spill + c.v.mem_spill} t0={agg.t0} t1={agg.t1} width={width} color="var(--spill)" />
               <Strip label="Shuffle, read + write" cells={agg.cells} pick={(c) => c.v.shuffle_read + c.v.shuffle_write} t0={agg.t0} t1={agg.t1} width={width} color="var(--seq-3)" />
               <div className="ss-mini-axis small muted">
                 <span>{fmtTime(agg.t0)}</span>
@@ -526,10 +526,10 @@ export function SpillShuffleMini({ cid, ctx }: { cid: string; ctx: string | null
 
 /* ------------------------------------------------------------------ all four measures at once */
 
-/** One hue per measure in the "All" view: spill in the warning colors, shuffle in the series colors. */
+/** One hue per measure in the "All" view, the same as everywhere else (red and amber are kept for status). */
 const ALL_COLOR: Record<MeterKey, string> = {
-  disk_spill: 'var(--st-crit)',
-  mem_spill: 'var(--st-warn)',
+  disk_spill: 'var(--spill)',
+  mem_spill: 'var(--c5)',
   shuffle_read: 'var(--series-1)',
   shuffle_write: 'var(--series-3)',
 };
