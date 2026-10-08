@@ -1,7 +1,7 @@
 import { Fragment, createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, Outlet, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { api, optional, setRunScope, type ClusterListItem, type RunRow, type Summary } from '../api';
+import { api, optional, setRunScope, type ClusterListItem, type RunClock, type RunRow, type Summary } from '../api';
 import { useAsync } from '../hooks';
 import { fmtDuration, fmtNum, fmtTime } from '../format';
 import { ErrorState, Loading, StatusBadge } from './ui';
@@ -182,7 +182,7 @@ const CLUSTER_PAGES = new Set(['executors']);
 /** Raw pages that work both ways: the whole cluster (from the cluster's tabs) or cut to one run (from a run's tabs). */
 const EITHER_PAGES = new Set(['logs', 'data']);
 
-export interface RunScope { runs: RunRow[]; run: string | null; choose: (r: string | null) => void }
+export interface RunScope { runs: RunRow[]; run: string | null; choose: (r: string | null) => void; clock?: RunClock | null }
 const RunScopeContext = createContext<RunScope>({ runs: [], run: null, choose: () => {} });
 export const useRunScopeCtx = () => useContext(RunScopeContext);
 
@@ -222,7 +222,7 @@ function useRunScope(cid: string, section: string) {
     storeRun(cid, next ?? ALL_RUNS);
     setPicked(next ?? ALL_RUNS);
   };
-  return { runs, run, choose, loaded: !runsSt.loading };
+  return { runs, run, choose, loaded: !runsSt.loading, clock: data?.clock ?? null };
 }
 
 /** Everything a run can be searched by: its name, table, notebook, job name, ids (task run, job run, parent run) and start time. */
@@ -425,7 +425,7 @@ export function ClusterLayout() {
 
   const page = !summary ? null : (
     <ClusterContext.Provider value={{ cid, summary }}>
-      <RunScopeContext.Provider value={{ runs: scope.runs, run: scope.run, choose: scope.choose }}>
+      <RunScopeContext.Provider value={{ runs: scope.runs, run: scope.run, choose: scope.choose, clock: scope.clock }}>
         {summary.empty_reason && (
           <div className="page" style={{ paddingBottom: 0 }}>
             <EmptyCluster reason={summary.empty_reason} />

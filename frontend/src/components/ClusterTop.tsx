@@ -8,7 +8,7 @@ import { useAsync } from '../hooks';
 import { fmtBytes, fmtDuration, fmtNum, fmtPct, fmtRows, fmtTime, truncate } from '../format';
 import { to } from '../links';
 import { runGroup, runId, runName, usualX } from '../runName';
-import { isSlow, useCluster } from './Shell';
+import { isSlow, useCluster, useRunScopeCtx } from './Shell';
 import { Fold } from './ui';
 import { FindingPoints, depthOf, kindName, plainFirst } from './FindingPoints';
 import { AdviceItem, SettingsTable } from './SettingsAdvice';
@@ -86,17 +86,23 @@ export function ClusterTop({ cid, runs, executors, compute, onPick, find, more, 
 
   const fs = useAsync((s) => api.datasetOpt<FindingRow & { run_key?: string | null }>(cid, 'findings', { limit: 500, run: '' }, s), [cid]);
   const use = useCluster().summary.core_use;
+  const clock = useRunScopeCtx().clock;
+  const up = compute?.cluster_start && compute?.cluster_end ? compute.cluster_end - compute.cluster_start : null;
+  const busy = useMemo(() => busyClock(runs, t1), [runs, t1]);
   const findings = useMemo(() => [...(fs.data?.rows ?? [])].sort(plainFirst), [fs.data]);
   const errs = useAsync((s) => api.errors(cid, s).catch(() => [] as ErrorGroup[]), [cid]);
 
   return (
     <>
       <div className="kpis">
+        <Tile label="Clock time" value={fmtDuration(up ?? busy)}
+          foot={<>{up ? <>cluster up · runs going {fmtDuration(busy)}</> : 'first run to last'} · run time added up <b>{fmtDuration(took)}</b>{busy && took / busy >= 1.05 ? ` (${(took / busy).toFixed(1)} at once on average)` : ''}</>} />
         <Tile label="Runs" value={fmtNum(runs.length)} foot={failed.length ? `${fmtNum(failed.length)} failed` : retried.length ? `none failed · ${fmtNum(retried.length)} after retries` : 'none failed'}
           tone={failed.length ? 'bad' : undefined} />
         <Tile label="Slower than usual" value={fmtNum(slow.length)} foot="2× their usual or more" tone={slow.length ? 'warn' : undefined} />
         <Tile label="At once" value={fmtNum(peak.n)} foot={`at ${fmtTime(peak.at).slice(0, 5)} on ${fmtNum(executors.length)} executors`} tone={peak.n >= 10 ? 'warn' : undefined} />
-        <Tile label="Waiting for cores" value={fmtDuration(waiting)} foot={`${fmtPct(waitShare, 0)} of all run time`} tone={waitShare >= 0.2 ? 'warn' : undefined} />
+        <Tile label="Waiting for cores" value={fmtDuration(waiting)}
+          foot={<>added up over runs, {fmtPct(waitShare, 0)} of run time{clock ? <> · on the clock <b>{fmtDuration(clock.waiting_ms)}</b> with a run waiting{up ? ` (${fmtPct(Math.min(1, clock.waiting_ms / up), 0)} of up time)` : ''}</> : null}</>} tone={waitShare >= 0.2 ? 'warn' : undefined} />
         <Tile label="Tasks" value={fmtNum(sum(runs, (r) => r.tasks))} foot={sum(runs, (r) => r.failed_tasks) ? `${fmtNum(sum(runs, (r) => r.failed_tasks))} attempts failed` : 'none failed'}
           tone={sum(runs, (r) => r.failed_tasks) ? 'warn' : undefined} />
         <Tile label="Spill" value={fmtBytes(spill)} foot="to disk, all runs" tone={spill >= GB ? 'spill' : undefined} />
@@ -150,9 +156,9 @@ function WhySlow({ cid, progs, waiting, took, running, peak, execs, cores, slow 
   return (
     <>
       <ul className="ro-points">
-        {share >= 0.1 && <li><b>{fmtDuration(waiting)} waiting for a free core</b> <span className="muted">· {fmtPct(share, 0)} of {fmtDuration(took)}</span></li>}
+        {share >= 0.1 && <li><b>{fmtDuration(waiting)} waiting for a free core</b> <span className="muted">· added up over runs, {fmtPct(share, 0)} of their {fmtDuration(took)}</span></li>}
         {share >= 0.1 && <li>Up to <b>{fmtNum(peak)} runs at once</b> <span className="muted">on {fmtNum(execs)} executors{cores ? ` (${fmtNum(cores)} cores)` : ''}</span></li>}
-        {top && <li><b>{top.name}</b> {topShare >= 0.4 ? 'did most of the work' : 'did the most work'} <span className="muted">· {fmtDuration(top.running)} over {fmtNum(top.runs.length)} runs{top.spill >= GB ? `, spilled ${fmtBytes(top.spill)}` : ''}</span></li>}
+        {top && <li><b>{top.name}</b> {topShare >= 0.4 ? 'did most of the work' : 'did the most work'} <span className="muted">· {fmtDuration(top.running)} running tasks, added up over {fmtNum(top.runs.length)} runs{top.spill >= GB ? `, spilled ${fmtBytes(top.spill)}` : ''}</span></li>}
         {worst && <li><b>{slow.length === 1 ? 'One run' : `${fmtNum(slow.length)} runs`} 2× usual or more</b>; worst <Link to={inRun(to.overview(cid), worst.run_key)}>{runName(worst)}</Link> <span className="muted">· {fmtDuration(worst.duration_ms)}, {usualX(worst)!.toFixed(1)}×</span></li>}
         {!top && !worst && share < 0.1 ? <li>No run was slow: none waited long for cores, none took twice its usual time</li> : null}
       </ul>

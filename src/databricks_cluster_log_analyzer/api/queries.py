@@ -851,7 +851,7 @@ def runs(store: Store, cid: str) -> dict[str, Any]:
                 r["parent_run_id"] = jr
             r["job_run_ids"] = ids or None  # the cluster's job run and the run above it, both searchable
     s = read_summary(store, cid).get("runs") or {}
-    return {"runs": rows, "default_run": s.get("default_run"), "note": s.get("note")}
+    return {"runs": rows, "default_run": s.get("default_run"), "note": s.get("note"), "clock": times.get("__clock__")}
 
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -1892,8 +1892,14 @@ def _run_times(store: Store, con, cid: str) -> dict[str, dict]:
                              f"FROM {store.src(spath)} WHERE run_key IS NOT NULL")
     firsts = {(r["spark_context_id"], r["stage_id"], r["stage_attempt"]): _as_ms(r["first"]) for r in store.rows(
         con, f"SELECT spark_context_id, stage_id, stage_attempt, min(launch_time) AS first FROM {store.src(tpath)} GROUP BY 1, 2, 3")}
-    out = {k: {"waiting_ms": sum(b - a for a, b in w), "running_ms": sum(b - a for a, b in r)}
-           for k, (w, r) in _wait_and_run(stages, firsts, lambda st: st.get("run_key")).items()}
+    wr = _wait_and_run(stages, firsts, lambda st: st.get("run_key"))
+    out = {k: {"waiting_ms": sum(b - a for a, b in w), "running_ms": sum(b - a for a, b in r)} for k, (w, r) in wr.items()}
+    # on the cluster's clock (runs overlap, so the sums above can be days): time with at least one run waiting for a
+    # free core, with at least one running tasks, and with both at once
+    ws = _merge([x for w, _ in wr.values() for x in w])
+    rs = _merge([x for _, r in wr.values() for x in r])
+    both = sum(max(0, min(b, d) - max(a, c)) for a, b in ws for c, d in rs if c < b and a < d)
+    out["__clock__"] = {"waiting_ms": sum(b - a for a, b in ws), "running_ms": sum(b - a for a, b in rs), "both_ms": both}
     _RUN_TIMES.clear()
     _RUN_TIMES[stamp] = out
     return out

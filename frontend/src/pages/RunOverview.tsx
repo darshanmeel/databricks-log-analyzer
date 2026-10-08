@@ -216,6 +216,23 @@ function HowEnded({ cid, e, d }: { cid: string; e: RunEnd; d: RunSteps | null })
 }
 
 /** Streaming runs: how many micro-batches, and whether one of them is the run. */
+/** The run's own clock against its queries' times added up (they can overlap), and how the clock split. */
+function RunClockLine({ d, total }: { d: RunSteps; total: number }) {
+  const gs = d.groups;
+  if (gs.length < 2 || !total) return null;
+  const sumQ = gs.reduce((s, g) => s + took(g), 0);
+  const ev = gs.flatMap((g) => [[g.start, 1], [g.end, -1]] as [number, number][]).sort((x, y) => x[0] - y[0] || x[1] - y[1]);
+  let n = 0, peak = 0;
+  for (const [, k] of ev) { n += k; peak = Math.max(peak, n); }
+  return (
+    <div className="note">
+      On its clock <b>{fmtDuration(total)}</b>: waited for cores {fmtDuration(d.waiting_ms)}, ran tasks {fmtDuration(d.running_ms)}, no Spark work {fmtDuration(d.outside_ms ?? 0)}.{' '}
+      Its {fmtNum(gs.length)} queries and jobs add up to <b>{fmtDuration(sumQ)}</b>{sumQ > total * 1.05
+        ? <> because they overlapped (up to {fmtNum(peak)} at once)</> : sumQ < total * 0.95 ? <>; the rest of the clock is between them</> : null}.
+    </div>
+  );
+}
+
 function Batches({ d, total }: { d: RunSteps; total: number }) {
   const bs = d.batches ?? [];
   if (!bs.length) return null;
@@ -250,6 +267,7 @@ function TimeWent({ cid, d, a, allSteps, setAllSteps }: { cid: string; d: RunSte
         <div>
           <h2>Where the {fmtDuration(a.total)} went</h2>
           <div className="note"><CauseHeadline parts={parts} total={a.total} spill={d.causes?.disk_spill} /> Click a part to rank the queries by it.</div>
+          <RunClockLine d={d} total={a.total} />
           <Batches d={d} total={a.total} />
         </div>
         <div className="ro-legend small muted"><CauseLegend parts={parts} total={a.total} /></div>

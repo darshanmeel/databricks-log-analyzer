@@ -187,7 +187,9 @@ export interface RunRow {
   shuffle_read: number | null; shuffle_write: number | null; findings: number; max_severity: Severity | null;
   overlapping_runs: string[] | null;
 }
-export interface RunsResponse { runs: RunRow[]; default_run: string | null; note: string | null }
+/** On the cluster's clock: time with at least one run waiting for a free core, running tasks, and both at once. */
+export interface RunClock { waiting_ms: number; running_ms: number; both_ms: number }
+export interface RunsResponse { runs: RunRow[]; default_run: string | null; note: string | null; clock?: RunClock | null }
 
 export interface RetrySummary {
   tasks?: number; stages?: number; failed_attempts?: number; still_failed?: number; wasted_ms?: number;
