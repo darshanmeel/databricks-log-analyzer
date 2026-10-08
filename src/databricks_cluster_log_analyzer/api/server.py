@@ -379,8 +379,8 @@ def create_app(output_root: Path, cache_root: Path, *, frontend_dist: Optional[P
         return Q.query_logic_view(store, cid, ctx, id)
 
     @app.get("/api/clusters/{cid}/tables")
-    def tables(cid: str):
-        return Q.cluster_tables(store, cid)
+    def tables(cid: str, run: Optional[str] = None, ctx: Optional[str] = None, query: Optional[int] = None):
+        return Q.cluster_tables(store, cid, run, ctx, query)
 
     @app.get("/api/clusters/{cid}/run-tables")
     def run_tables(cid: str, run: str):

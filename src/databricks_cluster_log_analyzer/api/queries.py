@@ -4086,8 +4086,8 @@ def query_logic_view(store: Store, cid: str, ctx: str, exec_id: int) -> dict[str
 _BATCH = re.compile(r"[Bb]atch[ =]+(\w+)")
 
 
-def table_stats(store: Store, con, cid: str, run: str | None = None) -> dict[str, dict[str, Any]]:
-    """Per table read from files (one run, or the whole cluster): its size and file count from a scan that skipped
+def table_stats(store: Store, con, cid: str, run: str | None = None, query: tuple[str, int] | None = None) -> dict[str, dict[str, Any]]:
+    """Per table read from files (one query, one run, or the whole cluster): its size and file count from a scan that skipped
     nothing (files read + files skipped; the largest scan, as tables grow), the average file, how many times it was
     scanned and in how many runs, what the scan stages pulled from the files (only the needed columns: Parquet is
     columnar), and their wall and task time."""
@@ -4101,9 +4101,13 @@ def table_stats(store: Store, con, cid: str, run: str | None = None) -> dict[str
     qsch = store.schema(con, qpath)
     by_run = run is not None and "run_key" in qsch
     rk = "q.run_key" if "run_key" in qsch else "NULL"
+    qw, qp = ("", [])
+    if query is not None:
+        qw, qp = " AND q.spark_context_id = ? AND q.sql_execution_id = ?", [query[0], int(query[1])]
+    elif by_run:
+        qw, qp = " AND q.run_key = ?", [run]
     rows = store.rows(con, f"SELECT n.name, n.metrics_json, {rk} AS run_key FROM {store.src(npath)} n JOIN {store.src(qpath)} q "
-                           f"USING (spark_context_id, sql_execution_id) WHERE n.name LIKE 'Scan %'"
-                           + (" AND q.run_key = ?" if by_run else ""), [run] if by_run else [])
+                           f"USING (spark_context_id, sql_execution_id) WHERE n.name LIKE 'Scan %'{qw}", qp)
     for r in rows:
         tbl, how, _ = _scan_table(r["name"] or "")
         if not tbl or how != "reads files":
@@ -4115,7 +4119,7 @@ def table_stats(store: Store, con, cid: str, run: str | None = None) -> dict[str
             pass
         t = out.setdefault(tbl, {"table": tbl, "scans": 0, "runs": set(), "size_bytes": None, "files": None,
                                  "files_read": 0, "bytes_read": 0, "files_pruned": 0, "bytes_pruned": 0,
-                                 "partition_cols": 0, "scan_stages": 0, "bytes_from_files": 0, "scan_wall_ms": 0, "scan_task_ms": 0})
+                                 "partition_cols": 0, "scan_stages": 0, "bytes_from_files": 0, "rows_from_files": 0, "scan_wall_ms": 0, "scan_task_ms": 0})
         t["scans"] += 1
         if r.get("run_key"):
             t["runs"].add(r["run_key"])
@@ -4130,15 +4134,22 @@ def table_stats(store: Store, con, cid: str, run: str | None = None) -> dict[str
             t["size_bytes"], t["files"] = br + bp, fr + fp
     if out and spath is not None:
         ssch = store.schema(con, spath)
-        where = "run_key = ?" if run is not None and "run_key" in ssch else "TRUE"
-        sts = store.rows(con, f"SELECT spark_context_id, stage_id, stage_attempt, rdd_scopes, input_bytes, duration_ms FROM "
-                              f"{store.src(spath)} WHERE {where}", [run] if where != "TRUE" else [])
+        where, wp = "TRUE", []
+        if query is not None and "sql_execution_id" in ssch:
+            where, wp = "spark_context_id = ? AND sql_execution_id = ?", [query[0], int(query[1])]
+        elif run is not None and "run_key" in ssch:
+            where, wp = "run_key = ?", [run]
+        rec = "input_records" if "input_records" in ssch else "NULL AS input_records"
+        sts = store.rows(con, f"SELECT spark_context_id, stage_id, stage_attempt, rdd_scopes, input_bytes, {rec}, duration_ms FROM "
+                              f"{store.src(spath)} WHERE {where}", wp)
         tm: dict[tuple, float] = {}
         if tpath is not None:
             tsch = store.schema(con, tpath)
-            tw = "run_key = ?" if run is not None and "run_key" in tsch else "TRUE"
+            tw = "run_key = ?" if run is not None and query is None and "run_key" in tsch else "TRUE"
+            if query is not None:
+                tw = "spark_context_id = ?"
             for r in store.rows(con, f"SELECT spark_context_id, stage_id, stage_attempt, sum(task_ms) AS ms FROM {store.src(tpath)} "
-                                     f"WHERE {tw} GROUP BY 1, 2, 3", [run] if tw != "TRUE" else []):
+                                     f"WHERE {tw} GROUP BY 1, 2, 3", [query[0]] if query is not None else [run] if tw != "TRUE" else []):
                 tm[(r["spark_context_id"], r["stage_id"], r["stage_attempt"])] = r["ms"] or 0
         for st in sts:
             for sc in st.get("rdd_scopes") or []:
@@ -4147,6 +4158,7 @@ def table_stats(store: Store, con, cid: str, run: str | None = None) -> dict[str
                     t = out[tbl]
                     t["scan_stages"] += 1
                     t["bytes_from_files"] += st.get("input_bytes") or 0
+                    t["rows_from_files"] += st.get("input_records") or 0
                     t["scan_wall_ms"] += st.get("duration_ms") or 0
                     t["scan_task_ms"] += tm.get((st["spark_context_id"], st["stage_id"], st["stage_attempt"]), 0)
                     break
@@ -4186,9 +4198,10 @@ def merge_cycles(queries: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return merges
 
 
-def cluster_tables(store: Store, cid: str) -> dict[str, Any]:
-    """Every table the cluster read from files: size, files, average file, scans, runs, read from the files, scan time."""
+def cluster_tables(store: Store, cid: str, run: str | None = None, ctx: str | None = None, query: int | None = None) -> dict[str, Any]:
+    """Every table the cluster (or one run, or one query) read from files: size, files, average file, scans, runs, read
+    from the files, scan time."""
     store.cluster_dir(cid)
     with store.connect() as con:
-        st = table_stats(store, con, cid)
+        st = table_stats(store, con, cid, run or None, (ctx, query) if ctx and query is not None else None)
     return {"tables": sorted(st.values(), key=lambda t: -(t["scan_task_ms"] or 0))}

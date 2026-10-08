@@ -687,7 +687,7 @@ export const api = {
   stageWhy: (cid: string, ctx: string, by: { query?: number; job?: number }, s?: AbortSignal) => get<{ stages: StageWhy[] }>(`${c(cid)}/stage-why`, { ctx, ...by }, s),
   runEnd: (cid: string, run: string, s?: AbortSignal) => get<RunEnd>(`${c(cid)}/run-end`, { run }, s),
   queryLogic: (cid: string, ctx: string, id: number, s?: AbortSignal) => get<PlanLogic>(`${c(cid)}/query-logic`, { ctx, id: String(id) }, s),
-  tables: (cid: string, s?: AbortSignal) => get<{ tables: TableStats[] }>(`${c(cid)}/tables`, undefined, s),
+  tables: (cid: string, s?: AbortSignal, scope?: { run?: string; ctx?: string; query?: number }) => get<{ tables: TableStats[] }>(`${c(cid)}/tables`, scope, s),
   runTables: (cid: string, run: string, s?: AbortSignal) => get<RunTables>(`${c(cid)}/run-tables`, { run }, s),
   group: (cid: string, runs: string[], s?: AbortSignal) => get<GroupView>(`${c(cid)}/group`, { runs: runs.join(',') }, s),
   gantt: (cid: string, ctx: string | null, maxTasks = 20000, s?: AbortSignal, win?: { start: number; end: number }) =>
@@ -964,7 +964,7 @@ export interface RunTables {
 export interface TableStats {
   table: string; size_bytes: number | null; files: number | null; avg_file_bytes: number | null; scans: number; runs: number;
   files_read: number; files_pruned: number; bytes_read: number; bytes_pruned: number; partition_cols: number;
-  scan_stages: number; bytes_from_files: number; scan_wall_ms: number; scan_task_ms: number;
+  scan_stages: number; bytes_from_files: number; rows_from_files?: number; scan_wall_ms: number; scan_task_ms: number;
 }
 export interface MergeCycle {
   batch: string | null; start: number | null; end: number | null; kind: 'upserts' | 'deletes' | null; target: string | null;

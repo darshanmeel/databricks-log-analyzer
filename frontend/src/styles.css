@@ -1706,3 +1706,15 @@ details.err-then > summary { cursor: pointer; }
 .level-table th .unit { display: block; line-height: 1.1; }
 .level-table td.num { white-space: nowrap; }
 .why.more { background: var(--surface-3); color: var(--text-2); cursor: help; }
+
+/* Tables read: highlighted, it tells in a second whether a table was read too big, whole or too often */
+.tables-read { border-left: 4px solid var(--st-warn); }
+.tables-read.stack, div.tables-read { padding: 12px 14px; border-radius: var(--radius-sm); background: var(--surface-2); }
+.tr-head { display: flex; flex-direction: column; gap: 6px; }
+.tr-line { font-size: 15px; line-height: 1.45; max-width: 110ch; }
+.tr-flags { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 2px; font-size: 14px; }
+.tr-flags li.bad, .tr-flags li.bad::marker { color: var(--st-crit-ink); }
+
+/* rows passed along a link (stage to stage, job to job, query to query) */
+.g-pass { font-size: 11px; font-weight: 600; fill: var(--text-2); paint-order: stroke; stroke: var(--surface); stroke-width: 3px; font-variant-numeric: tabular-nums; pointer-events: auto; }
+.g-pass.dim { opacity: .35; }

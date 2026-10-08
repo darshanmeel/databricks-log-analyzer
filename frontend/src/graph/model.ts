@@ -306,14 +306,23 @@ export function deriveGraph(h: Hierarchy, ops: ConnectOperationRow[], ctx: strin
   }
   for (const s of app.orphan_stages ?? []) addStage(s, appId, null);
 
-  // dependencies (only when the backend already exposes parent_ids) and stage retries
+  // dependencies (only when the backend already exposes parent_ids) and stage retries; a link carries what the parent
+  // wrote to the shuffle (its last attempt), which is what the child reads from it
+  const lastOf = new Map<number, StageRow>();
+  for (const s of allStages) if ((lastOf.get(s.stage_id)?.stage_attempt ?? -1) < s.stage_attempt) lastOf.set(s.stage_id, s);
   for (const s of allStages) {
     const tid = `stage:${c}:${s.stage_id}:${s.stage_attempt}`;
     for (const p of s.parent_ids ?? []) {
       const pids = stageNode.get(p);
       if (!pids?.length) continue;
       const reused = stageJob.get(p) !== stageJob.get(s.stage_id);
-      edges.push({ source: pids[pids.length - 1], target: tid, kind: 'depends', label: reused ? 'reused' : null });
+      // a parent skipped under AQE wrote nothing itself (its output was reused): with one parent, what the stage read
+      // from the shuffle is what came over this link
+      const ps = lastOf.get(p);
+      const one = (s.parent_ids ?? []).length === 1;
+      const rows = ps?.shuffle_write_records || (one ? s.shuffle_read_records : null) || null;
+      const bytes = ps?.shuffle_write || (one ? s.shuffle_read : null) || null;
+      edges.push({ source: pids[pids.length - 1], target: tid, kind: 'depends', label: reused ? 'reused' : null, rows, bytes });
     }
     if (s.stage_attempt > 0) {
       const prev = `stage:${c}:${s.stage_id}:${s.stage_attempt - 1}`;

@@ -876,8 +876,9 @@ export default function HierarchyPage() {
 const unitOfFlow = (k: string) => k.replace(/^q:/, 'query:').replace(/^j:/, 'job:');
 const flowOfUnit = (u: string) => u.replace(/^query:/, 'q:').replace(/^job:/, 'j:');
 
-function ctxCard(n: FlowNode, why: string, depth?: number, link?: string): FlowCtx {
-  return { unit: unitOfFlow(n.key), label: n.kind === 'query' ? `Query ${n.id}` : `Job ${n.id}`, what: n.what ?? '', status: n.status, why, depth, link };
+function ctxCard(n: FlowNode, why: string, depth?: number, link?: string, e?: FlowEdge): FlowCtx {
+  return { unit: unitOfFlow(n.key), label: n.kind === 'query' ? `Query ${n.id}` : `Job ${n.id}`, what: n.what ?? '', status: n.status, why, depth, link,
+    rows: e?.rows ?? null, bytes: e?.bytes ?? null };
 }
 
 /** Why an edge links two queries, said from the side of the one we look from. */
@@ -910,7 +911,7 @@ function chainOf(f: Flow | null, unitId: string) {
           if (!other || seen.has(other) || !by.has(other) || out.length >= CHAIN_MAX) continue;
           seen.add(other);
           next.push(other);
-          out.push(ctxCard(by.get(other)!, dir === 'before' ? whyBefore(e) : whyAfter(e), depth, k === me ? undefined : unitOfFlow(k)));
+          out.push(ctxCard(by.get(other)!, dir === 'before' ? whyBefore(e) : whyAfter(e), depth, k === me ? undefined : unitOfFlow(k), e));
         }
       }
       front = next;
@@ -942,9 +943,9 @@ function neighbours(f: Flow | null, unitId: string) {
   for (const e of f.edges) {
     if (e.to === me && by.has(e.from)) {
       if (e.kind === 'inside') parent = e.from;
-      before.push(ctxCard(by.get(e.from)!, whyBefore(e)));
+      before.push(ctxCard(by.get(e.from)!, whyBefore(e), undefined, undefined, e));
     } else if (e.from === me && by.has(e.to)) {
-      after.push(ctxCard(by.get(e.to)!, whyAfter(e)));
+      after.push(ctxCard(by.get(e.to)!, whyAfter(e), undefined, undefined, e));
     }
   }
   // nothing links it on a side: offer what ran just before / just after it (the run's order), folded by default

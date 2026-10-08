@@ -2,6 +2,7 @@
 // jobs and stages, its numbers, then its jobs as a table (click one). A job: the same over its stages, then its
 // stages (click one for the task level). Numbers and small charts, not sentences.
 import { CauseBar, CauseLegend, causeParts } from './CauseBar';
+import { TablesRead } from './TableStats';
 import { useState } from 'react';
 import { api, type SparkJobRow, type StageRow, type StageWhy } from '../api';
 import { useAsync } from '../hooks';
@@ -459,6 +460,7 @@ export function QuerySummary({ cid, ctx, id, title, onJob, onQuery, tasks = true
         {tst.data && <QueryTimeBar t={tst.data} onQuery={(qid) => onQuery?.(qid)} />}
         {tst.data && <QuerySteps t={tst.data} id={id} onJob={onJob} onQuery={(qid) => onQuery?.(qid)} />}
         <WhyLine dur={q?.duration_ms ?? null} stages={stages} why={why} />
+        <TablesRead cid={cid} scope={{ ctx, query: id }} embedded />
         <VCards cards={levelCards(stages, 'query', why)} compact />
         <Numbers dur={q?.duration_ms ?? null} kids={jobs.length} kidWord="Jobs" stages={stages} />
         <h3 className="h-sub" style={{ margin: 0 }}>Its {fmtNum(jobs.length)} {jobs.length === 1 ? 'job' : 'jobs'} <span className="muted small">each job's time, wait for cores, stages, tasks and shuffle · click a header to sort, a job for its stages and executors</span></h3>

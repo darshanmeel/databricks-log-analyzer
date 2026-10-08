@@ -1,6 +1,6 @@
 // Interactive SVG for the Hierarchy graph: Flow (layered DAG per job) and Time (shared time axis).
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { fmtBytes, fmtDuration, fmtNum, fmtPct, fmtSkew, fmtTs, tickLabel, timeTicks, truncate } from '../format';
+import { fmtBytes, fmtDuration, fmtNum, fmtPct, fmtRows, fmtSkew, fmtTs, tickLabel, timeTicks, truncate } from '../format';
 import { FLOW, flowLayout, QBOX_HEAD, TIME, timeLayout, type FlowAround, type FlowCtx, type FlowLayout, type FoldSide, type Rect, type TimeLayout } from './layout';
 import { METRIC_META, STATUS_META, typeLabel, type FilterKey, type GModel, type GNode } from './model';
 
@@ -258,21 +258,31 @@ function CtxCard({ c, side, r, box, to }: { c: FlowCtx; side: 'before' | 'after'
   const d = to
     ? side === 'before' ? curve(r.x + r.w, y, to.x - 2, to.y + to.h / 2) : curve(to.x + to.w, to.y + to.h / 2, r.x - 2, y)
     : side === 'before' ? curve(r.x + r.w, y, box.x - 34, by) : curve(box.x + box.w + 34, by, r.x - 2, y);
+  const p = passed(c.rows, c.bytes);
+  const [lx, ly] = to
+    ? side === 'before' ? [(r.x + r.w + to.x) / 2, (y + to.y + to.h / 2) / 2] : [(to.x + to.w + r.x) / 2, (to.y + to.h / 2 + y) / 2]
+    : side === 'before' ? [(r.x + r.w + box.x - 34) / 2, (y + by) / 2] : [(box.x + box.w + 34 + r.x) / 2, (by + y) / 2];
   return (
     <g>
-      <path className="gedge ctx" d={d} markerEnd="url(#ga-link)" />
+      <path className="gedge ctx" d={d} markerEnd="url(#ga-link)"><title>{p ? `Passed along: ${p}` : c.why}</title></path>
+      {c.rows != null && <text className="g-pass" x={lx} y={ly - 6} textAnchor="middle">{fmtRows(c.rows)} rows<title>{`Passed along: ${p}`}</title></text>}
       <g className={`gnode caller ctxcard ${failed ? 'failed' : ''}`} transform={`translate(${r.x},${r.y})`} data-id={`unit:${c.unit}`} role="button" aria-label={`${side}: ${c.label}`}>
         <rect className="body" width={r.w} height={r.h} rx={8} />
         <text x={12} y={17} className="g-kicker">{truncate(c.why, 36)}</text>
         <text x={12} y={36} className="g-title">{c.label}{failed ? ' ✕' : ''}</text>
         <text x={12} y={54} className="g-sub">{truncate(c.what.replace(/\s+/g, ' '), 36)}</text>
-        <title>{`${side === 'before' ? 'Before' : 'After'}: ${c.label} ${c.why}. Click to open it.`}</title>
+        <title>{`${side === 'before' ? 'Before' : 'After'}: ${c.label} ${c.why}${p ? ` (${p})` : ''}. Click to open it.`}</title>
       </g>
     </g>
   );
 }
 
 /* ------------------------------------------------------------------ edges */
+
+/** "38.7M rows · 2.1 GB": what a link passed along (rows a stage wrote to the shuffle, or a query wrote to a table). */
+const passed = (rows?: number | null, bytes?: number | null) =>
+  [rows != null ? `${fmtRows(rows)} rows` : null, bytes ? fmtBytes(bytes) : null].filter(Boolean).join(' · ');
+
 
 const curve = (sx: number, sy: number, tx: number, ty: number) => {
   const dx = Math.max(28, Math.abs(tx - sx) / 2);
@@ -293,17 +303,26 @@ function FlowEdges({ m, L, sel, dim }: { m: GModel; L: FlowLayout; sel: string |
       if (reused && !hot) {
         // a long edge across job boxes is noise: draw a short dashed stub into the stage instead
         const src = m.byId.get(e.source);
+        const p = passed(e.rows, e.bytes);
         out.push(
-          <path key={i} className={`${cls} reused`} d={`M${b.x - 26},${b.y + b.h / 2 - 14} Q${b.x - 14},${b.y + b.h / 2} ${b.x - 2},${b.y + b.h / 2}`} markerEnd="url(#ga-dep)">
-            <title>{`Reads the output of ${src?.label ?? 'a stage'} from an earlier job (select either stage to see the link)`}</title>
-          </path>,
+          <g key={i}>
+            <path className={`${cls} reused`} d={`M${b.x - 26},${b.y + b.h / 2 - 14} Q${b.x - 14},${b.y + b.h / 2} ${b.x - 2},${b.y + b.h / 2}`} markerEnd="url(#ga-dep)">
+              <title>{`Reads the output of ${src?.label ?? 'a stage'} from an earlier job${p ? `: ${p}` : ''} (select either stage to see the link)`}</title>
+            </path>
+            {e.rows != null && <text className="g-pass" x={b.x - 28} y={b.y + b.h / 2 - 18} textAnchor="end">{fmtRows(e.rows)} rows<title>{`From ${src?.label ?? 'a stage'} of an earlier job: ${p}`}</title></text>}
+          </g>,
         );
         return;
       }
+      const p = passed(e.rows, e.bytes);
+      const mx = (a.x + a.w + b.x) / 2, my = (a.y + a.h / 2 + b.y + b.h / 2) / 2;
       out.push(
-        <path key={i} className={`${cls} ${reused ? 'reused' : ''}`} d={curve(a.x + a.w, a.y + a.h / 2, b.x - 2, b.y + b.h / 2)} markerEnd={`url(#ga-${hot ? 'hot' : 'dep'})`}>
-          <title>{reused ? 'Reads the output of a stage computed by an earlier job' : 'Reads the shuffle output of this stage'}</title>
-        </path>,
+        <g key={i}>
+          <path className={`${cls} ${reused ? 'reused' : ''}`} d={curve(a.x + a.w, a.y + a.h / 2, b.x - 2, b.y + b.h / 2)} markerEnd={`url(#ga-${hot ? 'hot' : 'dep'})`}>
+            <title>{`${reused ? 'Reads the output of a stage computed by an earlier job' : 'Reads the shuffle output of this stage'}${p ? `: ${p}` : ''}`}</title>
+          </path>
+          {e.rows != null && <text className={`g-pass ${faded ? 'dim' : ''}`} x={mx} y={my - 5} textAnchor="middle">{fmtRows(e.rows)}<title>{p}</title></text>}
+        </g>,
       );
     } else if (e.kind === 'retry') {
       const x = a.x + a.w / 2;

@@ -127,11 +127,12 @@ export function ClusterTop({ cid, runs, executors, compute, onPick, find, more, 
       <TimeWent cid={cid} runs={runs} took={took} waiting={waiting} running={running} t0={t0} t1={t1} compute={compute} peak={peak.n} causes={causes ?? null} runCauses={runCauses ?? {}} />
       <ChangeList cid={cid} rows={findings} loading={fs.loading} runs={runs} />
 
+      <ClusterTables cid={cid} />
+
       <Fold name="cluster" title="Details" ids={['cv-find', 'cv-runs', 'cv-errors']}
         what={[
           'Find the runs, queries, stages, jobs or tasks that took the most time, read or spilled the most, or were most skewed',
           `Programs (runs of the same code) and the ${errs.data?.length ? fmtNum(errs.data.length) + ' ' : ''}errors in the logs`,
-          'Tables read and written',
           `Executors busy and idle, and all ${fmtNum(runs.length)} runs over time and in one table`,
         ]}>
         <div id="cv-find">{find}</div>
@@ -139,7 +140,6 @@ export function ClusterTop({ cid, runs, executors, compute, onPick, find, more, 
           <Programs cid={cid} progs={progs} />
           <Errors cid={cid} rows={errs.data ?? null} runs={runs} />
         </div>
-        <ClusterTables cid={cid} />
         {more}
       </Fold>
     </>

@@ -269,6 +269,17 @@ def test_table_stats_and_merge_cycles(client):
     assert r.status_code == 200, r.text
     for t in r.json()["tables"]:
         assert t["scans"] >= 1 and isinstance(t["runs"], int)
+    every = {t["table"]: t["scans"] for t in r.json()["tables"]}
+    # one query's (or one run's) tables are a subset of the cluster's, scanned no more often
+    qs = client.get(f"/api/clusters/{mf.MAIN}/datasets/sql_queries", params={"limit": 50}).json()["rows"]
+    for q in qs[:10]:
+        one = client.get(f"/api/clusters/{mf.MAIN}/tables", params={"ctx": q["spark_context_id"], "query": q["sql_execution_id"]})
+        assert one.status_code == 200, one.text
+        for t in one.json()["tables"]:
+            assert t["table"] in every and t["scans"] <= every[t["table"]]
+    for rk in {q.get("run_key") for q in qs if q.get("run_key")}:
+        for t in client.get(f"/api/clusters/{mf.MAIN}/tables", params={"run": rk}).json()["tables"]:
+            assert t["scans"] <= every[t["table"]]
     from databricks_cluster_log_analyzer.api.queries import merge_cycles
     qs = [
         {"ctx": "1", "id": 1, "op": "MERGE: materialize source", "description": "batch 7 · MERGE", "start": 1, "end": 2, "reads": [], "writes": [],

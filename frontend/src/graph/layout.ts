@@ -50,6 +50,9 @@ export interface FlowCtx {
   depth?: number;
   /** the card it links to, one step closer to the focused query (none: the focused query itself) */
   link?: string;
+  /** what the link passed along: rows and bytes written to the table it reads, or to the shuffle it reuses */
+  rows?: number | null;
+  bytes?: number | null;
 }
 
 /** One side of the query box: folded behind a "+" on the box edge, or open. */
