@@ -118,7 +118,7 @@ export function ClusterTop({ cid, runs, executors, compute, onPick, find, more, 
       </div>
 
       {atBox}
-      <TimeWent cid={cid} runs={runs} took={took} waiting={waiting} running={running} t0={t0} t1={t1} causes={causes ?? null} runCauses={runCauses ?? {}} />
+      <TimeWent cid={cid} runs={runs} took={took} waiting={waiting} running={running} t0={t0} t1={t1} compute={compute} peak={peak.n} causes={causes ?? null} runCauses={runCauses ?? {}} />
       <ChangeList cid={cid} rows={findings} loading={fs.loading} runs={runs} />
 
       <Fold name="cluster" title="Details" ids={['cv-find', 'cv-runs', 'cv-errors']}
@@ -191,8 +191,34 @@ function HowEnded({ cid, runs, failed, retried, lost, compute, t1, onPick }: {
   );
 }
 
-function TimeWent({ cid, runs, took, waiting, running, t0, t1, causes, runCauses }: {
-  cid: string; runs: RunRow[]; took: number; waiting: number; running: number; t0: number; t1: number; causes: Causes | null; runCauses: Record<string, Causes | null>;
+/** Wall-clock time with at least one run going. */
+function busyClock(runs: RunRow[], t1: number) {
+  const iv = runs.filter((r) => r.start_time != null).map((r) => [r.start_time!, r.end_time ?? t1] as [number, number]).sort((a, b) => a[0] - b[0]);
+  let busy = 0, s = 0, e = -Infinity;
+  for (const [a, b] of iv) {
+    if (a > e) { if (e > s) busy += e - s; s = a; e = b; } else e = Math.max(e, b);
+  }
+  return e > s ? busy + e - s : busy;
+}
+
+/** Run time summed over runs against the cluster's own clock: runs overlap, so the sum can be days on a cluster up for hours. */
+function ClockLine({ runs, took, t0, t1, compute, peak }: { runs: RunRow[]; took: number; t0: number; t1: number; compute: ComputeUse | null; peak: number }) {
+  const up = compute?.cluster_start && compute?.cluster_end ? compute.cluster_end - compute.cluster_start : null;
+  const busy = busyClock(runs, t1);
+  if (!busy || runs.length < 2) return null;
+  const avg = took / busy;
+  return (
+    <div className="note">
+      <b>{fmtDuration(took)}</b> is run time added up over {fmtNum(runs.length)} runs. On the clock{up ? <>, the cluster was up <b>{fmtDuration(up)}</b> and</> : ','} runs were going
+      for <b>{fmtDuration(busy)}</b>{up ? ` (${fmtPct(Math.min(1, busy / up), 0)} of it)` : ` (${fmtTime(t0).slice(0, 5)} to ${fmtTime(t1).slice(0, 5)})`}: {avg >= 1.05
+        ? <>about <b>{avg.toFixed(1)} runs at once</b> on average, up to {fmtNum(peak)}.</>
+        : <>they mostly ran one after another.</>}
+    </div>
+  );
+}
+
+function TimeWent({ cid, runs, took, waiting, running, t0, t1, compute, peak, causes, runCauses }: {
+  cid: string; runs: RunRow[]; took: number; waiting: number; running: number; t0: number; t1: number; compute: ComputeUse | null; peak: number; causes: Causes | null; runCauses: Record<string, Causes | null>;
 }) {
   const span = Math.max(1, t1 - t0);
   const pct = (v: number) => `${Math.min(100, Math.max(0, ((v - t0) / span) * 100))}%`;
@@ -209,6 +235,7 @@ function TimeWent({ cid, runs, took, waiting, running, t0, t1, causes, runCauses
       <div className="panel-head ro-head">
         <div>
           <h2>Where the runs' {fmtDuration(took)} went</h2>
+          <ClockLine runs={runs} took={took} t0={t0} t1={t1} compute={compute} peak={peak} />
           <div className="note"><CauseHeadline parts={parts} total={took} spill={causes?.disk_spill} /> Click a part to rank the runs by it.</div>
         </div>
         <div className="ro-legend small muted"><CauseLegend parts={parts} total={took} /></div>

@@ -13,6 +13,8 @@ import { to } from '../links';
 const LABEL_W = 250;
 const RIGHT_W = 190;
 const ROW = 18;
+/** A stretch this long with no Spark work of the run is idle time (waiting outside Spark), not driver code to tune. */
+const IDLE_MS = 30 * 60_000;
 const MAX_ROWS = 160;
 
 const EDGE: Record<FlowEdge['kind'], { color: string; dash?: string; what: string }> = {
@@ -113,11 +115,14 @@ export function RunFlow({ cid, onPick }: { cid: string; onPick: (n: FlowNode) =>
     crit.reverse();
     const busy = crit.reduce((a, n) => a + Math.max(0, (n.end ?? n.start ?? 0) - (n.start ?? 0)), 0);
     const gaps = crit.slice(1).reduce((a, n, i) => a + Math.max(0, (n.start ?? 0) - (crit[i].end ?? 0)), 0);
+    // the longest stretch with no Spark work of this run: an hour-long one is idle time, not driver code to tune
+    const idle = crit.slice(1).map((n, i) => ({ ms: Math.max(0, (n.start ?? 0) - (crit[i].end ?? 0)), from: crit[i], to: n }))
+      .sort((a, b) => b.ms - a.ms)[0] ?? null;
     // inside the queries on the path: time a stage waited for a free core while none of the query's stages ran
     const waited = crit.reduce((a, n) => a + (n.waits ?? []).reduce((b, [ws, we]) => b + (we - ws), 0), 0);
     const critSet = new Set(crit.map((n) => n.key));
     const prevOnPath = new Map(crit.slice(1).map((n, i) => [n.key, crit[i]]));
-    return { nodes, tree, kids, parent, parentKind, edges, row, t0, t1, hidden, up, down, truncated: f.truncated, crit, critSet, prevOnPath, busy, gaps, waited };
+    return { nodes, tree, kids, parent, parentKind, edges, row, t0, t1, hidden, up, down, truncated: f.truncated, crit, critSet, prevOnPath, busy, gaps, waited, idle };
   }, [st.data]);
 
   const chain = useMemo(() => {
@@ -179,7 +184,9 @@ export function RunFlow({ cid, onPick }: { cid: string; onPick: (n: FlowNode) =>
               ))}
             </ul>
             <div className={top[0] === 'running' ? '' : 'st-warn'}>
-              {top[0] === 'gaps' ? <><b>Most of it is outside Spark</b>: look at the driver code between queries, not at the queries.</>
+              {top[0] === 'gaps' && m.idle && m.idle.ms >= IDLE_MS && m.idle.ms >= total / 2
+                ? <><b>It sat idle for {fmtDuration(m.idle.ms)}</b> between {m.idle.from.kind === 'query' ? 'Query' : 'Job'} {m.idle.from.id} ({fmtTime(m.idle.from.end)}) and {m.idle.to.kind === 'query' ? 'Query' : 'Job'} {m.idle.to.id} ({fmtTime(m.idle.to.start)}): its own work took {fmtDuration(Math.max(0, total - m.idle.ms))}. <span className="muted">Nothing from this run reached Spark in that time: it waited on something outside Spark (a sleep, a poll, another job or table to be ready, a lock) or its driver code ran that long. Check the notebook between those two queries.</span></>
+                : top[0] === 'gaps' ? <><b>Most of it is outside Spark</b>: look at the driver code between queries, not at the queries.</>
                 : top[0] === 'waiting' ? <><b>Most of it is waiting for cores</b>: other runs held them; run fewer at once or add workers.</>
                 : <><b>Most of it is Spark work</b>: the slowest steps on the path are where to look.</>}
             </div>
@@ -266,7 +273,7 @@ export function RunFlow({ cid, onPick }: { cid: string; onPick: (n: FlowNode) =>
                       </line>
                       {x(s) - x(pv.end) > 150 && (
                         <text x={(x(pv.end) + x(s)) / 2} y={y + ROW / 2 - 3} fontSize={10.5} textAnchor="middle" fill="var(--wait)">
-                          {fmtDuration(s - pv.end)} no Spark work (driver code)
+                          {fmtDuration(s - pv.end)} {s - pv.end >= IDLE_MS ? 'idle: no Spark work from this run' : 'no Spark work (driver code)'}
                         </text>
                       )}
                     </g>
