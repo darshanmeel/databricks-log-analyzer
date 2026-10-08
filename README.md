@@ -29,7 +29,6 @@ Everything runs on your laptop: no Spark, no cluster, nothing leaves the machine
 **The full tour, with every screen explained: open [README.html](README.html)** in a browser (clone or download the
 repo and double-click it, or view it online through
 [htmlpreview](https://htmlpreview.github.io/?https://github.com/darshanmeel/databricks-log-analyzer/blob/main/README.html)).
-Every screenshot is from a synthetic demo cluster (a made-up shop's nightly ETL), not from a real customer.
 
 ## Install and run
 
