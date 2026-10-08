@@ -1,0 +1,439 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Databricks Cluster Log Analyzer</title>
+<style>
+  :root {
+    --bg: #f4f2ee; --surface: #ffffff; --surface-2: #f8f7f4; --text: #1b1d22; --text-2: #4a4f59; --text-3: #7a7f89;
+    --line: #e2dfd8; --accent: #2356a0; --accent-tint: #e7eef8; --warn: #8a4308; --warn-tint: #fbebd9; --code: #f1efe9;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15171b; --surface: #1d2025; --surface-2: #23272d; --text: #eceae5; --text-2: #b9bcc3; --text-3: #8b9099;
+      --line: #30343b; --accent: #7fb0ff; --accent-tint: rgba(127,176,255,.12); --warn: #f7c189; --warn-tint: rgba(243,160,75,.14); --code: #262a31;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15171b; --surface: #1d2025; --surface-2: #23272d; --text: #eceae5; --text-2: #b9bcc3; --text-3: #8b9099;
+    --line: #30343b; --accent: #7fb0ff; --accent-tint: rgba(127,176,255,.12); --warn: #f7c189; --warn-tint: rgba(243,160,75,.14); --code: #262a31;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.6 -apple-system, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif; }
+  .wrap { display: grid; grid-template-columns: 250px minmax(0, 1fr); max-width: 1320px; margin: 0 auto; gap: 40px; padding: 0 24px; }
+  nav { position: sticky; top: 0; align-self: start; max-height: 100vh; overflow: auto; padding: 32px 0; font-size: 14px; }
+  nav .brand { font-weight: 800; font-size: 15px; margin-bottom: 14px; display: block; color: var(--text); text-decoration: none; }
+  nav ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+  nav li.group { margin-top: 12px; font-size: 11px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--text-3); }
+  nav a { color: var(--text-2); text-decoration: none; display: block; padding: 3px 8px; border-radius: 6px; }
+  nav a:hover { background: var(--surface); color: var(--text); }
+  main { padding: 40px 0 80px; min-width: 0; }
+  h1 { font-size: 40px; line-height: 1.15; margin: 0 0 12px; text-wrap: balance; letter-spacing: -.01em; }
+  h2 { font-size: 26px; margin: 56px 0 10px; padding-top: 8px; text-wrap: balance; }
+  h3 { font-size: 18px; margin: 28px 0 6px; }
+  p, li { max-width: 74ch; color: var(--text-2); }
+  p b, li b { color: var(--text); }
+  a { color: var(--accent); }
+  .lead { font-size: 19px; color: var(--text-2); max-width: 70ch; }
+  .punch { margin: 26px 0 8px; padding: 20px 24px; border-left: 5px solid var(--accent); background: var(--accent-tint); border-radius: 10px; }
+  .punch p { margin: 0; font-size: 18px; line-height: 1.55; color: var(--text); max-width: 80ch; }
+  .punch .kicker { display: inline-block; font-size: 12px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); margin-bottom: 6px; }
+  .pills { display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0 0; padding: 0; list-style: none; }
+  .pills li { background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px; font-size: 14px; color: var(--text-2); }
+  code { font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; font-size: .9em; background: var(--code); padding: 1px 5px; border-radius: 4px; }
+  pre { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; overflow-x: auto; font-size: 13.5px; line-height: 1.5; max-width: 100%; }
+  pre code { background: none; padding: 0; }
+  .tabs-os { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; }
+  .tabs-os h4 { margin: 0 0 6px; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-3); }
+  figure { margin: 18px 0 8px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+  figure img { display: block; width: 100%; height: auto; }
+  figcaption { padding: 10px 16px; font-size: 14px; color: var(--text-3); border-top: 1px solid var(--line); }
+  .look { margin: 10px 0; padding: 0 0 0 18px; }
+  .look li { margin: 4px 0; }
+  .note { padding: 12px 16px; border-radius: 10px; background: var(--warn-tint); color: var(--text); font-size: 15px; max-width: 80ch; }
+  .note b { color: var(--warn); }
+  table { border-collapse: collapse; font-size: 14px; width: 100%; }
+  .tbl { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--line); vertical-align: top; color: var(--text-2); }
+  th { color: var(--text); font-weight: 700; background: var(--surface-2); }
+  tr:last-child td { border-bottom: 0; }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .steps { counter-reset: s; list-style: none; padding: 0; }
+  .steps li { counter-increment: s; position: relative; padding-left: 38px; margin: 10px 0; }
+  .steps li::before { content: counter(s); position: absolute; left: 0; top: 0; width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--surface); font-weight: 800; font-size: 13px; display: grid; place-items: center; }
+  footer { margin-top: 60px; color: var(--text-3); font-size: 14px; }
+  @media (max-width: 900px) {
+    .wrap { grid-template-columns: 1fr; gap: 0; padding: 0 16px; }
+    nav { position: static; max-height: none; padding: 20px 0 0; }
+    nav ol { flex-direction: row; flex-wrap: wrap; }
+    nav li.group { width: 100%; }
+    .two { grid-template-columns: 1fr; }
+    h1 { font-size: 30px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+<nav aria-label="Contents">
+  <a class="brand" href="#top">Cluster Log Analyzer</a>
+  <ol>
+    <li class="group">Start</li>
+    <li><a href="#why">Why use it</a></li>
+    <li><a href="#what">What it does</a></li>
+    <li><a href="#install">Install and run</a></li>
+    <li><a href="#demo">Try the demo cluster</a></li>
+    <li class="group">The screens</li>
+    <li><a href="#home">Home and Analyze again</a></li>
+    <li><a href="#cluster">Cluster overview</a></li>
+    <li><a href="#change">What to change</a></li>
+    <li><a href="#tables">Tables read</a></li>
+    <li><a href="#run">One run</a></li>
+    <li><a href="#query">One query</a></li>
+    <li><a href="#stage">One stage: rows in and out</a></li>
+    <li><a href="#chain">Chain of queries</a></li>
+    <li><a href="#timeline">Timeline</a></li>
+    <li><a href="#executors">Executors</a></li>
+    <li><a href="#findings">Findings and errors</a></li>
+    <li class="group">Reference</li>
+    <li><a href="#workflow">A 2 a.m. workflow</a></li>
+    <li><a href="#limits">What it cannot tell</a></li>
+    <li><a href="#sources">Sources and log layout</a></li>
+    <li><a href="#cli">Command line</a></li>
+    <li><a href="#datasets">Datasets</a></li>
+    <li><a href="#rules">Rules and thresholds</a></li>
+    <li><a href="#privacy">Privacy</a></li>
+    <li><a href="#built">How it is built</a></li>
+  </ol>
+</nav>
+
+<main id="top">
+  <h1>Databricks Cluster Log Analyzer</h1>
+  <p class="lead">Point it at the logs Databricks delivers for a cluster. It shows what ran, where the time went, what
+    failed and why, which tables cost the most, how many rows moved between steps, and what to change. It runs on your
+    laptop: no Spark, no cluster.</p>
+
+  <div class="punch" id="why">
+    <span class="kicker">Why use it</span>
+    <p><b>It is not a perfect tool, but it is a fast one.</b> Most of the time (about 95% of cases) it finds the real
+      problem, or more than 95% of the issues, without much effort from you. For the rest, it gives you more than enough
+      data to work out the issue yourself. Many of its findings help you <b>rule things out</b> or point you to
+      <b>where to dive in</b>. For a developer that means knowing where to deep dive, or what to fix, in minutes rather
+      than hours.</p>
+  </div>
+  <ul class="pills">
+    <li>Driver, executor and Spark event logs</li><li>Local folder, Unity Catalog volume, ADLS, S3</li>
+    <li>Parquet datasets + DuckDB</li><li>Local web UI</li><li>Python 3.11+, no Node.js</li>
+  </ul>
+
+  <p class="note"><b>All screenshots here are synthetic.</b> They come from a demo cluster generated by
+    <code>scripts/make_demo_cluster.py</code>: a made-up shop whose nightly ETL reads <code>customer</code> and
+    <code>orders</code> and merges into <code>order_line_item</code>. No real cluster, table or customer data is shown.</p>
+
+  <h2 id="what">What it does</h2>
+  <p>It reads the raw logs (log4j driver logs, stdout/stderr, executor logs and the Spark event log), turns them into
+    Parquet datasets, and serves a web UI on your machine. You drill down level by level, from what happened to the
+    exact stage or task:</p>
+  <p><b>cluster</b> → <b>run</b> (a Databricks job run, notebook or session) → <b>query</b> → <b>Spark job</b> →
+    <b>stage</b> → <b>task</b>.</p>
+  <ul>
+    <li><b>Time:</b> the cluster's time on the clock next to run time added up over all runs (overlapping runs add up
+      to more than the clock), and the time spent waiting for a free core. Each run's and each query's time is split by
+      cause: waiting for cores, CPU, storage, GC, writing shuffle, waiting for shuffle data, or no Spark work.</li>
+    <li><b>Failures:</b> a cluster shows as <i>failed</i> only when a job or query failed. Task retries that succeeded
+      are shown as such, never as failures. It also lists lost, killed or out-of-memory executors and errors grouped by
+      fingerprint, each with the first frame of your own code.</li>
+    <li><b>What to change:</b> fixes grouped by impact, each with what the data shows, the likely cause and the setting
+      or code change, plus the problems found behind it. This is shown for the whole cluster and for each run.</li>
+    <li><b>Tables:</b> for the cluster, a run or one query: size, file count, file size, files skipped, bytes and rows
+      pulled, scan time and task time. It flags tables with files over 1 GB, big tables read whole, and tables scanned
+      again and again.</li>
+    <li><b>Rows:</b> rows read and written (inserted, updated, deleted, copied unchanged) per table and query. For every
+      stage it shows rows in, per parent stage, and rows out, and flags a join that puts out more rows than came in. It
+      also shows the rows passed between jobs and between queries.</li>
+  </ul>
+
+  <h2 id="install">Install and run</h2>
+  <p>Only <b>Python 3.11+</b> is needed. The web UI is already built and ships in the package.</p>
+  <div class="tabs-os">
+    <div><h4>Windows (PowerShell)</h4>
+<pre><code>git clone https://github.com/darshanmeel/databricks-log-analyzer.git
+cd databricks-log-analyzer
+python -m pip install -e .
+dbx-log-analyzer ui --output C:\dbx\output --cache C:\dbx\cache</code></pre></div>
+    <div><h4>macOS / Linux</h4>
+<pre><code>git clone https://github.com/darshanmeel/databricks-log-analyzer.git
+cd databricks-log-analyzer
+python3 -m pip install -e .
+dbx-log-analyzer ui --output ~/dbx/output --cache ~/dbx/cache</code></pre></div>
+  </div>
+  <h3>Without installing the package</h3>
+  <p>Install the libraries once, then point Python at <code>src</code> each time:</p>
+<pre><code>python -m pip install pandas pyarrow duckdb click fastapi uvicorn   # once
+$env:PYTHONPATH = "src"                                            # PowerShell; bash: PYTHONPATH=src python3 ...
+python -m databricks_cluster_log_analyzer ui --output C:\dbx\output --cache C:\dbx\cache</code></pre>
+  <p>Cloud sources need their extra: <code>pip install -e ".[databricks]"</code> (Unity Catalog volumes),
+    <code>".[adls]"</code>, <code>".[s3]"</code> or <code>".[all]"</code>. To update: <code>git pull</code>, then
+    restart the UI. Analyses you already have still open, and <b>Analyze again</b> rebuilds one with the newest
+    findings.</p>
+  <ul>
+    <li><b>Port in use:</b> add <code>--port 8766</code>.</li>
+    <li><b>"Command not found":</b> use <code>python -m databricks_cluster_log_analyzer ui ...</code>.</li>
+    <li><b>Keep output and cache outside the repo:</b> then nothing from a real cluster can be committed by accident.</li>
+  </ul>
+
+  <h2 id="demo">Try the demo cluster</h2>
+<pre><code>python scripts/make_demo_cluster.py ./demo_logs
+dbx-log-analyzer ui --output ./demo_out --cache ./demo_cache</code></pre>
+  <p>On Home pick <b>Local folder</b>, enter <code>./demo_logs</code> and analyze <code>0112-020000-demo0001</code>.
+    The demo runs 5 Databricks job runs on 8 executors with 4 cores each:</p>
+  <ul>
+    <li><code>load_customers</code> (twice) and <code>load_orders</code>.</li>
+    <li><code>build_order_line_item</code>: joins <code>orders</code> with <code>customer</code> into a staging table,
+      then MERGEs it into <code>order_line_item</code>.</li>
+    <li><code>daily_revenue</code>.</li>
+  </ul>
+  <p>The runs overlap, so some wait for cores. One join is skewed, grows its rows ×2 and spills. One task fails and is
+    retried. <code>order_line_item</code> has files of 1.5 GB and is read whole.</p>
+
+  <h2 id="home">Home and Analyze again</h2>
+  <figure><img src="docs/screenshots/home.png" alt="Home: pick a source, root path, cluster, analyze; the analyzed clusters below" loading="lazy">
+    <figcaption>Pick where the logs are, the root folder, then a cluster; below, every analyzed cluster.</figcaption></figure>
+  <ul class="look">
+    <li><b>Four steps:</b> where the logs are (local, volume, ADLS, S3), then the root path, then the cluster (it lists
+      them with their last change), then Analyze. Remote logs are copied to a local cache incrementally.</li>
+    <li><b>Analyzed clusters:</b> each row shows the status and why: "2 jobs failed", or "after 3 task retries" when it
+      succeeded anyway. It also shows the jobs failed, the task attempts retried and the findings.</li>
+    <li><b>Analyze again:</b> rebuilds a cluster from the raw logs it was built from, with the newest version of the
+      tool. The button is greyed out, with "Raw logs gone", when those logs are no longer on disk.</li>
+  </ul>
+
+  <h2 id="cluster">Cluster overview</h2>
+  <figure><img src="docs/screenshots/cluster-overview.png" alt="Cluster overview: tiles, where the time went, how the runs ended, the runs" loading="lazy">
+    <figcaption>The first screen of a cluster: one row of numbers, two short answers, then every run.</figcaption></figure>
+  <ul class="look">
+    <li><b>Clock time:</b> how long the cluster was up (1h 16m) next to the run time added up over runs (46m 34s) and
+      how many runs were going at once on average. It prevents the "8 days of run time on a 12-hour cluster"
+      confusion.</li>
+    <li><b>Waiting for cores:</b> added up over runs and as a share of run time, plus on the clock: how long at least
+      one run was waiting.</li>
+    <li><b>Where the time went</b> and <b>How the runs ended:</b> the two answers in plain words, with links to the
+      detail.</li>
+    <li><b>Where the runs' time went:</b> one bar split by cause, then every run with its wait and run time, its usual
+      time, rows and flags (spill, big task reads, retries). The left rail lists the runs grouped by program, worst
+      first.</li>
+  </ul>
+
+  <h2 id="change">What to change</h2>
+  <figure><img src="docs/screenshots/what-to-change.png" alt="What to change: folded fix cards, one opened" loading="lazy">
+    <figcaption>Each change folds to its title and headline fact. Open the ones you care about.</figcaption></figure>
+  <ul class="look">
+    <li><b>Highest impact first.</b> FIX means the data is clear; CHECK means look before you change. The setting it
+      is about (for example <code>spark.sql.shuffle.partitions</code>) is shown next to the title.</li>
+    <li><b>Opened:</b> what we saw (the headline, then more facts and the likely cause on demand), the fix, links to
+      the queries, runs and stages, and <i>the problems found behind it</i>. Long stage lists show the top 10 first.</li>
+    <li><b>Further down:</b> other problems not covered by a change, by kind, and the cluster's settings with where each
+      value came from (cluster, code or default).</li>
+  </ul>
+
+  <h2 id="tables">Tables read</h2>
+  <figure><img src="docs/screenshots/tables-read.png" alt="Tables read: highlighted summary line, flags and the table list" loading="lazy">
+    <figcaption>Highlighted above Details: it often tells in a second that a table was read too big or too often.</figcaption></figure>
+  <ul class="look">
+    <li><b>The headline:</b> how many tables, the bytes and rows pulled from files, the task time, and the costliest
+      table with its share of the time.</li>
+    <li><b>Flags:</b> files over 1 GB (a MERGE rewrites whole files), a big table read whole with no files skipped, a
+      table that isn't partitioned, and a table scanned several times in one run or query.</li>
+    <li><b>The list:</b> top 10 first. Columns: size, files, per file, scans, runs, files skipped, pulled from the files
+      (only the columns needed: Parquet is columnar), rows read, scan time and task time. The same panel is on every run
+      and every query.</li>
+  </ul>
+
+  <h2 id="run">One run</h2>
+  <figure><img src="docs/screenshots/run-overview.png" alt="Run overview: tiles, why it was slow, how it ended, the cause, the fixes and where the time went" loading="lazy">
+    <figcaption>A run (a Databricks job run, notebook or session) on its own: what took the time and what to change.</figcaption></figure>
+  <ul class="look">
+    <li><b>Tiles:</b> duration against its usual time, queries and jobs, tasks and retries, spill, shuffle, other runs
+      on the same executors, and executors lost.</li>
+    <li><b>Cause cards</b> name the query that did most of the work and what it read, spilled and wrote. <b>The
+      fixes</b> come in the order to make them.</li>
+    <li><b>On its clock:</b> waited for cores, ran tasks, and no Spark work (driver code). An idle gap of 30 minutes or
+      more is called idle, not driver code. Every query is listed with its wait, run time and rows in.</li>
+    <li><b>What to change for this run:</b> the same folded cards as the cluster, limited to the changes this run is
+      part of, with this run's problems behind each. The full list of problems stays under Details.</li>
+  </ul>
+  <figure><img src="docs/screenshots/run-what-to-change.png" alt="What to change for one run" loading="lazy">
+    <figcaption>What to change, for one run.</figcaption></figure>
+
+  <h2 id="query">One query</h2>
+  <figure><img src="docs/screenshots/query-graph.png" alt="A query: tables it reads, where its time went, step by step with rows in and out" loading="lazy">
+    <figcaption>Queries &amp; stages: pick a query on the left. Its tables, its time by cause, and its stages step by step.</figcaption></figure>
+  <ul class="look">
+    <li><b>Reads and writes:</b> every table, with the bytes read and the stages that read it.</li>
+    <li><b>Step by step:</b> each stage with its tasks, when it was submitted, when its first task started, the wait
+      for cores and the run time. <b>Rows in → out</b> shows, for example, "96.0M read → 96.0M to the shuffle" or
+      "109M from stage 6, 7 → 214M written". You can follow the data through the query.</li>
+    <li><b>Why it took that long:</b> the stages that held it up, with their tail, skew, spill, wait and share of the
+      executors.</li>
+    <li><b>The graph</b> (Flow or Time) draws the query box with its jobs and stages. Each stage box shows its rows in
+      → out and its spill and shuffle. Each link is labelled with the rows passed over it.</li>
+  </ul>
+
+  <h2 id="stage">One stage: rows in and out</h2>
+  <figure><img src="docs/screenshots/stage-rows.png" alt="Stage rows strip: rows in per parent stage, rows out, a join that grew rows" loading="lazy">
+    <figcaption>Stage 8 joins orders (stage 6) with customer (stage 7): 109M rows in, 214M out, ×2.0. The join keys match many rows per key.</figcaption></figure>
+  <ul class="look">
+    <li><b>Rows in:</b> rows read from each table, plus the rows each parent stage wrote to the shuffle. A parent that
+      Spark skipped (adaptive query execution reused its output) is marked as such. When there are several parents,
+      the total read from the shuffle is shown too.</li>
+    <li><b>Rows out:</b> to the shuffle for the next stage, or written to the table.</li>
+    <li><b>Flags:</b> ×1.5 or more rows out than in means a join matched many rows per key (duplicate keys on both
+      sides) or is a cross join. Far fewer out than in means the stage filtered or aggregated. When Spark recorded no
+      row counts, the strip says so; nothing is guessed.</li>
+  </ul>
+  <figure><img src="docs/screenshots/stage-panel.png" alt="Stage panel: verdict, time, rows, task spread, executors" loading="lazy">
+    <figcaption>The whole stage panel: verdict, time, rows, task spread and size bands, executors, what else ran on them, retries.</figcaption></figure>
+
+  <h2 id="chain">Chain of queries</h2>
+  <figure><img src="docs/screenshots/query-chain.png" alt="Chain of queries: the query that wrote the table this MERGE reads, with the rows passed" loading="lazy">
+    <figcaption>Query 2 wrote the staging table that Query 3's MERGE reads: 214M rows passed along.</figcaption></figure>
+  <p>Switch from <b>Query with its jobs</b> to <b>Chain of queries</b> to see every query linked to this one, upstream
+    and downstream. A query is linked when it wrote a table this one reads, reused its shuffle output, or ran inside it.
+    Arrows carry the rows passed. A "+" on either side unfolds the rest of the chain.</p>
+
+  <h2 id="timeline">Timeline</h2>
+  <figure><img src="docs/screenshots/timeline.png" alt="Timeline: incidents, Spark jobs, stages and one lane per executor" loading="lazy">
+    <figcaption>When did things go wrong: incidents on the same clock as jobs, stages and every executor's tasks.</figcaption></figure>
+  <ul class="look">
+    <li>Each small block is one task. Red blocks failed. A lane that ends in a red line lost its executor. Hatched
+      stretches mean an executor was up but idle (paid for, running no task).</li>
+    <li>Click an incident to zoom to it, drag to zoom into a range, and click a task to open its stage.</li>
+  </ul>
+
+  <h2 id="executors">Executors</h2>
+  <figure><img src="docs/screenshots/executors.png" alt="Executors: busy and idle, spill, GC and removals" loading="lazy">
+    <figcaption>Executors over the whole cluster: busy and idle time, spill, GC, and why each one was removed.</figcaption></figure>
+
+  <h2 id="findings">Findings and errors</h2>
+  <figure><img src="docs/screenshots/findings.png" alt="Findings: every problem, worst first, with evidence and fix" loading="lazy">
+    <figcaption>Every problem found, worst first. Each has what we saw, the likely cause, the fix, its tables and links.</figcaption></figure>
+  <p>Kinds include disk spill, skewed tasks, MERGE reading far more of the target than it merged, waiting for cores,
+    too few or too many shuffle partitions, file-reading tasks above the split size, GC pressure, out-of-memory or lost
+    executors, and executors paid for but idle. <b>Errors</b> groups exceptions from the logs by fingerprint, with the
+    first frame of your own code and the run it came from.</p>
+
+  <h2 id="workflow">A 2 a.m. workflow</h2>
+  <ol class="steps">
+    <li><b>Analyze the cluster</b> (or click Analyze again). Read the status line: did a job or query fail, or did it
+      only retry tasks?</li>
+    <li><b>Cluster overview:</b> look at clock time against time added up, waiting for cores, and the two short answers.
+      This is where most runs show whether the issue is capacity (waiting) or the work itself.</li>
+    <li><b>Tables read:</b> one look tells you whether a table was read whole, has huge files, or was scanned too often.</li>
+    <li><b>What to change:</b> open the top card. Its problems link straight to the query or stage.</li>
+    <li><b>Open the worst run, then its slowest query:</b> follow the rows in → out stage by stage. A join that grows
+      rows, a skewed stage or a spill stands out.</li>
+    <li><b>Still not clear?</b> The timeline, executors, errors and the raw datasets (Data / Debug) are all there to dig
+      into yourself. Even then, the findings above have already ruled most things out.</li>
+  </ol>
+
+  <h2 id="limits">What it cannot tell</h2>
+  <ul>
+    <li><b>Only what Spark logged.</b> It can't see code that never reached Spark (pure Python on the driver shows only
+      as "no Spark work"). It also can't see why a Databricks job was cancelled outside Spark.</li>
+    <li><b>Row counts are missing</b> when Spark recorded none, for example for some scans, or for stages skipped
+      under adaptive query execution. It then says "not recorded" and never guesses.</li>
+    <li><b>Table sizes</b> come from scans that skipped nothing. A table only ever read with filters shows the size of
+      what was read.</li>
+    <li><b>Serverless compute</b> delivers no cluster logs. The analysis then says so.</li>
+  </ul>
+
+  <h2 id="sources">Sources and log layout</h2>
+  <div class="tbl"><table>
+    <thead><tr><th><code>--source</code></th><th><code>--root</code></th><th>Options</th><th>Credentials</th></tr></thead>
+    <tbody>
+      <tr><td><code>local</code></td><td>a folder containing cluster folders</td><td></td><td></td></tr>
+      <tr><td><code>volume</code></td><td><code>/Volumes/&lt;catalog&gt;/&lt;schema&gt;/&lt;volume&gt;/&lt;path&gt;</code></td><td><code>--profile</code>, <code>--host</code>, <code>--token</code></td><td><code>~/.databrickscfg</code> profile or <code>DATABRICKS_*</code> env</td></tr>
+      <tr><td><code>adls</code></td><td><code>abfss://&lt;container&gt;@&lt;account&gt;.dfs.core.windows.net/&lt;path&gt;</code></td><td><code>--account-name</code>, <code>--container</code>, <code>--sas-token</code>, <code>--account-key</code></td><td>SAS / key, else <code>DefaultAzureCredential</code></td></tr>
+      <tr><td><code>s3</code></td><td><code>s3://&lt;bucket&gt;/&lt;prefix&gt;</code></td><td><code>--profile</code>, <code>--region</code>, <code>--endpoint-url</code></td><td>default AWS credential chain or a named profile</td></tr>
+    </tbody>
+  </table></div>
+  <p>Remote sources are copied into <code>&lt;cache&gt;/&lt;cluster_id&gt;/</code> incrementally: files with the same
+    size and time are skipped. Local folders are read in place. Any folder in the Databricks log-delivery layout
+    works:</p>
+<pre><code>&lt;root&gt;/&lt;cluster_id&gt;/
+  driver/     log4j-active.log, log4j-&lt;yyyy-mm-dd-HH&gt;.log.gz, stdout, stderr (+ rolled), stacktrace.log
+  executor/   &lt;app-id&gt;/&lt;executor-id&gt;/stdout, stderr (+ rolled .gz)
+  eventlog/   &lt;cluster_id&gt;_&lt;hash&gt;/&lt;spark_context_id&gt;/eventlog (+ rolled eventlog-&lt;date&gt;.gz)
+  init_scripts/ (ignored)</code></pre>
+
+  <h2 id="cli">Command line</h2>
+<pre><code># which clusters are there (newest driver activity first)?
+dbx-log-analyzer clusters --root ./my-logs
+dbx-log-analyzer clusters --source volume --root /Volumes/cat/sch/vol/cluster_logs --profile DEFAULT
+
+# download (remote, incremental) and parse into &lt;output&gt;/&lt;cluster_id&gt;/
+dbx-log-analyzer analyze --source s3 --root s3://my-bucket/cluster-logs --cluster 0101-000000-abcd1234
+dbx-log-analyzer analyze --source s3 --root s3://my-bucket/cluster-logs --latest 5
+
+# parse a local folder
+dbx-log-analyzer build --input ./cache/0101-000000-abcd1234 [--output ./output] [--duckdb]
+
+# older outputs: add newer findings from their datasets, without the raw logs
+dbx-log-analyzer refresh-findings --output ./output [--cluster &lt;id&gt;]
+
+dbx-log-analyzer ui                       # http://127.0.0.1:8765</code></pre>
+
+  <h2 id="datasets">Datasets</h2>
+  <p>Each dataset is written to <code>&lt;output&gt;/&lt;cluster_id&gt;/&lt;name&gt;.parquet</code> with an explicit
+    schema, so empty datasets keep their columns. Next to them, <code>summary.json</code> holds the counts, totals,
+    cluster info, findings by severity, a plain-English diagnosis, and the folder the raw logs were read from (which
+    Analyze again uses). <code>schemas.py</code> lists every column. <code>--duckdb</code> also loads them into
+    <code>insights.duckdb</code>.</p>
+  <div class="tbl"><table>
+    <thead><tr><th>Dataset</th><th>One row per</th></tr></thead>
+    <tbody>
+      <tr><td><code>tasks</code>, <code>stages</code>, <code>spark_jobs</code>, <code>sql_queries</code>, <code>executors</code></td><td>from the Spark event log; stages carry rows read, from and to the shuffle, written, and their parent stages</td></tr>
+      <tr><td><code>sql_plan_nodes</code></td><td>physical plan operator per query (initial and final AQE plan) with its metrics: files and bytes read and skipped, rows written, inserted, updated, deleted</td></tr>
+      <tr><td><code>runs</code></td><td>a Databricks job run, notebook or session: the run every job, stage and query belongs to</td></tr>
+      <tr><td><code>findings</code>, <code>incidents</code></td><td>ranked problems with evidence, fix and links; how they relate (root cause, effect)</td></tr>
+      <tr><td><code>task_retries</code></td><td>task that failed at least once: the cause, the retry outcome, the time lost</td></tr>
+      <tr><td><code>hotspots</code></td><td>peaks: skewed tasks, shuffle and spill peaks, slowest stages and operators</td></tr>
+      <tr><td><code>log_lines</code>, <code>log_signals</code>, <code>log_errors</code></td><td>log line; line matching a known problem; exception with fingerprint and first user frame</td></tr>
+      <tr><td><code>gc_events</code></td><td>JVM GC pause with heap before and after</td></tr>
+      <tr><td><code>query_profile</code>, <code>executor_profile</code>, <code>stage_executor_profile</code></td><td>query, executor, stage × executor summaries</td></tr>
+      <tr><td><code>spill_shuffle_timeline</code>, <code>executor_busy</code></td><td>time bucket × executor: spill, shuffle, I/O, GC, busy and idle</td></tr>
+      <tr><td><code>settings</code>, <code>cluster_info</code></td><td>Spark setting with its value and source; cluster name, runtime, nodes</td></tr>
+      <tr><td><code>run_story</code></td><td>one ordered stream of scheduler events, retries, important log lines and findings</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2 id="rules">Rules and thresholds</h2>
+  <p>The thresholds (skew, spill, GC, tiny tasks, shuffle-heavy), the log signal patterns, the executor removal
+    categories and the framework stack-frame prefixes are all in one file:
+    <code>src/databricks_cluster_log_analyzer/rules.toml</code>. Override them with <code>--rules my_rules.toml</code> or
+    <code>DBX_LOG_ANALYZER_RULES=my_rules.toml</code>; your file is merged over the defaults.</p>
+
+  <h2 id="privacy">Privacy</h2>
+  <p>Everything runs on your machine. The web server listens on <code>127.0.0.1</code> only, and nothing is sent
+    anywhere. Keep <code>--output</code> and <code>--cache</code> outside the repo so that logs from a real cluster
+    can't be committed by accident.</p>
+
+  <h2 id="built">How it is built</h2>
+  <ul>
+    <li>Parsing streams: files are read line by line (gzip detected by magic bytes), and event-log lines are filtered
+      by event name before <code>json.loads</code>. Transforms use pandas, and DuckDB serves the UI's queries.</li>
+    <li>The API is FastAPI and the UI is React + Vite (<code>frontend/</code>). The built UI ships in
+      <code>src/databricks_cluster_log_analyzer/api/static</code>, so Node.js is needed only to change it:
+      <code>cd frontend &amp;&amp; npm ci &amp;&amp; npm run build</code>.</li>
+    <li>Sources implement a small interface (<code>list_clusters</code>, <code>list_files</code>, <code>open</code>),
+      shared by the CLI and the API.</li>
+  </ul>
+
+  <footer>Databricks Cluster Log Analyzer · screenshots from the synthetic demo cluster <code>0112-020000-demo0001</code></footer>
+</main>
+</div>
+</body>
+</html>
