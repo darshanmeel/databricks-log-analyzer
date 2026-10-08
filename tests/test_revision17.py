@@ -209,7 +209,7 @@ def test_run_tables(client):
         d = r.json()
         assert set(d) >= {"run_key", "tables", "queries"}
         for t in d["tables"]:
-            assert t["role"] in ("read", "written", "read and written")
+            assert t["role"] in ("read", "written", "read and written", "written (its Delta log read too)", "read (only its Delta log)")
         for q in d["queries"]:
             assert q["op"] and isinstance(q["stages"], list)
             assert all(s["spark_job_id"] in q["jobs"] for s in q["stages"] if s["spark_job_id"] is not None)

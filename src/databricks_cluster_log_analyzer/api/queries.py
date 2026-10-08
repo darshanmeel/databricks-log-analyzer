@@ -3738,8 +3738,12 @@ def run_tables(store: Store, cid: str, run: str) -> dict[str, Any]:
             "input_bytes": q.get("input_bytes"), "output_bytes": q.get("output_bytes"),
         })
     for t in tables.values():
-        t["role"] = "read and written" if t["reads"] and t["writes"] else "written" if t["writes"] else "read"
-        rs = [x["start"] for x in t["reads"] if x.get("start") is not None]
+        # reading only its Delta log (the commits and checkpoint, e.g. a write loading the table's version) is not
+        # reading its data
+        data = [x for x in t["reads"] if x.get("how") != "reads its Delta log"]
+        t["role"] = ("read and written" if data and t["writes"] else "written (its Delta log read too)" if t["writes"] and t["reads"]
+                     else "written" if t["writes"] else "read" if data else "read (only its Delta log)")
+        rs = [x["start"] for x in data if x.get("start") is not None]
         ws = [x["start"] for x in t["writes"] if x.get("start") is not None]
         t["first_read"], t["first_write"] = (min(rs) if rs else None), (min(ws) if ws else None)
         t["last"] = max([x["end"] for x in t["reads"] + t["writes"] if x.get("end") is not None], default=None)
