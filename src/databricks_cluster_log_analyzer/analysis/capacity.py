@@ -185,14 +185,21 @@ def capacity_findings(cid: str, tdf: pd.DataFrame, stages: list[dict], executors
         maxc = max(st["max_cores"], (int(ci["max_workers"]) * per) if ci.get("max_workers") and per else 0)
         if not maxc:
             continue
-        # the first moment tasks queued on a full cluster below the most cores it could have
+        # tasks queued on a full cluster below the most cores it could have, as episodes (gaps under 2 s merged); the
+        # clock starts at the first episode of 30 s or more, not at a sub-second blip before it
         t0 = q0 = c0 = None
         short = 0.0
+        episodes: list[list] = []  # [start, end, tasks queued at start, cores at start]
         for a, b, q, busy, cores in st["series"]:
             if q > 0 and busy >= cores and cores < maxc:
-                if t0 is None:
-                    t0, q0, c0 = a, q, cores
                 short += min(q, maxc - cores) * (b - a)
+                if episodes and a - episodes[-1][1] < 2_000:
+                    episodes[-1][1] = b
+                else:
+                    episodes.append([a, b, q, cores])
+        first = next((e for e in episodes if e[1] - e[0] >= 30_000), None)
+        if first is not None:
+            t0, q0, c0 = first[0], first[2], first[3]
         adds = sorted(to_ms(e.get("added_time")) for e in ex if to_ms(e.get("added_time")) is not None)
         if t0 is not None:
             first_add = next((x for x in adds if x > t0), None)
@@ -254,14 +261,22 @@ def _removed_mid_work(cid, ctx, ex, stages, tdf, log_signals) -> list[dict]:
     spans = [(to_ms(s.get("start_time")), to_ms(s.get("end_time")), s) for s in stages if s["spark_context_id"] == ctx]
     spans = [x for x in spans if x[0] is not None and x[1] is not None]
     lost_lines = sorted(r["ts"] for r in log_signals if r.get("signal") == "cache_lost" and r.get("ts") is not None)
+    # each "cached block lost" line goes to the latest removal (of any kind) at or before it; log lines carry whole
+    # seconds, so a removal counts from the start of its second
+    removals = sorted((to_ms(e["removed_time"]) // 1000 * 1000, str(e["executor_id"])) for e in ex if to_ms(e.get("removed_time")) is not None)
+    owner = []
+    for x in lost_lines:
+        prev = [r for r in removals if r[0] <= x]
+        owner.append(prev[-1][1] if prev else None)
     ff = tdf[(tdf["spark_context_id"] == ctx) & (tdf["end_reason"] == "FetchFailed")] if tdf is not None and not tdf.empty else None
     out = []
     for i, b in enumerate(bursts):
         t0, t1 = b[0][0], b[-1][0]
         nxt = bursts[i + 1][0][0] if i + 1 < len(bursts) else 1 << 62
         ids = {str(e["executor_id"]) for _, e in b}
-        active = [s for a, z, s in spans if a <= t1 and z >= t0 - 60_000 and s.get("status") != "failed"]
-        lost = sum(1 for x in lost_lines if t0 <= x < nxt)
+        # the stages running while the executors went (a failed attempt too: it may have failed because of it)
+        active = [s for a, z, s in spans if a <= t1 and z >= t0]
+        lost = sum(1 for x, o in zip(lost_lines, owner) if o in ids and t0 // 1000 * 1000 <= x < nxt)
         fetch = None
         if ff is not None and not ff.empty:
             for r in ff[(ff["finish_time"] >= t0) & (ff["finish_time"] < min(nxt, t1 + 1_800_000))].itertuples():
@@ -271,7 +286,8 @@ def _removed_mid_work(cid, ctx, ex, stages, tdf, log_signals) -> list[dict]:
                     break
         if not active and not lost and not fetch:
             continue
-        ev = f"At {_hms(t0)} autoscaling removed {len(b)} executor{'s' if len(b) != 1 else ''} ({', '.join(sorted(ids))})"
+        when = f"Between {_hms(t0)} and {_hms(t1)}" if t1 - t0 >= 1_000 else f"At {_hms(t0)}"
+        ev = f"{when} autoscaling removed {len(b)} executor{'s' if len(b) != 1 else ''} ({', '.join(sorted(ids))})"
         if active:
             ev += f" while stage {active[0]['stage_id']}" + (f" and {len(active) - 1} more" if len(active) > 1 else "") + " ran"
         if lost:

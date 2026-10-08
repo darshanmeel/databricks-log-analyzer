@@ -119,7 +119,8 @@ def _exception_kind(f: Mapping, err_rows: list[dict]) -> str:
     on_driver = bool(err_rows) and all(e.get("source") == "driver" and not e.get("executor_id") for e in err_rows)
     if "outofmemory" in cls:
         return "oom"
-    if "fetchfailed" in cls or ("ioexception" in cls and ("connect" in msg or "fetch" in msg)):
+    # an IOException is a shuffle fetch only when its stack says so (a JDBC or storage connection is not)
+    if "fetchfailed" in cls or ("ioexception" in cls and ("shuffleblockfetcher" in msg or "fetchfailed" in msg)):
         return "fetch"
     if "job aborted" in msg or "job aborted" in (f.get("evidence") or "").lower():
         return "job_aborted"

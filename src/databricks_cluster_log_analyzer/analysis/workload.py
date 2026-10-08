@@ -127,10 +127,34 @@ def read_split(queries: list[dict], stages: list[dict], plan_nodes: list[dict]) 
         q["disk_cache_write"] = m.get("cache writes size")
 
 
+def _spark_time(stages: list[dict] | None) -> dict[tuple, float]:
+    """Per (ctx, query): the wall time with at least one of its stages running (the union of their spans). A query can
+    sit open for hours (a stream, a lock, the driver) while its Spark work takes a second."""
+    spans: dict[tuple, list] = {}
+    for s in stages or []:
+        a, z = to_ms(s.get("start_time")), to_ms(s.get("end_time"))
+        if s.get("sql_execution_id") is not None and a is not None and z is not None and z > a:
+            spans.setdefault((s["spark_context_id"], s["sql_execution_id"]), []).append((a, z))
+    out = {}
+    for k, iv in spans.items():
+        iv.sort()
+        tot, s0, e0 = 0, iv[0][0], iv[0][1]
+        for a, z in iv[1:]:
+            if a > e0:
+                tot += e0 - s0
+                s0, e0 = a, z
+            else:
+                e0 = max(e0, z)
+        out[k] = tot + e0 - s0
+    return out
+
+
 def workload_findings(cid: str, queries: list[dict], runs: list[dict], executors: list[dict],
-                      log_signals: list[dict], event_counts: list[dict], rules: Rules) -> list[dict]:
+                      log_signals: list[dict], event_counts: list[dict], rules: Rules,
+                      stages: list[dict] | None = None) -> list[dict]:
     out: list[dict] = []
     runs_by = {r["run_key"]: r for r in runs}
+    busy = _spark_time(stages)
 
     # ---- DataFrame cache ------------------------------------------------------------------------------------------
     by_ctx: dict = {}
@@ -190,14 +214,16 @@ def workload_findings(cid: str, queries: list[dict], runs: list[dict], executors
     for rk, qs in per_run.items():
         r = runs_by.get(rk) or {}
         dur = r.get("duration_ms") or 0
-        counts = [q for q in qs if (q.get("duration_ms") or 0) > 0 and count_only(_plan(q))]
-        tot = sum(q["duration_ms"] for q in counts)
+        # what a count cost: the time its stages ran, not how long the query stayed open (when the stages are known)
+        cost = lambda q: min(q.get("duration_ms") or 0, busy.get((q["spark_context_id"], q["sql_execution_id"]), 0)) if busy else (q.get("duration_ms") or 0)  # noqa: E731
+        counts = [q for q in qs if cost(q) > 0 and count_only(_plan(q))]
+        tot = sum(cost(q) for q in counts)
         if counts and tot >= 60_000 and (not dur or tot >= 0.1 * dur):
-            counts.sort(key=lambda q: -q["duration_ms"])
+            counts.sort(key=lambda q: -cost(q))
             cached = sum(1 for q in counts if _CACHE_RE.search(_plan(q)))
-            ev = (f"{len(counts)} quer{'ies' if len(counts) != 1 else 'y'} only counted rows: {fmt_words(tot)}"
+            ev = (f"{len(counts)} quer{'ies' if len(counts) != 1 else 'y'} only counted rows: {fmt_words(tot)}" + (" of Spark work," if busy else "")
                   + (f" of its {fmt_words(dur)} ({tot / dur:.0%})" if dur else "") + ". "
-                  + ", ".join(f"query {q['sql_execution_id']} {fmt_words(q['duration_ms'])}" for q in counts[:4])
+                  + ", ".join(f"query {q['sql_execution_id']} {fmt_words(cost(q))}" for q in counts[:4])
                   + (f"; {cached} of them filled a DataFrame cache" if cached else ""))
             out.append(_f(cid, counts[0]["spark_context_id"], "high" if dur and tot >= 0.3 * dur else "medium",
                           "count_only", f"run {_run_name(r) if r else rk}", ev, to_ms(counts[0].get("start_time")),

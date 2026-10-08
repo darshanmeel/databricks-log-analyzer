@@ -320,7 +320,9 @@ def test_stage_gc_share_formula(ds):
         if g.run_ms.sum() > 0:
             assert r.gc_share == pytest.approx(round(g.gc_ms.sum() / g.run_ms.sum(), 3)), (r.stage_id, r.stage_attempt)
         assert r.tasks == len(g)
-        assert r["skew"] == pytest.approx(round(g.task_ms.max() / max(lower_median(g.task_ms), 1), 1))
+        # skew over the successful attempts, as Spark's stage summary (all of them when none succeeded)
+        ok = g[~g.failed.astype(bool)] if (~g.failed.astype(bool)).any() else g
+        assert r["skew"] == pytest.approx(round(ok.task_ms.max() / max(lower_median(ok.task_ms), 1), 1))
 
 
 # ============================================================================================ jobs / queries

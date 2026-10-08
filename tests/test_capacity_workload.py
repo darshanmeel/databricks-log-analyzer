@@ -61,6 +61,29 @@ def test_autoscale_lag_and_removed_mid_work():
     assert makespan([10, 10, 10, 10], 2) == 20 and makespan([30, 10, 10, 10], 2) == 30
 
 
+
+def test_autoscale_lag_starts_at_the_real_queue_and_blocks_go_to_their_removal():
+    rules = load_rules()
+    # 2 cores; a 0.5 s blip of 3 queued tasks at T0, then 50 tasks queue from T0 + 60 s; 6 more cores 5 min later
+    tasks = [task(i, 1, T0, 1_500, ex="1") for i in range(3)]
+    tasks += [task(10 + i, 1, T0 + 60 * S + (i // 2) * 30 * S, 30 * S, ex="1") for i in range(20)]
+    tasks += [task(100 + i, 1, T0 + 360 * S + (i // 8) * 30 * S, 30 * S, ex=str(2 + i % 3)) for i in range(30)]
+    stages = [{"spark_context_id": "c", "stage_id": 1, "stage_attempt": 0, "start_time": T0, "end_time": T0 + 500 * S,
+               "status": "succeeded", "duration_ms": 500 * S, "run_key": "r1"}]
+    ex = [{"spark_context_id": "c", "executor_id": "1", "cores": 2, "added_time": T0 - S, "removed_time": None}]
+    ex += [{"spark_context_id": "c", "executor_id": str(e), "cores": 2, "added_time": T0 + 360 * S,
+            "removed_time": T0 + 480 * S + 400, "removal_category": "autoscale"} for e in (2, 3)]
+    # executor 4 runs out of memory after the burst: the blocks lost then are its own, not autoscaling's
+    ex += [{"spark_context_id": "c", "executor_id": "4", "cores": 2, "added_time": T0 + 360 * S,
+            "removed_time": T0 + 485 * S, "removal_category": "oom"}]
+    ci = [{"spark_context_id": "c", "min_workers": 1, "max_workers": 4}]
+    # 2 lines in the removal's own second (log lines carry whole seconds), 4 after the OOM
+    signals = [{"signal": "cache_lost", "ts": T0 + 480 * S}] * 2 + [{"signal": "cache_lost", "ts": T0 + 486 * S}] * 4
+    f = {r["category"]: r for r in capacity_findings("x", pd.DataFrame(tasks), stages, ex, [], ci, signals, rules)}
+    assert "the first new executor came 5 m 0 s later" in f["autoscale_lag"]["evidence"]
+    assert "2 cached blocks were lost" in f["autoscale_removed"]["evidence"]
+
+
 def test_core_use():
     tasks = pd.DataFrame([task(1, 1, T0, 60 * S), task(2, 1, T0, 60 * S, failed=True)])
     ex = [{"spark_context_id": "c", "executor_id": "1", "cores": 2, "added_time": T0, "removed_time": T0 + 60 * S}]
@@ -114,6 +137,13 @@ def test_count_only_cache_and_ddl_loop():
     assert "3 blocks did not fit in memory (one reached 2.1 GB)" in c["evidence"] and "never released" in c["evidence"]
     assert f["count_only"]["evidence"].startswith("1 query only counted rows: 10 m 0 s of its 16 m 40 s (60%)")
     assert f["ddl_loop"]["evidence"].startswith("12 statements of the same shape")
+    # the query stayed open 10 minutes but its stages ran 2 seconds: not a costly count
+    st = [{"spark_context_id": "c", "sql_execution_id": 104, "start_time": T0 + 100 * S, "end_time": T0 + 102 * S}]
+    assert "count_only" not in {r["category"] for r in workload_findings("x", qs, runs, ex, sig, evc, rules, st)}
+    st = [{"spark_context_id": "c", "sql_execution_id": 104, "start_time": T0, "end_time": T0 + 500 * S},
+          {"spark_context_id": "c", "sql_execution_id": 104, "start_time": T0 + 400 * S, "end_time": T0 + 560 * S}]
+    f = {r["category"]: r for r in workload_findings("x", qs, runs, ex, sig, evc, rules, st)}
+    assert f["count_only"]["evidence"].startswith("1 query only counted rows: 9 m 20 s of Spark work, of its 16 m 40 s")
 
 
 def test_read_split():

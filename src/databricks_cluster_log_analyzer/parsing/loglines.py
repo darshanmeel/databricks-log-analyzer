@@ -15,6 +15,7 @@ from ..config import Rules
 LOG4J_RE = re.compile(r"^(\d{2}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}) (TRACE|DEBUG|INFO|WARN|ERROR|FATAL) ([^:]+): ?(.*)$")
 EXC_HEADER_RE = re.compile(r"^(?:Caused by: |\S+ \S+ \w+ [^:]+: )?([\w$.]*(?:Exception|Error))(?::\s*(.*))?$")
 FRAME_RE = re.compile(r"^\s+(at |File \")")
+_FRAME = re.compile(r"^\s+(at |app//)")
 FINGERPRINT_STRIP_RE = re.compile(r":\d+\)|\d+|0x[0-9a-f]+")
 
 LINE_MAX = 2000
@@ -190,6 +191,9 @@ class _SignalMatcher:
 
     def find(self, line: str):
         if not self.signals:
+            return None
+        # a stack frame names the classes on the path, not what happened: the exception's own line does that
+        if _FRAME.match(line):
             return None
         if self.keywords is not None:
             low = line.lower()

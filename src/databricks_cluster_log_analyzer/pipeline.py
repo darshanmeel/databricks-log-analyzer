@@ -216,7 +216,7 @@ def build(cluster_dir: str | os.PathLike, output_root: str | os.PathLike, *, clu
     # the queue on a full cluster (every wave of tasks), autoscaling, caches, counts, DDL loops, reads by source
     read_split(queries, stages, ds["sql_plan_nodes"])
     later = (capacity_findings(cid, tdf, stages, executors, runs, ds["cluster_info"], log_signals, rules)
-             + workload_findings(cid, queries, runs, executors, log_signals, ds["event_counts"], rules))
+             + workload_findings(cid, queries, runs, executors, log_signals, ds["event_counts"], rules, stages))
     init_summary, init_found = init_scripts(cid, files, reader(cluster_dir, open_text_lines), executors)
     later += init_found
     bound = {f["run_key"] for f in later if f["category"] == "capacity_bound"}
@@ -278,7 +278,7 @@ def build(cluster_dir: str | os.PathLike, output_root: str | os.PathLike, *, clu
         "executors": executors, "findings": findings, "log_signals": log_signals, "log_errors": log_errors,
         "error_summary": summarize_errors(log_errors), "run_story": story_rows, "log_min_ts": min_ts,
         "log_max_ts": max_ts, "warnings": warnings, "task_retries": retries,
-        "cluster_info": ds["cluster_info"], "hotspots": hotspots, "incidents": incidents,
+        "cluster_info": ds["cluster_info"], "hotspots": hotspots, "incidents": incidents, "has_runs": bool(runs),
     }, rules)
     summary["core_use"] = core_use(tdf, executors, apps)
     summary["init_scripts"] = init_summary

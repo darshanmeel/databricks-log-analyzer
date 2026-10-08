@@ -207,7 +207,8 @@ fix = "Cached blocks were lost with their executor and are recomputed: see autos
 
 [[signals]]
 name = "fetch_failure"
-pattern = 'FetchFailedException|MetadataFetchFailedException'
+# a whole class name only: not a word that merely ends in it
+pattern = '(?<![A-Za-z])(?:Metadata)?FetchFailedException'
 severity = "high"
 fix = "Shuffle data lost, usually from OOM or spot loss; fix the root cause, enable decommissioning."
 

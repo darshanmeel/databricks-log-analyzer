@@ -1486,7 +1486,8 @@ def query_time(store: Store, cid: str, ctx: str, query: int) -> dict[str, Any]:
                 firsts[(r["stage_id"], r["stage_attempt"])] = _as_ms(r["first"])
             # where its task time went (the cause bar), over the tasks of its stages
             tsch = store.schema(con, tpath)
-            col = lambda c: f"sum(t.{c})" if c in tsch else "NULL"  # noqa: E731
+            # the time buckets count successful attempts only: a failed attempt's time is its own bucket
+            col = lambda c: (f"sum(CASE WHEN NOT t.failed THEN t.{c} END)" if c != "disk_spill" else f"sum(t.{c})") if c in tsch else "NULL"  # noqa: E731
             keys = sorted({(st["stage_id"], st["stage_attempt"]) for st in stages})
             causes = _causes(store.rows(con, f"""
                     SELECT sum(t.task_ms) AS task_ms, {col('cpu_ms')} AS cpu_ms, {col('gc_ms')} AS gc_ms,
@@ -2161,7 +2162,8 @@ def cluster_view(store: Store, cid: str) -> dict[str, Any]:
         tp = store.dataset_path(cid, "tasks", required=False)
         if tp is not None:
             tsch = store.schema(con, tp)
-            col = lambda c: f"sum({c})" if c in tsch else "NULL"
+            # the time buckets count successful attempts only: a failed attempt's time is its own bucket
+            col = lambda c: (f"sum(CASE WHEN NOT failed THEN {c} END)" if c != "disk_spill" else f"sum({c})") if c in tsch else "NULL"
             rk = "run_key" if "run_key" in tsch else "NULL"
             rows = store.rows(con, f"""SELECT {rk} AS run_key, sum(task_ms) AS task_ms, {col('cpu_ms')} AS cpu_ms,
                     {col('gc_ms')} AS gc_ms, {col('fetch_wait_ms')} AS fetch_wait_ms, {col('disk_spill')} AS disk_spill,
@@ -2676,7 +2678,7 @@ def settings_view(store: Store, cid: str) -> dict[str, Any]:
             frac = float(val("spark.memory.fraction") or 0.6)
         except ValueError:
             frac = 0.6
-        worst = sorted(stages, key=lambda x: -(x.get("disk_spill") or 0))[:3]
+        worst = sorted([x for x in stages if (x.get("disk_spill") or 0) > 0], key=lambda x: -(x.get("disk_spill") or 0))[:3]
         spilled = [x for x in stages if (x.get("disk_spill") or 0) > 0]
         add("high" if spill >= 50 * GB else "medium", "spark.executor.memory", f"{_fmt_bytes(spill)} spilled to disk",
             [f"{_plural(len(spilled), 'stage')} spilled; most in "
@@ -3240,7 +3242,8 @@ def run_steps(store: Store, cid: str, run: str) -> dict[str, Any]:
                 firsts[(t["spark_context_id"], t["stage_id"], t["stage_attempt"])] = _as_ms(t["first"])
             # per stage and executor: how many of its tasks, how much of its work, its data and spill, CPU and shuffle wait
             sch = store.schema(con, tpath)
-            col = lambda c: f"sum({c})" if c in sch else "NULL"
+            # the time buckets count successful attempts only: a failed attempt's time is its own bucket
+            col = lambda c: f"sum(CASE WHEN NOT failed THEN {c} END)" if c in sch else "NULL"
             for t in store.rows(con, f"""
                     SELECT spark_context_id, stage_id, stage_attempt, executor_id, count(*) AS tasks,
                            sum(CASE WHEN failed THEN 1 ELSE 0 END) AS failed, sum(task_ms) AS task_ms,

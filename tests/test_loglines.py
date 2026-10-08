@@ -104,6 +104,17 @@ def test_find_signal_no_match(rules):
     assert ll.find_signal("full gc happened", rules) is None
 
 
+
+def test_fetch_failure_only_on_the_exception_line(rules):
+    assert ll.find_signal("org.apache.spark.shuffle.FetchFailedException: Failed to connect to /10.0.0.9:4048", rules)[0] == "fetch_failure"
+    assert ll.find_signal("org.apache.spark.shuffle.MetadataFetchFailedException: Missing an output location", rules)[0] == "fetch_failure"
+    # a stack frame names the classes on the path, not what happened
+    assert ll.find_signal("	at org.apache.spark.shuffle.FetchFailedException.<init>(FetchFailedException.scala:42)", rules) is None
+    assert ll.find_signal("    at app//org.apache.spark.storage.ShuffleBlockFetcherIterator.next(ShuffleBlockFetcherIterator.scala:90)", rules) is None
+    # a longer name that only ends in it is another class
+    assert ll.find_signal("com.example.NoFetchFailedException: retry later", rules) is None
+
+
 def test_signals_in_order(rules):
     names = [s.name if hasattr(s, "name") else s[0] for s in rules.signals]
     assert names == ["executor_oom", "driver_unresponsive", "gc_pressure", "disk_spill", "cache_not_fit",

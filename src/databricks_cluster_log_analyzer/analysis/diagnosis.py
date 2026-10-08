@@ -397,7 +397,10 @@ def cluster_info_block(rows: list[dict]) -> dict | None:
 def build_summary(t: Mapping, rules: Rules) -> dict:
     """`t`: mapping with cluster_id, input_dir, empty_reason, counts, totals, rows and the datasets as lists."""
     apps, jobs, queries = t["apps"], t["spark_jobs"], t["sql_queries"]
-    if any(j["result"] == "JobFailed" for j in jobs) or any(q["status"] == "failed" for q in queries):
+    # on a cluster with runs, a failed query that ran no stage and belongs to no run (an internal or metadata query the
+    # platform issued) does not fail the cluster: it is still listed as a query that failed outside any run
+    counts = (lambda q: q.get("stages") or q.get("run_key")) if t.get("has_runs") else (lambda q: True)
+    if any(j["result"] == "JobFailed" for j in jobs) or any(q["status"] == "failed" and counts(q) for q in queries):
         status = "failed"
     elif jobs and all(j["result"] in ("JobSucceeded", "JobReplanned") for j in jobs):  # replanned by AQE: not a failure
         status = "succeeded"

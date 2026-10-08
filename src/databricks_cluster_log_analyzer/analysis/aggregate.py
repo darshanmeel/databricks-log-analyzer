@@ -158,11 +158,16 @@ def _stage_metrics(tdf: pd.DataFrame) -> dict[tuple, dict]:
     t = tdf[tdf["stage_id"].notna()].copy()
     t["stage_attempt"] = t["stage_attempt"].fillna(0)
     g = t.groupby(STAGE_KEY, sort=False, dropna=False)
+    # task times and the distributions come from the successful attempts, as in Spark's own stage summary: a failed
+    # attempt (stuck in GC, killed with its executor) is not a skewed task. A stage with no success keeps them all.
+    ok = t[~t["failed"]]
+    ok = pd.concat([ok, t[~t.set_index(STAGE_KEY).index.isin(ok.set_index(STAGE_KEY).index)]])
+    go = ok.groupby(STAGE_KEY, sort=False, dropna=False)
     agg = pd.DataFrame({
         "tasks": g.size(),
         "failed_tasks": g["failed"].sum(),
-        "max_task_ms": g["task_ms"].max(),
-        "min_task_ms": g["task_ms"].min(),
+        "max_task_ms": go["task_ms"].max(),
+        "min_task_ms": go["task_ms"].min(),
         "max_peak_mem": g["peak_mem"].max(),
         "executors_used": g["executor_id"].nunique(),
     })
@@ -172,7 +177,7 @@ def _stage_metrics(tdf: pd.DataFrame) -> dict[tuple, dict]:
     agg = agg.join(sums.rename(columns={"gc_ms": "_gc_ms", "run_ms": "_run_ms", "task_ms": "_task_ms_sum"}))
     # p50 = lower median (Spark percentile_approx(., 0.5) on small data); Revision 11/13: the data each task read
     # (storage input + shuffle read) as bytes and rows, and task time: min, p10, median, p90, max, average
-    agg = agg.join(task_dist(t, STAGE_KEY))
+    agg = agg.join(task_dist(ok, STAGE_KEY))
     out = {}
     for key, row in agg.iterrows():
         ctx, sid, att = key
