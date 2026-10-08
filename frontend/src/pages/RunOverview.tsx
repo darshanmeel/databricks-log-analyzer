@@ -362,7 +362,8 @@ function Fixes({ run, a, spill, findings, failure }: { run: RunRow; a: Analysis;
     done.add('waited_for_cores');
   }
   if (t && a.mergeFinding?.fix) {
-    fixes.push({ who: gname(t), plain: a.mergeFinding.fix, text: "Add the target's partition or clustering column to the MERGE ON condition, so Delta skips the files it cannot match.", wins: `most of its ${fmtDuration(t.running_ms)} running` });
+    // the finding's own fix: built from the evidence (partition or clustering, deletion vectors, the key's range)
+    fixes.push({ who: gname(t), plain: a.mergeFinding.fix, text: firstSentences(a.mergeFinding.fix) });
     done.add('merge_rewrite'); done.add('disk_spill');
   } else if (t && (t.disk_spill ?? 0) >= GB) {
     fixes.push({ who: gname(t), plain: 'More shuffle partitions (or let AQE split them) so each task holds less and stops spilling.', text: <>More shuffle partitions (<code>spark.sql.shuffle.partitions</code>, or let AQE split them) so each task holds less and stops spilling.</> });

@@ -2,7 +2,7 @@
 // how much the read skipped (partitions, data skipping, dynamic pruning) and who wrote it (MERGE, write...). A query's
 // joins, filters, jobs and stages are on its own page.
 import { Link } from 'react-router-dom';
-import { api, type RunTableRead, type RunTables as RT, type WriteRows } from '../api';
+import { api, type MergeFacts, type RunTableRead, type RunTables as RT, type WriteRows } from '../api';
 import { useAsync } from '../hooks';
 import { fmtBytes, fmtDuration, fmtNum, fmtRows, fmtTime, truncate } from '../format';
 import { to } from '../links';
@@ -24,7 +24,9 @@ function pruning(r: RunTableRead): { text: string; tone?: 'warn' | 'ok' } | null
     bits.push(`${fmtNum(r.files_read)} file${r.files_read === 1 ? '' : 's'} in scope${r.bytes_read ? ` (${fmtBytes(r.bytes_read)})` : ''}`);
     const range = fileRange(r.min_file_bytes, r.max_file_bytes);
     if (range) bits.push(`files ${range}`);
-    if (pr > 0) { bits.push(`${fmtNum(pr)} skipped${r.bytes_pruned ? ` (${fmtBytes(r.bytes_pruned)})` : ''} by data skipping`); tone = 'ok'; }
+    // a MERGE's write step reads only the files step 1 found a match in: that is not data skipping
+    if (pr > 0 && /^MERGE:?\s*(rewriting|write)/i.test(r.op ?? '')) bits.push(`read only the ${fmtNum(r.files_read)} files with a match (step 1)`);
+    else if (pr > 0) { bits.push(`${fmtNum(pr)} skipped${r.bytes_pruned ? ` (${fmtBytes(r.bytes_pruned)})` : ''} by data skipping`); tone = 'ok'; }
     else if ((r.bytes_read ?? 0) >= 10 * GB && !(r.partition_cols ?? 0)) { bits.push('nothing skipped'); tone = 'warn'; }
   }
   if ((r.dpp_filters ?? 0) > 0 || (r.dfp_filters ?? 0) > 0) bits.push('dynamic pruning on');
@@ -94,7 +96,7 @@ export function RunTables({ cid, run }: { cid: string; run: string }) {
                     {t.reads.map((r, i) => { const p = pruning(r); return p ? <div key={i} className={p.tone === 'warn' ? 'st-warn' : p.tone === 'ok' ? '' : 'muted'}>Query {r.id}: {p.text}{pulled(r)}</div> : null; })}
                   </td>
                   <td className="small" style={{ whiteSpace: 'normal' }}>
-                    {t.writes.length ? t.writes.map((w, i) => <div key={i}>{qname(w)} <span className="muted">· {w.op}{w.bytes ? <> · wrote {fmtBytes(w.bytes)}</> : null}{rowsText(w.rows)}</span>{writeNote(w)}</div>) : <span className="muted">–</span>}
+                    {t.writes.length ? t.writes.map((w, i) => <div key={i}>{qname(w)} <span className="muted">· {w.op}{w.bytes ? <> · wrote {fmtBytes(w.bytes)}</> : null}{w.merge ? mergeText(w.merge) : rowsText(w.rows)}</span>{writeNote(w)}</div>) : <span className="muted">–</span>}
                   </td>
                 </tr>
               ))}
@@ -104,6 +106,18 @@ export function RunTables({ cid, run }: { cid: string; run: string }) {
       </div>
     </section>
   );
+}
+
+/** A MERGE's write in plain words: with deletion vectors the matched rows are only marked deleted; with Change Data
+ * Feed the write also carries change rows; updated and inserted only when they could be derived. */
+function mergeText(m: MergeFacts) {
+  const bits = [
+    m.dv_on ? 'matched rows marked deleted (deletion vectors)' : '',
+    m.data_rows != null ? `${fmtRows(m.data_rows)} data rows written` : '',
+    m.cdf_on && m.change_rows ? `${fmtRows(m.change_rows)} change rows (CDF)` : '',
+    m.updated != null && m.inserted != null ? `${fmtRows(m.updated)} updated, ${fmtRows(m.inserted)} inserted${m.derived ? ' (derived)' : ''}` : '',
+  ].filter(Boolean);
+  return bits.length ? <> · {bits.join(', ')}</> : null;
 }
 
 /** The rows a write reported: what a MERGE / UPDATE / DELETE did to the target, else the rows it wrote. */

@@ -950,9 +950,17 @@ export interface RunTablesQuery {
     shuffle_read: number | null; shuffle_write: number | null; output_bytes: number | null; tasks: number | null; max_task_bytes_in: number | null }[];
   input_bytes: number | null; output_bytes: number | null;
 }
+/** One MERGE's numbers from one place (analysis/merge.py): the target read, files touched, deletion vectors, CDF and,
+ * when they can be derived, the rows updated and inserted. */
+export interface MergeFacts {
+  target: string | null; target_bytes: number | null; target_rows: number | null; copy_bytes: number | null;
+  files_touched: number | null; files_total: number | null; per_file: number | null; dv_on: boolean; cdf_on: boolean;
+  source_rows: number | null; output_rows: number | null; data_rows: number | null; change_rows: number | null;
+  updated: number | null; inserted: number | null; derived: boolean;
+}
 export interface RunTables {
   run_key: string;
-  tables: { table: string; path: string | null; role: string; reads: RunTableRead[]; writes: { ctx: string; id: number; op: string; start?: number | null; step?: string; bytes?: number | null; read_bytes?: number | null; rows?: WriteRows | null }[];
+  tables: { table: string; path: string | null; role: string; reads: RunTableRead[]; writes: { ctx: string; id: number; op: string; start?: number | null; step?: string; bytes?: number | null; read_bytes?: number | null; rows?: WriteRows | null; merge?: MergeFacts | null }[];
     first_read: number | null; first_write: number | null; last: number | null;
     merge?: { keys: string[]; null_safe: boolean; join: string | null; how: string; query: number; ctx: string; target_filters: string[] };
     stats?: TableStats | null }[];

@@ -10,7 +10,7 @@ import { SeverityBadge } from './ui';
 
 /** Why each kind of problem happens, when its evidence does not say. */
 const CAUSE: Record<string, string> = {
-  merge_rewrite: 'The MERGE condition does not let Delta skip files, so it reads and rewrites far more of the target than the source touches.',
+  merge_rewrite: 'The MERGE condition does not let Delta skip files, so it reads far more of the target than the source touches (and, without deletion vectors, rewrites every file it touches).',
   disk_spill: 'Each task holds more data than fits in its share of memory: too few shuffle partitions, a skewed key, or small executors.',
   gc_pressure: 'Tasks create or hold more objects than the memory per core allows (large broadcasts, caching, wide rows).',
   jvm_full_gc: 'The executor heap is nearly full after each collection, so the JVM keeps stopping everything to free memory.',
