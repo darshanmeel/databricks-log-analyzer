@@ -375,7 +375,7 @@ function Lanes({ cid, ctx, d, by, metric, width, peaks }: { cid: string; ctx: st
           {withData.length > ordered.length ? `Showing the ${ordered.length} ${by === 'executor' ? 'executors' : 'stages'} with the most bytes of ${withData.length}. ` : ''}
           {lanes.length > withData.length ? `${lanes.length - withData.length} with none are hidden. ` : ''}
           {d.sampled ? 'Based on a sample of tasks. ' : ''}
-          Bytes are counted when each task finished. <DataLink cid={cid} dataset="spill_shuffle_timeline" label="Data" />
+          Each task's bytes are spread over the minutes it ran. <DataLink cid={cid} dataset="spill_shuffle_timeline" label="Data" />
         </span>
       </div>
       {sel && <PeakBreakdown d={d} h={sel} metric={metric} onClose={() => setSel(null)} />}
@@ -666,7 +666,7 @@ function AllLanes({ cid, ctx, d, by, width }: { cid: string; ctx: string | null;
         <span className="muted small">
           {withData.length > ordered.length ? `Showing the ${ordered.length} ${by === 'executor' ? 'executors' : 'stages'} with the most bytes of ${withData.length}. ` : ''}
           {d.sampled ? 'Based on a sample of tasks. ' : ''}
-          Bytes are counted when each task finished. <DataLink cid={cid} dataset="spill_shuffle_timeline" label="Data" />
+          Each task's bytes are spread over the minutes it ran. <DataLink cid={cid} dataset="spill_shuffle_timeline" label="Data" />
         </span>
       </div>
       {hover && <SsTip h={hover} step={step} />}

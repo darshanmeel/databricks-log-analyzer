@@ -22,7 +22,7 @@ from .analysis.capacity import capacity_findings, core_use
 from .analysis.contention import add_findings, contention_findings, first_tasks, recount_queries
 from .analysis.initscripts import init_scripts, reader
 from .analysis.workload import read_split, workload_findings
-from .analysis.findings import build_findings_rows, build_timeline, gc_stuck, summarize_errors, task_oom_rows
+from .analysis.findings import build_findings_rows, build_timeline, demote_orphan_failures, gc_stuck, summarize_errors, task_oom_rows
 from .analysis.coverage import coverage
 from .analysis.incidents import build_incidents
 from .config import Rules, load_rules
@@ -224,6 +224,7 @@ def build(cluster_dir: str | os.PathLike, output_root: str | os.PathLike, *, clu
                   "findings": findings, "run_story": story_rows, "tasks": tdf, "stage_executor_profile": sep,
                   "executor_profile": ep}
     runs = attach_run_keys(cid, run_tables)
+    demote_orphan_failures(findings, queries)
     # Revision 17: findings that need the runs (waiting for cores, cores full) and MERGE that reads too much
     # the queue on a full cluster (every wave of tasks), autoscaling, caches, counts, DDL loops, reads by source
     read_split(queries, stages, ds["sql_plan_nodes"])

@@ -130,8 +130,8 @@ export function ClusterTop({ cid, runs, executors, compute, onPick, find, more, 
         {failedTasks > 0 && <Tile label="Tasks" value={fmtNum(sum(runs, (r) => r.tasks))} foot={`${fmtNum(failedTasks)} ${failedTasks === 1 ? 'attempt' : 'attempts'} failed`} tone="warn" />}
       </div>
 
-      {atBox}
-      <TimeWent cid={cid} runs={runs} took={took} waiting={waiting} running={running} t0={t0} t1={t1} compute={compute} peak={peak.n} causes={causes ?? null} runCauses={runCauses ?? {}} />
+      {/* the cause bar splits the clock: waiting with none of the run's stages running, not the queue behind them */}
+      <TimeWent cid={cid} runs={runs} took={took} waiting={sum(runs, (r) => r.waiting_ms)} running={running} t0={t0} t1={t1} compute={compute} peak={peak.n} causes={causes ?? null} runCauses={runCauses ?? {}} />
       <ChangeList cid={cid} rows={findings} loading={fs.loading} runs={runs} />
 
       <ClusterTables cid={cid} />
@@ -139,6 +139,7 @@ export function ClusterTop({ cid, runs, executors, compute, onPick, find, more, 
       <Fold name="cluster" title="Details" ids={['cv-find', 'cv-runs', 'cv-errors']}
         hint={`more numbers, find, programs, ${errs.data?.length ? fmtNum(errs.data.length) + ' ' : ''}errors, all ${fmtNum(runs.length)} runs`}>
         {moreTiles}
+        {atBox}
         <div id="cv-find">{find}</div>
         <div className="ro-two">
           <Programs cid={cid} progs={progs} />

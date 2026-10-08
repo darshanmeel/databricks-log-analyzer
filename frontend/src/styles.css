@@ -117,10 +117,10 @@
   --line: var(--border); --line-soft: var(--border-subtle);
   --accent-ink: var(--accent-contrast); --accent-soft: var(--link-tint); --accent-text: var(--link);
   --hl: var(--st-warn-tint); --hl-line: var(--st-warn);
-  /* severity: high → crit, medium → warn, low → not-assessed purple, info → reference gray, ok → ok */
-  --sev-high: var(--st-crit); --sev-medium: var(--st-warn); --sev-low: var(--st-na); --sev-info: var(--st-ref); --good: var(--st-ok);
-  --sev-high-soft: var(--st-crit-tint); --sev-medium-soft: var(--st-warn-tint); --sev-low-soft: var(--st-na-tint); --good-soft: var(--st-ok-tint);
-  --sev-high-text: var(--st-crit-ink); --sev-medium-text: var(--st-warn-ink); --sev-low-text: var(--st-na-ink); --good-text: var(--st-ok-ink);
+  /* severity: high → crit, medium → warn, low and info → reference grey (a low finding needs no hue), ok → ok */
+  --sev-high: var(--st-crit); --sev-medium: var(--st-warn); --sev-low: var(--st-ref); --sev-info: var(--st-ref); --good: var(--st-ok);
+  --sev-high-soft: var(--st-crit-tint); --sev-medium-soft: var(--st-warn-tint); --sev-low-soft: var(--st-ref-tint); --good-soft: var(--st-ok-tint);
+  --sev-high-text: var(--st-crit-ink); --sev-medium-text: var(--st-warn-ink); --sev-low-text: var(--st-ref-ink); --good-text: var(--st-ok-ink);
   /* charts: --c1..--c7 in order */
   --chart-surface: var(--surface);
   --series-1: var(--c1); --series-2: var(--c2); --series-3: var(--c3); --series-4: var(--c4);
@@ -284,9 +284,9 @@ label.field .hint { font-weight: 400; color: var(--muted); }
 .badge.mono { font-family: var(--mono); font-weight: 500; font-size: 11.5px; }
 
 .chip {
-  display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 9px;
-  border-radius: var(--r-sm); border: 1px solid var(--line); background: var(--panel-2);
-  color: var(--accent-text); font-size: 12.5px; font-weight: 500; white-space: nowrap; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 8px;
+  border-radius: 4px; border: 1px solid var(--line); background: var(--panel-2);
+  color: var(--accent-text); font-size: 12px; font-weight: 500; white-space: nowrap; cursor: pointer;
 }
 .chip:hover { border-color: var(--accent); text-decoration: none; background: var(--accent-soft); }
 .chip .k { color: var(--muted); font-weight: 600; font-size: 11px; }
@@ -454,8 +454,8 @@ table.t td .clip { display: block; max-width: 420px; overflow: hidden; text-over
 .logline .sig { display: inline-block; margin-right: 6px; font-family: var(--font); font-size: 11px; font-weight: 600; color: var(--sev-medium-text); background: var(--sev-medium-soft); border-radius: 3px; padding: 0 5px; }
 .logline.lvl-ERROR, .logline.lvl-FATAL { border-left-color: var(--sev-high); }
 .logline.lvl-ERROR .lvl, .logline.lvl-FATAL .lvl { color: var(--sev-high-text); }
-.logline.lvl-WARN { border-left-color: var(--sev-low); }
-.logline.lvl-WARN .lvl { color: var(--sev-low-text); }
+.logline.lvl-WARN { border-left-color: var(--st-warn); }
+.logline.lvl-WARN .lvl { color: var(--st-warn-ink); }
 .logline.lvl-INFO .lvl { color: var(--ink-2); }
 .logline.lvl-DEBUG .lvl, .logline.lvl-TRACE .lvl { color: var(--muted); }
 .logline.target { background: var(--hl); border-left-color: var(--hl-line); }
@@ -992,7 +992,7 @@ tr.row-on > td:first-child { box-shadow: inset 3px 0 0 var(--series-1); }
 .plan-top-name { font-size: var(--fs-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .plan-top-val { font-size: var(--fs-sm); font-variant-numeric: tabular-nums; }
 .plan-top .mini-bar { grid-column: 1 / -1; }
-.plan-node-detail { margin-top: 8px; padding: 10px; border: 1px solid var(--border-subtle); border-radius: 6px; background: var(--surface); }
+.plan-node-detail { margin-top: 8px; padding: 10px; border: 1px solid var(--border-subtle); border-radius: 6px; background: var(--surface); box-shadow: 0 2px 10px rgba(0, 0, 0, .06); }
 .plan-node-detail .exec-table td, .plan-node-detail .exec-table th { padding: 3px 6px; }
 
 .exec-lane:has(.heat) { height: 34px; }
@@ -1161,7 +1161,6 @@ details.err-stack:not([open]) > summary { color: var(--accent-text); }
 .exec-tbl tbody tr:hover { background: var(--surface-2, var(--line-soft)); }
 .exec-tbl tbody tr.sel { background: var(--accent-soft); }
 .exec-tbl .stage-prob { margin: 0 4px 2px 0; }
-.table-wrap { overflow-x: auto; }
 
 .where-broke { border-bottom: 1px solid var(--line); padding-bottom: 8px; }
 .where-broke .inc-strip { padding: 8px 0 0; }
@@ -1243,7 +1242,6 @@ th .th-sub { font-size: 10.5px; font-weight: 400; color: var(--muted); white-spa
 .why.bad { background: var(--st-crit-tint); }
 .why-line { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border-left: 4px solid var(--series-1); background: var(--surface-2); border-radius: var(--radius-md); }
 .why-line-item { font-size: 13px; }
-.crumbs { margin: 4px 0 -4px; }
 
 .stage-time { display: flex; flex-direction: column; gap: 6px; }
 .stage-time-legend { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 12.5px; }
@@ -1275,7 +1273,6 @@ th .th-sub { font-size: 10.5px; font-weight: 400; color: var(--muted); white-spa
 .qs-lane { position: relative; height: 12px; background: var(--surface-2); border-radius: 3px; min-width: 120px; }
 .qs-lane span { position: absolute; top: 0; bottom: 0; border-radius: 2px; }
 .qs-wait, .qs-key.wait { background: var(--wait); opacity: .75; }
-.qs-run, .qs-key.run { background: var(--st-ok); }
 .qs-key { display: inline-block; width: 10px; height: 10px; border-radius: 2px; vertical-align: -1px; margin: 0 2px; }
 
 /* Revision 16: task durations in buckets */
@@ -1286,7 +1283,7 @@ th .th-sub { font-size: 10.5px; font-weight: 400; color: var(--muted); white-spa
 .tb-lane span.slow { background: var(--st-warn); opacity: .9; }
 
 /* Revision 17: two scopes. The cluster (Overview, no rail) and one run (run rail + tabs); breadcrumb in the header */
-.crumbs { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 13px; color: var(--text-3); overflow: hidden; white-space: nowrap; }
+.crumbs { margin: 4px 0 -4px; display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 13px; color: var(--text-3); overflow: hidden; white-space: nowrap; }
 .crumbs a { color: var(--text-3); }
 .crumbs a:hover { color: var(--text); }
 .crumbs .sep { opacity: .6; }
@@ -1320,7 +1317,6 @@ th .th-sub { font-size: 10.5px; font-weight: 400; color: var(--muted); white-spa
 .run-title-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .run-title h1 { font-size: 20px; font-weight: 600; letter-spacing: -.01em; overflow-wrap: anywhere; }
 .run-meta { font-size: 12px; color: var(--text-3); margin-top: 4px; white-space: pre-wrap; }
-.chip { display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 4px; font-size: 12px; font-weight: 500; }
 .chip.warn { background: var(--st-warn-tint); color: var(--st-warn-ink); }
 .chip.bad { background: var(--st-crit-tint); color: var(--st-crit-ink); }
 .tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line); margin-top: 12px; overflow-x: auto; }
@@ -1458,7 +1454,6 @@ tr.other-task td { color: var(--text-2); }
 .plan-stage-chip { display: inline-flex; align-items: baseline; gap: 6px; font: inherit; font-size: 12px; padding: 4px 10px; border-radius: 8px; border: 1px solid var(--line); border-left: 4px solid var(--seg); background: var(--surface); color: var(--text); cursor: pointer; }
 .plan-stage-chip i { display: none; }
 .plan-stage-chip.on { background: color-mix(in srgb, var(--seg) 12%, var(--surface)); border-color: var(--seg); }
-.plan-node-detail { box-shadow: 0 2px 10px rgba(0, 0, 0, .06); }
 .op-stage { display: flex; flex-direction: column; gap: 6px; margin: 0 0 10px; }
 .op-stage-card { border: 1px solid var(--line); border-left: 4px solid var(--seg); border-radius: 6px; padding: 6px 10px; background: color-mix(in srgb, var(--seg) 5%, var(--surface)); }
 .op-stage-head { font-size: 12.5px; margin-bottom: 4px; }
@@ -1502,7 +1497,6 @@ tr.other-task td { color: var(--text-2); }
 .ro-wr-run { background: var(--series-1); }
 .ro-wr-nums { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; margin-top: 2px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .qs-lane .ro-hot { background: var(--st-warn) !important; opacity: 1; }
-.ro-flags { white-space: normal; }
 .ro-flag { display: inline-block; font-size: 11.5px; padding: 1px 7px; border-radius: 4px; margin: 1px 4px 1px 0; background: var(--surface-2); color: var(--text-3); border: 1px solid var(--border); white-space: nowrap; }
 .ro-flag.spill { background: var(--spill-tint); color: color-mix(in srgb, var(--spill) 70%, var(--text)); border-color: transparent; }
 .ro-flag.warn { background: var(--st-warn-tint); color: var(--st-warn-ink); border-color: transparent; }
@@ -1551,7 +1545,7 @@ tr.other-task td { color: var(--text-2); }
 .ro-split em { font-style: normal; padding: 0 8px; border-radius: 3px; }
 .ro-split .ro-seg-wait em { background: var(--surface); color: var(--text); text-shadow: none; }
 .ro-time-table th, .ro-time-table td { padding-left: 6px; padding-right: 6px; }
-.ro-flags { min-width: 120px; }
+.ro-flags { white-space: normal; min-width: 120px; }
 /* the finder: a full-width table in the run overview's style */
 .ro-find { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
 .ro-find th { font-size: 11px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--text-3); text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
@@ -1598,7 +1592,6 @@ a.ro-plain { color: var(--text); }
 .busy-track.mem.crit i { background: var(--st-crit); }
 .exec-mem td, .exec-mem th { vertical-align: top; }
 /* Revision 20: Find controls on their own rows, pills never break their label */
-.ro-find-panel .panel-head { flex-wrap: wrap; }
 .ro-find-panel .ro-find-controls { justify-content: flex-start; width: 100%; }
 .seg.ro-pills { flex-wrap: wrap; }
 .seg.ro-pills button { white-space: nowrap; }
@@ -1779,3 +1772,20 @@ details.sub[open] > summary { margin-bottom: 4px; }
 .coverage > summary::-webkit-details-marker { display: none; }
 .coverage ul { margin: 6px 0 0; padding-left: 18px; color: var(--text-2); }
 .coverage li { margin: 2px 0; }
+
+.level-chips { margin-bottom: 10px; }
+.level-chips .chip.active { background: var(--accent-tint, var(--surface-2)); border-color: var(--accent, var(--border)); font-weight: 600; }
+
+/* the run rail on phones: folded to one line (the run picked), the list on tap */
+.rail-toggle { display: none; }
+@media (max-width: 900px) {
+  .rail { max-height: none; }
+  .rail-toggle { display: flex; justify-content: space-between; width: 100%; background: var(--rail-2); color: var(--rail-strong); border: 1px solid var(--rail-border); border-radius: 6px; padding: 6px 10px; font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+  .rail:not(.open) .rail-body { display: none; }
+  .rail.open .rail-body { max-height: 60vh; overflow-y: auto; margin-top: 8px; }
+}
+
+/* the query's verdict under its title: the worst finding in one sentence */
+.query-verdict { margin: 6px 0 2px; font-size: 13.5px; padding: 6px 10px; border-left: 3px solid var(--border); background: var(--surface-2, transparent); border-radius: 0 6px 6px 0; max-width: 100ch; }
+.query-verdict.sev-high { border-left-color: var(--st-crit); }
+.query-verdict.sev-medium { border-left-color: var(--st-warn); }

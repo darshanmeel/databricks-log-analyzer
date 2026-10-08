@@ -207,6 +207,7 @@ export function PlanGraph({ cid, ctx, id }: { cid: string; ctx: string; id: stri
   const [heat, setHeat] = useState<Heat>('time');
   const [sel, setSel] = useState<number | null>(null);
   const [hiSeg, setHiSeg] = useState<number | null>(null);
+  const [anyway, setAnyway] = useState(false);
   const rows = st.data?.rows ?? null;
 
   const g = useMemo(() => (rows && rows.length > 1 ? layout(rows) : null), [rows]);
@@ -236,6 +237,16 @@ export function PlanGraph({ cid, ctx, id }: { cid: string; ctx: string; id: stri
   const stageMs = (sst.data?.stages ?? []).reduce((a, x) => a + ((x as { duration_ms?: number | null }).duration_ms ?? 0), 0);
   const topMs = heat === 'time' ? top.reduce((a, n) => a + (h.get(n.row) ?? 0), 0) : null;
   const tooSmall = topMs !== null && stageMs > 60_000 && topMs < 0.01 * stageMs;
+  // most boxes would read "no numbers recorded": one line instead, the graph on request
+  if (!anyway && !fromText && vis.length >= 2 && measured < vis.length / 2)
+    return (
+      <Panel title="Operators">
+        <p className="muted small" style={{ margin: 0 }}>
+          Spark recorded numbers for {measured} of {vis.length} operators, so the graph would say little; the plan below and the Stages tab have the timings.{' '}
+          <button className="linkish" onClick={() => setAnyway(true)}>Show the graph anyway</button>
+        </p>
+      </Panel>
+    );
 
   return (
     <Panel

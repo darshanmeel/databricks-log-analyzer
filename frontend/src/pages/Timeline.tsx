@@ -11,6 +11,8 @@ import { to } from '../links';
 /* ------------------------------------------------------------------ layout model */
 
 const LABEL_W = 156;
+const STRIP_TOP = 5;   // incidents on the Timeline strip before "N more"
+const STRIP_LW = 260;  // the strip's label column: room for a readable title
 const AXIS_H = 28;
 const HEADER_H = 22;
 const JOB_H = 14;
@@ -973,6 +975,10 @@ function WhereItBroke({ t0, t1, incs, active, onPick, onReset, cid }: { t0: numb
   const pct = (t: number) => Math.max(0, Math.min(100, ((t - t0) / (t1 - t0 || 1)) * 100));
   const worst = incs[0];
   const sel = incs.find((i) => i.incident_id === active);
+  const [all, setAll] = useState(false);
+  // the worst few, the rest on demand (the full list is on Findings); the selected one always shows
+  const shown = all ? incs : incs.slice(0, STRIP_TOP).concat(sel && incs.indexOf(sel) >= STRIP_TOP ? [sel] : []);
+  const ticks = [0, 1, 2, 3, 4].map((k) => t0 + ((t1 - t0) * k) / 4);
   return (
     <div className="where-broke">
       <div className="panel-head">
@@ -993,14 +999,14 @@ function WhereItBroke({ t0, t1, incs, active, onPick, onReset, cid }: { t0: numb
           )}
         </div>
       </div>
-      <div className="inc-strip" style={{ ['--lw' as string]: `${LABEL_W}px` }}>
-        {incs.map((i) => {
+      <div className="inc-strip" style={{ ['--lw' as string]: `${STRIP_LW}px` }}>
+        {shown.map((i) => {
           const s = i.incident_start!;
           const e = i.incident_end ?? s;
           return (
             <button key={i.incident_id} className={`inc-strip-row ${i.incident_id === active ? 'on' : ''}`} aria-pressed={i.incident_id === active} onClick={() => onPick(i)}>
               <span className="inc-strip-label" title={`${i.incident_id}: ${i.incident_title}`}>
-                <b>{i.incident_id}</b> {i.incident_title}
+                <b>{i.incident_id}</b> {truncate(i.incident_title, 34)}
               </span>
               <span className="inc-strip-track">
                 <span className={`inc-strip-bar sev-${i.incident_severity}`} style={{ left: `${pct(s)}%`, width: `max(4px, ${pct(e) - pct(s)}%)` }} />
@@ -1008,6 +1014,17 @@ function WhereItBroke({ t0, t1, incs, active, onPick, onReset, cid }: { t0: numb
             </button>
           );
         })}
+        <div className="inc-strip-row axis" aria-hidden>
+          <span className="inc-strip-label" />
+          <span className="inc-strip-track">
+            {ticks.map((x, k) => <span key={k} style={{ left: `${pct(x)}%`, transform: k ? (k === 4 ? 'translateX(-100%)' : 'translateX(-50%)') : undefined }}>{fmtTime(x).slice(0, 5)}</span>)}
+          </span>
+        </div>
+        {incs.length > STRIP_TOP && (
+          <button className="linkish small" style={{ margin: '4px 16px 0' }} onClick={() => setAll(!all)}>
+            {all ? 'Show the worst only' : `${fmtNum(incs.length - STRIP_TOP)} more incidents`}
+          </button>
+        )}
         {sel && (
           <p className="small" style={{ margin: '6px 16px 0' }}>
             {sel.incident_id} ran {fmtTs(sel.incident_start)}

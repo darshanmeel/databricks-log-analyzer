@@ -492,6 +492,36 @@ def build_findings(tables: Mapping, rules: Rules) -> pd.DataFrame:
     return pd.DataFrame(build_findings_rows(tables, rules), columns=FINDING_COLS)
 
 
+SKEW_HIGH_MS = 5 * 60_000  # a skewed task this slow costs the stage minutes: high; a shorter one is medium
+
+
+def calibrate(findings: list[dict], rules: Rules) -> None:
+    """One high per problem, and high only when it cost real time: a stage whose spill is high does not also get a
+    high for its big tasks (the same problem), and a skewed task under SKEW_HIGH_MS is medium."""
+    spill_high = {(f["spark_context_id"], f["stage_id"], f["stage_attempt"]) for f in findings
+                  if f["category"] == "disk_spill" and f["severity"] == "high"}
+    for f in findings:
+        k = (f.get("spark_context_id"), f.get("stage_id"), f.get("stage_attempt"))
+        if f["category"] == "large_tasks" and f["severity"] == "high" and k in spill_high:
+            f["severity"] = "medium"
+        elif f["category"] == "task_skew" and f["severity"] == "high":
+            m = re.match(r"slowest task ([\d.]+)s", f.get("evidence") or "")
+            if m and float(m.group(1)) * 1000 < SKEW_HIGH_MS:
+                f["severity"] = "medium"
+
+
+def demote_orphan_failures(findings: list[dict], queries: list[dict]) -> None:
+    """A query that failed outside any run without running a stage (a platform's own query, such as MLflow
+    autologging's table lookup) is listed, as low: no run was affected. Needs the queries' run_key."""
+    orphan = {(q["spark_context_id"], q["sql_execution_id"]) for q in queries
+              if q.get("status") == "failed" and not q.get("run_key") and not q.get("stages")}
+    for f in findings:
+        if f["category"] == "query_failed" and (f.get("spark_context_id"), f.get("sql_execution_id")) in orphan:
+            f["severity"] = "low"
+            if not (f.get("evidence") or "").startswith("Outside any run"):
+                f["evidence"] = "Outside any run, no stage ran (an internal query; no run was affected): " + (f.get("evidence") or "")
+
+
 def build_findings_rows(tables: Mapping, rules: Rules) -> list[dict]:
     """`tables` needs cluster_id, stages, executors, sql_queries, log_signals, log_errors (lists of dicts).
     Returns the ranked findings (FINDING_COLS), finding_id F001.. by severity rank then ts (nulls first, like
@@ -517,6 +547,7 @@ def build_findings_rows(tables: Mapping, rules: Rules) -> list[dict]:
         signals,
         _exception_findings(cid, summarize_errors(tables.get("log_errors") or []), rules),
     ]
+    calibrate(parts[0], rules)
     rows = []
     for pi, part in enumerate(parts):
         for i, r in enumerate(part):

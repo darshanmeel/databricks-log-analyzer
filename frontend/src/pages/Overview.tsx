@@ -6,7 +6,7 @@ import { useCluster, useRunScopeCtx } from '../components/Shell';
 import { ClusterView } from './ClusterView';
 import { RunOverview } from './RunOverview';
 import { SettingsAdvice } from '../components/SettingsAdvice';
-import { Async, DataLink, DiagChips, Empty, Panel, SeverityBadge, StatusBadge } from '../components/ui';
+import { Async, DataLink, DiagChips, Empty, Panel, SeverityBadge, StatusBadge, Tile } from '../components/ui';
 import { fmtBytes, fmtDuration, fmtNum, fmtPct, fmtTime, fmtTs, truncate } from '../format';
 import { useAsync } from '../hooks';
 import { to } from '../links';
@@ -62,17 +62,9 @@ function StatusBand({ s }: { s: Summary }) {
   );
 }
 
+/** The shared tile, with "n / of" as its value. */
 function Kpi({ label, value, of, foot, tone }: { label: string; value: string; of?: string; foot?: string; tone?: 'bad' | 'warn' }) {
-  return (
-    <div className={`kpi ${tone ?? ''}`}>
-      <div className="label">{label}</div>
-      <div className="value">
-        {value}
-        {of && <span className="of"> / {of}</span>}
-      </div>
-      {foot && <div className="foot">{foot}</div>}
-    </div>
-  );
+  return <Tile label={label} value={of ? `${value} / ${of}` : value} foot={foot ?? (tone === 'bad' ? 'look at these first' : tone ? 'worth a look' : undefined)} tone={tone} />;
 }
 
 function Kpis({ s }: { s: Summary }) {

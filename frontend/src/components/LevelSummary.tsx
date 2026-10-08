@@ -8,7 +8,7 @@ import { api, type SparkJobRow, type StageRow, type StageWhy } from '../api';
 import { useAsync } from '../hooks';
 import { fmtBytes, fmtDuration, fmtNum, fmtPct, fmtRows, fmtSkew, fmtTime, truncate, unitFor } from '../format';
 import { gcBreach, skewBreach, spillBreach } from '../thresholds';
-import { StatusBadge } from './ui';
+import { StatusBadge, Tile } from './ui';
 import { ScopeTaskSection } from './TaskSections';
 import { Bars, SIGN, Split, VCards, signFor, type VCard } from './VCards';
 import type { QueryStep, QueryTime } from '../api';
@@ -180,15 +180,8 @@ function Numbers({ dur, kids, kidWord, stages }: { dur: number | null; kids: num
   );
 }
 
-function Kpi({ label, value, foot, tone }: { label: string; value: string; foot?: React.ReactNode; tone?: 'warn' | 'bad' }) {
-  return (
-    <div className={`kpi ${tone ?? ''}`}>
-      <div className="label">{label}</div>
-      <div className="value">{value}</div>
-      {foot ? <div className="foot">{foot}</div> : null}
-    </div>
-  );
-}
+// one tile everywhere (ui.Tile): the tone colours the foot, the problem, not the total
+const Kpi = Tile;
 
 /** One row per child (job or stage): its time, stages, tasks, data, spill, which executors did the work, and why it
  * took that long. Every number column sorts; click a row to open it. */

@@ -124,7 +124,7 @@ function ClusterBody({ d }: { d: ClusterViewData }) {
               <b>What ran at (UTC)</b>{' '}
               <input className="input" style={{ width: 80 }} placeholder="01:00" value={atText} onChange={(e) => setAtText(e.target.value)} />
             </label>
-            <span className="small muted">or click a time in the chart under Details</span>
+            <span className="small muted">or click a time in the chart below</span>
             {atText && <button className="btn small ghost" onClick={() => setAtText('')}>Clear</button>}
           </div>
           {at !== null && <AtTime d={d} runs={runs} at={at} />}

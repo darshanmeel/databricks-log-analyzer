@@ -36,6 +36,23 @@ function FacetSelect({ cid, column, value, onChange, ready }: { cid: string; col
   );
 }
 
+/** One click to the lines that matter: the error and warning lines, with their counts (the full Level list stays in
+ * the filters). All lines stay the default, so a Python traceback logged at INFO is never hidden. */
+function LevelChips({ cid, value, onChange, ready }: { cid: string; value: string; onChange: (v: string | null) => void; ready: boolean }) {
+  const st = useAsync((s) => api.facets(cid, 'log_lines', 'level', s), [cid, ready], ready);
+  const count = (lv: string) => (st.data ?? []).filter((o) => String(o.value) === lv).reduce((a, o) => a + o.count, 0);
+  const chips: [string | null, string, number | null][] = [[null, 'All lines', null], ['FATAL', 'Fatal', count('FATAL')], ['ERROR', 'Errors', count('ERROR')], ['WARN', 'Warnings', count('WARN')]];
+  return (
+    <div className="chips level-chips" role="group" aria-label="Level">
+      {chips.filter(([lv, , n]) => lv === null || (n ?? 0) > 0 || value === lv).map(([lv, label, n]) => (
+        <button key={label} className={`chip ${(value || null) === lv ? 'active' : ''}`} aria-pressed={(value || null) === lv} onClick={() => onChange(lv)}>
+          {label}{n ? <span className="muted"> {fmtNum(n)}</span> : null}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export default function Logs() {
   const [sp] = useQueryState();
   const fp = sp.get('file_path');
@@ -90,6 +107,7 @@ function SearchView() {
       </div>
       <div className="panel" style={{ marginBottom: 16 }}>
         <div className="panel-body">
+          <LevelChips cid={cid} value={f.level} onChange={(v) => setQ({ level: v }, true)} ready={!!st.data} />
           <div className="filters">
             {FILTERS.map((k) => (
               <FacetSelect key={k} cid={cid} column={k} value={f[k]} onChange={(v) => setQ({ [k]: v }, true)} ready={!!st.data} />

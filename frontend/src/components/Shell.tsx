@@ -274,6 +274,9 @@ const railName = (r: RunRow) => (r.subject && !VAGUE.test(r.subject) ? r.subject
 /** Runs on this cluster, by program, worst first. Programs whose runs all took about their usual time fold to one line. */
 function RunRail({ runs, run, choose }: { runs: RunRow[]; run: string | null; choose: (k: string) => void }) {
   const [q, setQ] = useState('');
+  const [openRail, setOpenRail] = useState(false);
+  const cur = runs.find((r) => r.run_key === run) ?? null;
+  useEffect(() => setOpenRail(false), [run]);  // a run picked: fold the list again (phones)
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [by, setBy] = useState<RailSort>(readRailSort);
   const pickSort = (v: RailSort) => { setBy(v); try { localStorage.setItem('rail:sort', v); } catch { /* private window */ } };
@@ -287,11 +290,14 @@ function RunRail({ runs, run, choose }: { runs: RunRow[]; run: string | null; ch
   }, [shown, by]);
   const longest = Math.max(1, ...runs.map((r) => railValue(r, by)));
   return (
-    <aside className="rail" aria-label="Runs on this cluster" title="Amber: a run that took 2× its usual time or more">
+    <aside className={`rail ${openRail ? 'open' : ''}`} aria-label="Runs on this cluster" title="Amber: a run that took 2× its usual time or more">
       <div className="rail-head">
         <b>Runs on this cluster</b>
         <span className="cnt">{fmtNum(runs.length)}</span>
       </div>
+      {/* phones: one line with the run picked; the list opens on tap */}
+      <button className="rail-toggle" aria-expanded={openRail} onClick={() => setOpenRail(!openRail)}>{cur ? railName(cur) : 'Pick a run'} <span aria-hidden>{openRail ? '▴' : '▾'}</span></button>
+      <div className="rail-body">
       <input className="input rail-search" placeholder="Name, table, id or 13:05" value={q} aria-label="Search runs"
         onChange={(e) => setQ(e.target.value)}
         onKeyDown={(e) => { if (e.key === 'Enter' && shown[0]) choose(shown[0].run_key); if (e.key === 'Escape') setQ(''); }} />
@@ -334,6 +340,7 @@ function RunRail({ runs, run, choose }: { runs: RunRow[]; run: string | null; ch
           </div>
         );
       })}
+      </div>
     </aside>
   );
 }

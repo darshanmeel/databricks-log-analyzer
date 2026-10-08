@@ -11,7 +11,7 @@ import { rowLinks, to } from '../links';
 import { gcBreach, skewBreach, spillBreach } from '../thresholds';
 import type { StageRow } from '../api';
 import { PlanGraph } from '../components/PlanGraph';
-import { FindingPoints } from '../components/FindingPoints';
+import { FindingPoints, kindName } from '../components/FindingPoints';
 import { dataSpread, Spread } from '../components/Spread';
 
 const sum = (a: number | null, b: number | null) => (a === null && b === null ? null : (a ?? 0) + (b ?? 0));
@@ -136,6 +136,19 @@ function QueryView({ cid, ctx, id, d }: { cid: string; ctx: string; id: string; 
             {p?.max_severity && p.findings ? <SeverityBadge sev={p.max_severity} count={p.findings} /> : null}
           </div>
           <p className="sub wrap-any">{q.description || 'No description'}</p>
+          {(() => {
+            // the verdict, on the first line under the title: the worst finding, in one sentence
+            const sev: Record<string, number> = { high: 0, medium: 1, low: 2, info: 3 };
+            const top = [...d.findings].sort((a, b) => (sev[a.severity] ?? 9) - (sev[b.severity] ?? 9))[0];
+            if (!top) return null;
+            const first = truncate((top.evidence ?? '').split(/(?<=\.)\s+/)[0], 180);
+            return (
+              <p className={`query-verdict sev-${top.severity}`}>
+                <b>{kindName(top.category)}:</b> {first}{' '}
+                <a href="#q-findings" className="small">{d.findings.length > 1 ? `all ${fmtNum(d.findings.length)} findings ↓` : 'details ↓'}</a>
+              </p>
+            );
+          })()}
           <p className="muted small mono">
             context {ctx} · started {fmtTs(q.start_time)} UTC · plan hash {q.plan_hash ?? '–'}
           </p>
@@ -214,6 +227,7 @@ function QueryView({ cid, ctx, id, d }: { cid: string; ctx: string; id: string; 
               </div>
             )}
           </Panel>
+          <div id="q-findings" />
           <Panel title={`Findings (${d.findings.length})`}>
             {d.findings.length === 0 ? (
               <p className="muted">No findings for this query.</p>
