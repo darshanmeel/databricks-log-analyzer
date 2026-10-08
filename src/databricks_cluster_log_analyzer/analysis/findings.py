@@ -10,6 +10,7 @@ import pandas as pd
 from ..config import SEVERITY_RANK, Rules
 from ..util import fmt_words, round_half_up, spark_double_str
 from ..parsing.oom import SITE_FIX, SITE_TEXT, is_oom, oom_site
+from .aggregate import storage_bytes
 from .retries import category_text, stage_retry_summary
 
 FINDING_COLS = ["finding_id", "cluster_id", "spark_context_id", "severity", "category", "entity", "evidence", "fix",
@@ -187,20 +188,22 @@ def _big_read_findings(cid: str, stages: list[dict], queries: list[dict], rules:
              for q in queries}
     out = []
     for s in stages:
-        b = s.get("input_bytes") or 0
+        b = storage_bytes(s)  # not what came from a DataFrame cache
         if b < rules.big_read_min_bytes:
             continue
         scans = list(dict.fromkeys(m.group(1) for x in (s.get("rdd_scopes") or []) if (m := _SCAN_RE.match(str(x)))))
         q_tables = reads.get((s.get("spark_context_id"), s.get("sql_execution_id"))) or []
         tables = scans or (q_tables if len(q_tables) == 1 else [])
         what = tables[0] if len(tables) == 1 else (f"{tables[0]} and {len(tables) - 1} more" if tables else None)
-        q_read = sum((x.get("input_bytes") or 0) for x in stages if x.get("sql_execution_id") is not None
+        q_read = sum(storage_bytes(x) for x in stages if x.get("sql_execution_id") is not None
                      and x.get("sql_execution_id") == s.get("sql_execution_id")
                      and x.get("spark_context_id") == s.get("spark_context_id"))
         ev = (f"read {b / GB:,.0f} GB from storage" + (f" scanning {what}" if what else "")
               + f" over {s.get('tasks') or 0:,} tasks in {fmt_words(s.get('duration_ms'))}")
         if q_read > b:
             ev += f"; {b / q_read:.0%} of what its query read"
+        if (s.get("df_cache_bytes") or 0) >= GB:
+            ev += f"; another {s['df_cache_bytes'] / GB:,.0f} GB came from a DataFrame cache"
         sev = "high" if b >= rules.big_read_high_bytes else "medium"
         entity = f"Stage {s['stage_id']}.{s['stage_attempt']}" + (f": {what}" if what else "")
         out.append(_f(cid, s["spark_context_id"], sev, "big_read", entity, ev, FIX["big_read"], s.get("start_time"),
@@ -271,7 +274,7 @@ def summarize_errors(log_errors: list[dict]) -> list[dict]:
         g["executors_affected"] = len(g.pop("_execs"))
         g["sources"] = sorted(g.pop("_sources"))
         g.update(sample_message=s["message"], sample_stack=list(s["top_frames"]), sample_file_path=s["file_path"],
-                 sample_seq=s["seq"], sample_executor_id=s.get("executor_id"))
+                 sample_seq=s["seq"], sample_executor_id=s.get("executor_id"), sample_logged_by=s.get("logged_by"))
         out.append(g)
     out.sort(key=lambda g: (-g["occurrences"], g["first_seen"] is None, g["first_seen"] or 0))
     return out
@@ -386,7 +389,9 @@ def _event_findings(cid: str, stages, executors, queries, rules: Rules, retries=
                 ev += f"; max heap after GC {g['max_heap_after_mb']:,.0f} MB"
                 if g.get("heap_total_mb"):
                     ev += f" of {g['heap_total_mb']:,.0f} MB"
-            out.append(_f(cid, g.get("spark_context_id"), "medium", "jvm_full_gc", who, ev, FIX["jvm_full_gc"],
+            # many Full GCs alone are normal for a busy JVM: medium only when the pauses cost time or freed little
+            heavy = (share is not None and share >= rules.gc_pause_share_min) or (g.get("heap_after_p50") or 0) >= 0.8
+            out.append(_f(cid, g.get("spark_context_id"), "medium" if heavy else "low", "jvm_full_gc", who, ev, FIX["jvm_full_gc"],
                           g.get("first_full_gc_ts"), executor_id=g.get("executor_id"),
                           log_file_path=g.get("file_path"), log_seq=g.get("seq")))
     return out
@@ -408,7 +413,9 @@ def _real_losses(log_signals: list[dict], executors: list[dict], rules: Rules) -
 
 def _signal_findings(cid: str, signal_summary: list[dict]) -> list[dict]:
     return [_f(cid, None, g["severity"], f"log:{g['signal']}", "driver/executor logs",
-               f"{g['occurrences']} lines on {g['executors_affected']} executors. e.g. {(g['sample_line'] or '')[:200]}",
+               f"{g['occurrences']} lines on "
+               + (f"{g['executors_affected']} executor{'s' if g['executors_affected'] != 1 else ''}" if g["executors_affected"]
+                  else "the driver") + f". e.g. {(g['sample_line'] or '')[:200]}",
                g["fix"], g["first_seen"], signal=g["signal"], log_file_path=g["sample_file_path"],
                log_seq=g["sample_seq"])
             for g in signal_summary]
@@ -441,7 +448,9 @@ def _exception_findings(cid: str, error_summary: list[dict], rules: Rules) -> li
             ev = f"out of memory {SITE_TEXT[site]}: " + ev
             fix = SITE_FIX[site]
         sev = "high" if high.search(cls) else "medium"
-        if benign and benign.search(f"{cls} {g['sample_message'] or ''}"):
+        stack = " ".join([*(g.get("sample_stack") or []), g.get("sample_logged_by") or ""])
+        if (benign and benign.search(f"{cls} {g['sample_message'] or ''}")) or any(
+                re.search(c, cls) and re.search(st, stack) for c, st in rules.exception_benign_stack):
             sev, fix = "low", "Logged by the platform on healthy clusters too; not the cause of a problem."
         out.append(_f(cid, None, sev, "exception", cls, ev, fix,
                       g["first_seen"], fingerprint=g["fingerprint"], log_file_path=g["sample_file_path"],
@@ -460,18 +469,24 @@ def build_findings_rows(tables: Mapping, rules: Rules) -> list[dict]:
     Returns the ranked findings (FINDING_COLS), finding_id F001.. by severity rank then ts (nulls first, like
     Spark's ascending sort)."""
     cid = tables["cluster_id"]
+    sites = {**log_oom_sites(tables.get("log_errors") or []),
+             **{t["executor_id"]: t["oom_site"] for t in tables.get("task_ooms") or [] if t.get("executor_id")}}
+    signals = _signal_findings(cid, summarize_signals(_real_losses(tables.get("log_signals") or [],
+                                                                   tables.get("executors") or [], rules)))
+    # every out of memory happened while building a DataFrame cache: say so, not the generic "more partitions"
+    if sites and set(sites.values()) == {"cache"}:
+        for r in signals:
+            if r["category"] == "log:executor_oom":
+                r["fix"] = SITE_FIX["cache"]
     parts = [
         _event_findings(cid, tables.get("stages") or [], tables.get("executors") or [],
                         tables.get("sql_queries") or [], rules, tables.get("task_retries") or [],
-                        tables.get("gc_profile") or [],
-                        {**log_oom_sites(tables.get("log_errors") or []),
-                         **{t["executor_id"]: t["oom_site"] for t in tables.get("task_ooms") or [] if t.get("executor_id")}})
+                        tables.get("gc_profile") or [], sites)
         + _oom_site_findings(cid, tables.get("task_ooms") or [], tables.get("stages") or [])
         + _idle_findings(cid, tables.get("executor_profile") or [], rules)
         + _large_task_findings(cid, tables.get("stages") or [], rules)
         + _big_read_findings(cid, tables.get("stages") or [], tables.get("sql_queries") or [], rules),
-        _signal_findings(cid, summarize_signals(_real_losses(tables.get("log_signals") or [],
-                                                             tables.get("executors") or [], rules))),
+        signals,
         _exception_findings(cid, summarize_errors(tables.get("log_errors") or []), rules),
     ]
     rows = []

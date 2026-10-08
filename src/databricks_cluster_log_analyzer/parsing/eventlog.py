@@ -378,6 +378,24 @@ def _distinct(values, n: int = STAGE_LIST_MAX) -> list[str]:
     return out
 
 
+# stage accumulables that say where a stage's input came from. Spark adds a DataFrame-cache read to the task input
+# (inputMetrics.bytesRead); these count only what came from cloud storage, and from the Databricks disk cache
+CLOUD_BYTES_NAMES = ("cloud storage response size",)
+DISK_CACHE_HIT_NAMES = ("cache hits size",)
+
+
+def _accum_sum(si: dict, names: tuple[str, ...]) -> int | None:
+    """Sum of the stage accumulables with one of these names; None when the stage has none."""
+    accs = si.get("Accumulables")
+    total = None
+    for a in accs if isinstance(accs, list) else []:
+        if isinstance(a, dict) and a.get("Name") in names:
+            v = _i(a.get("Value"))
+            if v is not None:
+                total = (total or 0) + v
+    return total
+
+
 def _stage_info(e: dict, ctx: str, cid: str) -> dict:
     si = e.get("Stage Info") or {}
     if not isinstance(si, dict):
@@ -395,7 +413,8 @@ def _stage_info(e: dict, ctx: str, cid: str) -> dict:
             if isinstance(parents, list) else None,
             "rdd_names": _distinct(r.get("Name") for r in rdds) if rdds is not None else None,
             "rdd_scopes": _distinct(_scope_name(r.get("Scope")) for r in rdds) if rdds is not None else None,
-            "details": _s(details, STAGE_DETAILS_MAX) if details not in (None, "") else None}
+            "details": _s(details, STAGE_DETAILS_MAX) if details not in (None, "") else None,
+            "cloud_bytes": _accum_sum(si, CLOUD_BYTES_NAMES), "disk_cache_bytes": _accum_sum(si, DISK_CACHE_HIT_NAMES)}
 
 
 def _connect_event(tables: EventTables, name: str, e: dict) -> None:

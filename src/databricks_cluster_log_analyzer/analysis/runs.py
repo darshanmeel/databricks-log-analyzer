@@ -19,6 +19,7 @@ from collections import Counter, defaultdict
 
 import pandas as pd
 
+from ..parsing.eventlog import is_connect_blob
 from ..util import fmt_words, is_null
 
 RUN_COLS = ["cluster_id", "spark_context_id", "run_key", "kind", "label", "databricks_job_id", "databricks_run_id",
@@ -285,7 +286,7 @@ def run_family(r: dict) -> str:
 
 _CLASS = re.compile(r"^\s*((?:[a-z_][\w$]*\.){2,}[A-Z][\w$]*)")
 _IDENT = re.compile(r"\b[A-Za-z][A-Za-z0-9]*_[A-Za-z0-9_]{2,}\b")
-_NOISE = {"run_id", "batch_id", "job_id", "task_values", "spark_catalog"}
+_NOISE = {"run_id", "batch_id", "job_id", "task_values", "spark_catalog", "session_id", "user_id", "operation_id"}
 
 
 def run_names(d: dict) -> dict[str, tuple[str | None, str | None]]:
@@ -300,6 +301,8 @@ def run_names(d: dict) -> dict[str, tuple[str | None, str | None]]:
         if nb:
             prog[rk][nb.rstrip("/").rsplit("/", 1)[-1]] += 1
         desc = _s(j.get("description")) or ""
+        if is_connect_blob(desc):
+            continue  # "Spark Connect - session_id ...": names the session, not what the run worked on
         m = _CLASS.match(desc)
         if m:
             prog[rk][m.group(1).rsplit(".", 1)[-1].rstrip(".")] += 1

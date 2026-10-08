@@ -67,6 +67,8 @@ SCHEMAS: dict[str, pa.Schema] = {
         # tasks per size band and the bytes each band read
         ("tasks_none", I), ("tasks_lt10", I), ("tasks_10_128", I), ("tasks_128_256", I), ("tasks_ge256", I),
         ("bytes_lt10", I), ("bytes_10_128", I), ("bytes_128_256", I), ("bytes_ge256", I),
+        # where the input came from: cloud storage (and the Databricks disk cache), or a DataFrame cache
+        ("cloud_bytes", I), ("disk_cache_bytes", I), ("storage_bytes", I), ("df_cache_bytes", I),
     ),
     "spark_jobs": _schema(
         ("cluster_id", S), ("spark_context_id", S), ("spark_job_id", I), ("start_time", TS), ("end_time", TS),
