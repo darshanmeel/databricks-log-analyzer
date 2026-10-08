@@ -27,6 +27,8 @@ const WHAT: { re: RegExp; tone: 'warn' | 'crit'; why: string; where: (cid: strin
   { re: /task code/i, tone: 'crit', why: 'Your code raised an error inside a task, on every retry.', where: (cid) => to.errors(cid) },
   { re: /notebook/i, tone: 'crit', why: 'How the failure reached the notebook or job.', where: (cid) => to.errors(cid) },
   { re: /task skew/i, tone: 'warn', why: 'A few tasks ran far longer than the rest.', where: (cid) => to.findings(cid) },
+  { re: /tasks too big/i, tone: 'warn', why: 'Each task was given far more data than it is sized for.', where: (cid) => to.findings(cid) },
+  { re: /big table read/i, tone: 'warn', why: 'A stage read a lot of a table from storage.', where: (cid) => to.findings(cid) },
   { re: /spill/i, tone: 'warn', why: 'Data did not fit in memory and was written to disk.', where: (cid) => to.timeline(cid) },
   { re: /gc/i, tone: 'warn', why: 'The JVM spent long pauses freeing memory.', where: (cid) => to.executors(cid) },
   { re: /executor lost|decommission|preempt/i, tone: 'warn', why: 'An executor went away, with its shuffle files.', where: (cid) => to.executors(cid) },

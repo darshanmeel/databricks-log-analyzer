@@ -94,11 +94,21 @@
     <li><a href="#run">One run</a></li>
     <li><a href="#query">One query</a></li>
     <li><a href="#stage">One stage: rows in and out</a></li>
+    <li><a href="#tasks">One stage: its tasks</a></li>
+    <li><a href="#task-executors">Tasks by executor</a></li>
+    <li><a href="#slowest">Slowest tasks and skew</a></li>
+    <li><a href="#tasks-time">Tasks over time</a></li>
+    <li><a href="#scope-tasks">A query or job: all its tasks</a></li>
     <li><a href="#chain">Chain of queries</a></li>
+    <li><a href="#events">Events</a></li>
     <li><a href="#timeline">Timeline</a></li>
     <li><a href="#executors">Executors</a></li>
-    <li><a href="#findings">Findings and errors</a></li>
+    <li><a href="#findings">Findings</a></li>
+    <li><a href="#errors">Errors</a></li>
+    <li><a href="#logs">Logs</a></li>
+    <li><a href="#data">Data / Debug</a></li>
     <li class="group">Reference</li>
+    <li><a href="#guide">Which screen answers what</a></li>
     <li><a href="#workflow">A 2 a.m. workflow</a></li>
     <li><a href="#limits">What it cannot tell</a></li>
     <li><a href="#sources">Sources and log layout</a></li>
@@ -193,8 +203,11 @@ dbx-log-analyzer ui --output ./demo_out --cache ./demo_cache</code></pre>
       then MERGEs it into <code>order_line_item</code>.</li>
     <li><code>daily_revenue</code>.</li>
   </ul>
-  <p>The runs overlap, so some wait for cores. One join is skewed, grows its rows ×2 and spills. One task fails and is
-    retried. <code>order_line_item</code> has files of 1.5 GB and is read whole.</p>
+  <p>The runs overlap, so some wait for cores. One join is skewed, grows its rows ×2 and spills. One task fails on a
+    Python error in the job's own code (<code>normalise_address</code>, line 42) and is retried.
+    <code>order_line_item</code> has files of 1.5 GB and is read whole. Besides the Spark event log, the demo writes a
+    driver log4j log and, for each of the 8 executors, a <code>stderr</code> (tasks, spills, the error) and a
+    <code>stdout</code> with JVM GC lines, so every screen below has something to show.</p>
 
   <h2 id="home">Home and Analyze again</h2>
   <figure><img src="docs/screenshots/home.png" alt="Home: pick a source, root path, cluster, analyze; the analyzed clusters below" loading="lazy">
@@ -294,6 +307,122 @@ dbx-log-analyzer ui --output ./demo_out --cache ./demo_cache</code></pre>
   <figure><img src="docs/screenshots/stage-panel.png" alt="Stage panel: verdict, time, rows, task spread, executors" loading="lazy">
     <figcaption>The whole stage panel: verdict, time, rows, task spread and size bands, executors, what else ran on them, retries.</figcaption></figure>
 
+  <h2 id="tasks">One stage: its tasks</h2>
+  <p>A stage is split into tasks, one per partition, and most performance problems show up in how those tasks differ
+    from each other. Open a stage (click it in the graph, the step list or any link that names it). Below the rows strip
+    come the stage's numbers, then its tasks: not as thousands of rows, but as statistics you can read in one look.</p>
+  <figure><img src="docs/screenshots/stage-tasks.png" alt="All tasks of a stage: one row per measure with min, p10, median, p90, max, distribution and total" loading="lazy">
+    <figcaption>Section 1, all 200 tasks of stage 8. One task read 2.1 GB of shuffle (×14 the median) and took 472 s
+      (×13): a hot key, not a slow machine.</figcaption></figure>
+  <ul class="look">
+    <li><b>One row per measure:</b> each task's wait for a free core (from the stage being submitted to the task
+      starting), duration, CPU time, GC time, bytes read from files, shuffle read and write, shuffle fetch wait, spill
+      to memory and to disk, peak memory and bytes written.</li>
+    <li><b>Columns:</b> min, p10, median, p90 and max, then a small histogram, the total and how many tasks had any.
+      The max carries <b>×N</b>, how many times the median it is, when that is 3 or more. Units sit next to each
+      measure (s, MB, GB), chosen for the typical value.</li>
+    <li><b>Per task, or per second of task time:</b> the second view divides each measure by the task's duration
+      (GC as a % of its time, MB of shuffle per second), so a task that is slow <i>because</i> it got more data reads
+      the same as the others.</li>
+    <li><b>The histogram below</b> shows one measure (duration, GC, read, shuffle write) as slices, with dashed lines at
+      p10, the median and p90. Colour it by executor to see whether the slow tasks sit on one machine, or by data read
+      to see whether they are the ones that read the most.</li>
+    <li><b>Size bands:</b> "78% of tasks ≥ 128 MB · 84% of the data" means the tasks were given more than the ~128 MB
+      Spark sizes a task for: too few shuffle partitions, or files that can't be split.</li>
+    <li><b>Export tasks (CSV)</b> saves every task of the stage. <b>All 200 rows</b> opens the same tasks in
+      Data / Debug, already filtered to this stage.</li>
+  </ul>
+  <h3>How to read it</h3>
+  <div class="tbl"><table>
+    <thead><tr><th>You see</th><th>It usually means</th><th>Look next</th></tr></thead>
+    <tbody>
+      <tr><td>Max duration ×10 or more, and max shuffle read or file read about as many times the median</td><td>Data skew: one key or partition holds far more rows</td><td>Skewed tasks block; salt the key or let AQE split it</td></tr>
+      <tr><td>Max duration ×10 or more, but it read about the same as the others</td><td>A slow executor, long GC, or a task that waited on shuffle fetch</td><td>Tasks by executor, the GC and fetch-wait rows, Executors</td></tr>
+      <tr><td>Median and p90 close together, and most tasks ≥ 128 MB</td><td>Every task is too big: too few partitions</td><td>Raise <code>spark.sql.shuffle.partitions</code> or use <code>auto</code></td></tr>
+      <tr><td>Spill (memory or disk) on most tasks</td><td>Partitions are bigger than the memory a task gets</td><td>More partitions, or more memory per core</td></tr>
+      <tr><td>"Each task waited" much larger than the stage's first wait</td><td>Tasks ran in waves: more tasks than free cores</td><td>Tasks over time; other runs on the same executors</td></tr>
+      <tr><td>GC time over ~10% of duration</td><td>Memory pressure in the JVM</td><td>Executors (GC pauses and heap), cache and broadcast sizes</td></tr>
+      <tr><td>Shuffle fetch wait high</td><td>Tasks waited on other executors for shuffle data</td><td>Lost executors, network, an overloaded executor</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2 id="task-executors">Tasks by executor</h2>
+  <p>Open <b>By executor</b> under the tasks. It answers the question every skew hunt ends with: is it the data or the
+    machine?</p>
+  <figure><img src="docs/screenshots/stage-tasks-by-executor.png" alt="Each executor: the same task table, only its share of the tasks" loading="lazy">
+    <figcaption>Section 2: exec 4 is unfolded. It holds the slowest task, and the reading below the table says why: more
+      data, not a slow executor.</figcaption></figure>
+  <ul class="look">
+    <li><b>One row per executor:</b> its host, how many of the tasks it ran, its share of the work and task time, its
+      cores, and a badge such as <i>holds the slowest task</i>. Click a row to unfold the same table as section 1 for
+      only that executor's tasks.</li>
+    <li><b>The reading</b> in plain words: how evenly the work was spread, and whether the slowest task was slow
+      because it had more data (skew) or because its executor was slow (look at that executor's GC, spill and other
+      work).</li>
+    <li>With more than 5 executors, the ones with the least work are hidden behind chips; <b>Show all</b> brings them
+      back.</li>
+  </ul>
+  <figure><img src="docs/screenshots/stage-tasks-combined.png" alt="Executor by executor: this stage's tasks, the other tasks, combined, against capacity" loading="lazy">
+    <figcaption>Section 3: for each executor, this stage's tasks, the tasks of other stages on it in the same window,
+      and both combined against its capacity.</figcaption></figure>
+  <ul class="look">
+    <li><b>Capacity</b> is the executor's cores × the stage's window. 50% means half its core time went to tasks. Low
+      numbers with a long stage mean cores sat idle, often waiting on one straggler.</li>
+    <li><b>Other stages' tasks</b> shows a noisy neighbour: another stage or another run using the same executor at the
+      same time. Their time counts only the part inside this stage's window.</li>
+    <li>Data columns (read, shuffle read and write, spill) tell you which executor did the heavy lifting.</li>
+  </ul>
+
+  <h2 id="slowest">Slowest tasks and skew</h2>
+  <figure><img src="docs/screenshots/stage-slowest-tasks.png" alt="The 20 slowest tasks on these executors while the stage ran, with why each took long" loading="lazy">
+    <figcaption>Section 4: the 20 slowest tasks on these executors while the stage ran, from any stage or run, with why
+      each took long.</figcaption></figure>
+  <ul class="look">
+    <li><b>Everything on these executors</b> or <b>This stage only</b>. Each row has the task, its stage and run, the
+      executor, when it started, how long it took, what it read, spilled and spent in GC.</li>
+    <li><b>Why it took long</b> compares each task with the typical task of its own stage: "13.4× the typical time, on
+      13.6× the data" is skew; "like the others" means the task was normal for its stage.</li>
+  </ul>
+  <figure><img src="docs/screenshots/stage-skew.png" alt="Skewed tasks: which task, where, and why" loading="lazy">
+    <figcaption>Skewed tasks: task 909, partition 180, on executor 4, took 13× the median on 14× the data, inside a
+      SortMergeJoin of Query 2.</figcaption></figure>
+  <p>A task at least 10× slower than the median and longer than a minute is listed with its partition, executor and
+    host, the plan operator it ran (here the SortMergeJoin) and the query. The verdict (<i>data skew</i> or <i>slow
+    executor</i>) comes with its fix, and links go to the executor, the query and the timeline.</p>
+
+  <h2 id="tasks-time">Tasks over time</h2>
+  <figure><img src="docs/screenshots/stage-tasks-over-time.png" alt="Tasks over time on these executors: failed, slow and spilled tasks, spill per task" loading="lazy">
+    <figcaption>Every task of the stage as a bar on its executor's lane. 90% were done after 3½ minutes; the stage then
+      waited 7 more minutes for task 909.</figcaption></figure>
+  <ul class="look">
+    <li><b>The long tail</b> line says when 90% of the tasks were done and how much of the stage's time went on waiting
+      for the last few. A long tail is the clearest sign of skew.</li>
+    <li><b>Running</b> on top shows how many tasks ran at once against the cores available.</li>
+    <li><b>Failed, slow and spilled tasks</b> are coloured: red failed, orange 3× the median or slower, brown spilled.
+      Add panels for duration, GC, spill, shuffle read or peak memory per task; darker means more.</li>
+    <li>When other stages shared the executors, a first panel shows <b>who had the cores</b>: this stage's tasks next to
+      the others.</li>
+    <li>Hover a bar for the task: its executor, times, data and spill.</li>
+  </ul>
+
+  <h2 id="scope-tasks">A query or job: all its tasks</h2>
+  <p>A query or a Spark job has the same task sections over all its stages: <b>All its tasks</b> (with each stage's
+    wait for its first core added as a row) and <b>By executor</b>. Above them, <b>What the executors were doing at the
+    same time</b> puts the query on the executors' clock.</p>
+  <figure><img src="docs/screenshots/query-executors.png" alt="What the executors were doing at the same time: lanes per executor, how busy each was" loading="lazy">
+    <figcaption>Query 2 on every executor: its tasks in blue, other jobs in grey, spills marked; then how busy each
+      executor was.</figcaption></figure>
+  <ul class="look">
+    <li><b>The summary line</b> says how much of the task time in the query's window belonged to other jobs (22% here)
+      and how many spill events there were.</li>
+    <li><b>Lanes:</b> one per executor, with the query's tasks, other jobs, failed tasks, out-of-memory or lost
+      executors, full GCs and spills. The dashed box is the query's window.</li>
+    <li><b>How busy each executor was:</b> CPU, cores busy, task memory, shuffle read and write, spill, GC and shuffle
+      wait over time. Low CPU while the cores are busy means tasks were waiting (on shuffle, storage or GC), not
+      computing.</li>
+    <li><b>Tasks on each executor:</b> task time, failures and lost executors per executor, for this query.</li>
+  </ul>
+
   <h2 id="chain">Chain of queries</h2>
   <figure><img src="docs/screenshots/query-chain.png" alt="Chain of queries: the query that wrote the table this MERGE reads, with the rows passed" loading="lazy">
     <figcaption>Query 2 wrote the staging table that Query 3's MERGE reads: 214M rows passed along.</figcaption></figure>
@@ -301,26 +430,153 @@ dbx-log-analyzer ui --output ./demo_out --cache ./demo_cache</code></pre>
     and downstream. A query is linked when it wrote a table this one reads, reused its shuffle output, or ran inside it.
     Arrows carry the rows passed. A "+" on either side unfolds the rest of the chain.</p>
 
+  <h2 id="events">Events</h2>
+  <figure><img src="docs/screenshots/events.png" alt="Events: what happened when, the critical path, then every event in order" loading="lazy">
+    <figcaption>Events &amp; timeline → Events: the run told in order, with its critical path on top.</figcaption></figure>
+  <ul class="look">
+    <li><b>What happened when:</b> every query of the run on one timeline, with the critical path outlined. It splits
+      the path into running Spark work, waiting for a free core, and time between queries with no Spark work (your
+      driver code, Python, JDBC calls, sleeps). Arrows show which query needed which: read a table an earlier one
+      wrote, or reused its shuffle output.</li>
+    <li><b>The event list:</b> query, job and stage starts and ends, task retries, important log lines and findings,
+      one stream in time order. Each row shows the clock time and the offset from the run's start. Findings are marked
+      with their severity, for example "big_read: Stage 6.0: shop.sales.orders".</li>
+    <li><b>Filters:</b> Everything, Problems only, Retries or Scheduler only; severity (High, Medium, Low, Info); a text
+      search over titles and details; and the event kinds to show.</li>
+  </ul>
+
   <h2 id="timeline">Timeline</h2>
   <figure><img src="docs/screenshots/timeline.png" alt="Timeline: incidents, Spark jobs, stages and one lane per executor" loading="lazy">
     <figcaption>When did things go wrong: incidents on the same clock as jobs, stages and every executor's tasks.</figcaption></figure>
   <ul class="look">
-    <li>Each small block is one task. Red blocks failed. A lane that ends in a red line lost its executor. Hatched
-      stretches mean an executor was up but idle (paid for, running no task).</li>
-    <li>Click an incident to zoom to it, drag to zoom into a range, and click a task to open its stage.</li>
+    <li><b>Where it broke:</b> the incidents of the run (or cluster) on the same clock as the chart. Click one to zoom
+      the chart to it.</li>
+    <li><b>Spark jobs and stages</b> as bars, then <b>one lane per executor</b> with its host and how long it sat idle.
+      Each small block is one task; tasks that ran side by side on the cores are stacked.</li>
+    <li>Red blocks failed. A lane that ends in a red line lost its executor. Hatched stretches mean the executor was up
+      but idle for a minute or more: paid for, running no task. Diamonds mark disk spills; ticks mark problem lines in
+      the executor's log and out-of-memory or lost events.</li>
+    <li>Drag across the chart to zoom into a range, scroll over the time axis to zoom, and click a task to open its
+      stage. Scoped to a run, only that run's work is drawn, and a note says how many other runs shared the
+      executors.</li>
   </ul>
+  <figure><img src="docs/screenshots/spill-shuffle.png" alt="Spill and shuffle over time: a heat map per executor" loading="lazy">
+    <figcaption>Spill and shuffle over time, below the timeline: darker cells moved more bytes.</figcaption></figure>
+  <p>Pick disk spill, memory spill, shuffle read, shuffle write or all, by executor, by stage or both. The bar on top
+    adds up all executors and marks the peaks. One dark row means one executor did the spilling (skew); a dark column
+    across all of them means the whole stage was short of memory.</p>
 
   <h2 id="executors">Executors</h2>
-  <figure><img src="docs/screenshots/executors.png" alt="Executors: busy and idle, spill, GC and removals" loading="lazy">
-    <figcaption>Executors over the whole cluster: busy and idle time, spill, GC, and why each one was removed.</figcaption></figure>
+  <figure><img src="docs/screenshots/executors.png" alt="Executors: what each was given, how it ended, tasks, busy, GC, spill and problems" loading="lazy">
+    <figcaption>Executors (all runs): what each executor was given, how long it lived, how it ended, and what went
+      wrong on it.</figcaption></figure>
+  <ul class="look">
+    <li><b>What happened to the executors:</b> how many ran how many tasks, what each was given (cores, heap, the
+      memory Spark could use for tasks and cache, and about how much per core: a task that holds more spills), and
+      whether any was lost, killed or ran out of memory.</li>
+    <li><b>The table:</b> each executor with its host, cores and heap, when it lived, how it ended (still running,
+      decommissioned, lost, out of memory), tasks and failed tasks, how busy it was, GC share, disk spill and problem
+      chips such as <i>error in task code</i>, <i>task retries</i> or <i>disk spill</i>. Click one to open it.</li>
+    <li><b>When each executor was alive, and how hard it worked:</b> one row per executor on the run's clock. The
+      upper band is this run's CPU, the lower band its task memory; hatch is any run's tasks; dots mark spills and
+      diamonds full GCs.</li>
+    <li><b>GC pause time per executor</b> from the GC log. Names in red had 3 or more full GCs, which stop everything
+      and usually mean the heap is too small. Select an executor to see its GC pauses and heap over time.</li>
+  </ul>
 
-  <h2 id="findings">Findings and errors</h2>
+  <h2 id="findings">Findings</h2>
   <figure><img src="docs/screenshots/findings.png" alt="Findings: every problem, worst first, with evidence and fix" loading="lazy">
     <figcaption>Every problem found, worst first. Each has what we saw, the likely cause, the fix, its tables and links.</figcaption></figure>
-  <p>Kinds include disk spill, skewed tasks, MERGE reading far more of the target than it merged, waiting for cores,
-    too few or too many shuffle partitions, file-reading tasks above the split size, GC pressure, out-of-memory or lost
-    executors, and executors paid for but idle. <b>Errors</b> groups exceptions from the logs by fingerprint, with the
-    first frame of your own code and the run it came from.</p>
+  <p>Kinds include disk spill, skewed tasks, tasks too big, big table reads, MERGE reading far more of the target than
+    it merged, waiting for cores, too few or too many shuffle partitions, file-reading tasks above the split size, GC
+    pressure, errors in task or driver code, task retries, out-of-memory or lost executors, and executors paid for but
+    idle. Related findings are grouped into one incident with its root cause and effects, for example "Query 2 ran
+    slow: task skew, disk spill" where the skew caused the spill.</p>
+
+  <h2 id="errors">Errors</h2>
+  <figure><img src="docs/screenshots/errors.png" alt="Errors in this run: grouped by problem, with the stack and the line to fix" loading="lazy">
+    <figcaption>Findings &amp; errors → Errors: the IndexError in <code>normalise_address</code>, line 42, marked
+      "Fix here" in its stack.</figcaption></figure>
+  <ul class="look">
+    <li><b>By problem:</b> the same failure is usually logged several times (thrown on an executor, reported again on
+      the driver, wrapped for the notebook), so the exceptions are grouped into the problem they come from. Each
+      problem shows its cost ("1 task attempt failed; 18 s of task work thrown away") and links to its stage, job,
+      query and executor.</li>
+    <li><b>Exception groups:</b> each exception with where it was thrown (executor 7, the driver), how many times, when
+      first, and a <b>Log line</b> link that opens the exact line in Logs.</li>
+    <li><b>The stack</b> with the first frame of <i>your</i> code marked <b>Fix here</b>, skipping Spark's and Python's
+      own frames. <b>Where to fix</b> repeats it as one line.</li>
+    <li><b>Tips</b> in layers: CODE (validate or quarantine bad rows) and CONFIG (retrying won't help when the same row
+      fails every time). Switch to <b>Every exception group</b> for the flat list.</li>
+    <li>Scoped to a run, only lines that hit that run are shown: on an executor while one of its tasks ran there, or
+      from the driver while it ran.</li>
+  </ul>
+
+  <h2 id="logs">Logs</h2>
+  <figure><img src="docs/screenshots/logs.png" alt="Logs: filtered to executor 4's stderr lines about spilling" loading="lazy">
+    <figcaption>Logs filtered to executor 4 and the text "spilling": every spill the skewed task wrote, with the
+      disk_spill signal marked.</figcaption></figure>
+  <ul class="look">
+    <li><b>Every line</b> of the driver log4j logs and the executors' <code>stderr</code> and <code>stdout</code>, in
+      file order, with its time (UTC), source, file, level, logger and message. Multi-line entries such as stack traces
+      stay together.</li>
+    <li><b>Filters:</b> source (driver or executor), executor, level, logger, <b>signal</b> (a known problem pattern such
+      as <code>executor_oom</code>, <code>fetch_failure</code>, <code>disk_spill</code> or <code>python_error</code>),
+      a from/to time and a case-insensitive text search. Each drop-down shows how many lines each value has.</li>
+    <li><b>Signal chips</b> on a line say which known problem it matched. The patterns live in the rules file, so you
+      can add your own.</li>
+  </ul>
+  <figure><img src="docs/screenshots/logs-context.png" alt="A log line in context: the lost task and its Python traceback" loading="lazy">
+    <figcaption>Click a line number, or a Log line link from Errors or Findings, to see the lines around it. Here: the
+      lost task with its Python traceback, then the retry.</figcaption></figure>
+  <p><b>How to use it while debugging:</b> start from an error or finding and follow its <b>Log line</b> link; read the
+    lines just before it (what the executor was doing), then filter by that executor and a time window around the
+    failure. To check a suspicion across the cluster, filter by signal: <code>executor_oom</code> or
+    <code>executor_lost</code> for dying executors, <code>fetch_failure</code> for lost shuffle files,
+    <code>storage_throttling</code> for cloud storage limits. Logs always covers the whole cluster; use the From
+    and To times to narrow it to one run.</p>
+
+  <h2 id="data">Data / Debug</h2>
+  <figure><img src="docs/screenshots/data-debug.png" alt="Data / Debug: the intermediate tables behind every view, grouped by step" loading="lazy">
+    <figcaption>Tables (debug): every intermediate table behind the screens. Here the tasks, slowest first: task 909 of
+      stage 8 on top.</figcaption></figure>
+  <ul class="look">
+    <li><b>Grouped by step:</b> Setup (folders and files read), Driver logs, Executor logs (including JVM GC pauses),
+      Event logs (tasks, failed task reasons, retries, stages, jobs, queries, executors, spill and shuffle over time,
+      cluster info), Combined (query, stage × executor and executor profiles, the run story) and Analysis (signals,
+      exceptions, findings, the timeline). Each shows its row count.</li>
+    <li><b>Search</b> all text columns, <b>sort</b> by any column, choose rows per page, and click a row to unwrap long
+      text such as a plan or a stack.</li>
+    <li>Every screen has a <b>See full table in Data / Debug</b> link that opens the table behind it, often already
+      filtered (a stage's tasks, a query's stages).</li>
+    <li><b>Use it to check a number</b> you doubt, or to go past what the charts show. The same tables are Parquet files
+      in the output folder, so you can also query them directly:</li>
+  </ul>
+<pre><code>duckdb -c "SELECT stage_id, task_id, executor_id, task_ms/1000 AS secs, shuffle_read/1e9 AS shuffle_gb
+           FROM 'C:/dbx/output/0112-020000-demo0001/tasks.parquet'
+           ORDER BY task_ms DESC LIMIT 10"</code></pre>
+  <p>Or in Python: <code>pd.read_parquet(".../tasks.parquet")</code>. <code>--duckdb</code> on <code>build</code> also
+    loads every dataset into one <code>insights.duckdb</code>.</p>
+
+  <h2 id="guide">Which screen answers what</h2>
+  <div class="tbl"><table>
+    <thead><tr><th>Question</th><th>Where to look</th></tr></thead>
+    <tbody>
+      <tr><td>Did anything fail, or did it only retry?</td><td>Home status line, Cluster overview "How the runs ended", Errors</td></tr>
+      <tr><td>Where did the time go?</td><td>Cluster overview and run overview: the cause bar (waiting for cores, CPU, storage, GC, shuffle, no Spark work); Events → What happened when</td></tr>
+      <tr><td>Was it capacity or the work itself?</td><td>Waiting for cores on the overview; "Each task waited" in a stage's tasks; other runs on the same executors</td></tr>
+      <tr><td>Which table cost the most? Was it read whole?</td><td>Tables read (cluster, run, query)</td></tr>
+      <tr><td>Did a join blow up the rows?</td><td>One stage: rows in and out; the graph's link labels</td></tr>
+      <tr><td>Is one task holding everything up?</td><td>A stage's tasks (max ×N), Slowest tasks and skew, Tasks over time (long tail)</td></tr>
+      <tr><td>Is it the data or the machine?</td><td>Tasks by executor: the reading under section 2</td></tr>
+      <tr><td>Was an executor shared, idle or overloaded?</td><td>Tasks by executor, section 3; a query's executors at the same time; Timeline (hatched idle)</td></tr>
+      <tr><td>Was memory the problem?</td><td>Spill rows in the tasks, Spill and shuffle over time, Executors (GC, heap, out of memory)</td></tr>
+      <tr><td>Which line of my code failed?</td><td>Errors: the frame marked Fix here; the Log line link</td></tr>
+      <tr><td>What did the executor log just before it died?</td><td>Logs: the line in context, filtered by executor and time</td></tr>
+      <tr><td>What setting should I change?</td><td>What to change (cluster and run); the cluster's settings with where each value came from</td></tr>
+      <tr><td>I don't trust a number</td><td>Data / Debug: the table behind it, or the Parquet file with DuckDB</td></tr>
+    </tbody>
+  </table></div>
 
   <h2 id="workflow">A 2 a.m. workflow</h2>
   <ol class="steps">
@@ -332,8 +588,12 @@ dbx-log-analyzer ui --output ./demo_out --cache ./demo_cache</code></pre>
     <li><b>What to change:</b> open the top card. Its problems link straight to the query or stage.</li>
     <li><b>Open the worst run, then its slowest query:</b> follow the rows in → out stage by stage. A join that grows
       rows, a skewed stage or a spill stands out.</li>
-    <li><b>Still not clear?</b> The timeline, executors, errors and the raw datasets (Data / Debug) are all there to dig
-      into yourself. Even then, the findings above have already ruled most things out.</li>
+    <li><b>Open the slow stage's tasks:</b> a max ×10 on as much data is skew; a max ×10 on normal data is a slow
+      executor or GC. <b>By executor</b> says which, in one sentence.</li>
+    <li><b>Something failed?</b> Errors shows the line of your code to fix; its Log line link shows what the executor
+      was doing just before. Executors shows whether the machine ran out of memory or was lost.</li>
+    <li><b>Still not clear?</b> The events, timeline, executors, logs and the raw datasets (Data / Debug) are all there
+      to dig into yourself. Even then, the findings above have already ruled most things out.</li>
   </ol>
 
   <h2 id="limits">What it cannot tell</h2>

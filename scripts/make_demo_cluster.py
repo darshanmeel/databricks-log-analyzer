@@ -3,7 +3,7 @@
 Everything here is made up: a small shop's nightly ETL on one 8-worker cluster. Tables: shop.raw.customer_updates,
 shop.raw.orders_landing, shop.sales.customer, shop.sales.orders, shop.staging.order_lines_new,
 shop.sales.order_line_item and shop.sales.daily_revenue. Four Databricks job runs overlap, so some wait for cores; one
-join is skewed and spills; one task fails and is retried; order_line_item has files over 1 GB and is read whole.
+join is skewed and spills; one task fails on a Python error in the job's own code and is retried; order_line_item has files over 1 GB and is read whole.
 
     python scripts/make_demo_cluster.py ./demo_logs
     dbx-log-analyzer ui --output ./demo_out --cache ./demo_cache      # then analyze ./demo_logs, cluster 0112-020000-demo0001
@@ -270,8 +270,8 @@ def build() -> list[dict]:
                     # rows the stage wrote to its table: the write node's output rows (a join can put out more than came in)
                     out_rows = int(s["write_rows"].get("number of output rows", parents_rows) * share)
                     reason = {"Reason": "Success"} if ok else {
-                        "Reason": "ExceptionFailure", "Class Name": "org.apache.spark.SparkException",
-                        "Description": "Python worker exited unexpectedly (crashed)", "Stack Trace": [], "Full Stack Trace": "", "Accumulator Updates": []}
+                        "Reason": "ExceptionFailure", "Class Name": "org.apache.spark.api.python.PythonException",
+                        "Description": "PythonException: IndexError: list index out of range (normalise_address)", "Stack Trace": [], "Full Stack Trace": "\n".join(TRACEBACK), "Accumulator Updates": []}
                     emit(launch, {"Event": "SparkListenerTaskStart", "Stage ID": st_id, "Stage Attempt ID": 0,
                                   "Task Info": {"Task ID": tid[0], "Index": i, "Attempt": a, "Partition ID": i, "Launch Time": launch,
                                                 "Executor ID": str(e), "Host": host, "Locality": "PROCESS_LOCAL", "Speculative": False,
@@ -332,16 +332,105 @@ def build() -> list[dict]:
     return head + [e for _, _, e in sorted(events, key=lambda x: (x[0], x[1]))] + tail
 
 
+def _ts(ms: int) -> str:
+    return datetime.fromtimestamp(ms / 1000, timezone.utc).strftime("%y/%m/%d %H:%M:%S")
+
+
+def _iso(ms: int) -> str:
+    return datetime.fromtimestamp(ms / 1000, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.") + f"{ms % 1000:03d}+0000"
+
+
+TRACEBACK = [  # the one task that fails and is retried: a bad address in the job's own code
+    "org.apache.spark.api.python.PythonException: Traceback (most recent call last):",
+    '  File "/databricks/spark/python/pyspark/worker.py", line 1876, in main',
+    "    process()",
+    '  File "/Workspace/Shop/etl/build_order_line_item", line 42, in normalise_address',
+    '    return addr.split(",")[1].strip().upper()',
+    "IndexError: list index out of range",
+    "\tat org.apache.spark.api.python.BasePythonRunner$ReaderIterator.handlePythonException(PythonRunner.scala:642)",
+    "\tat org.apache.spark.sql.execution.python.PythonArrowOutput$$anon$1.read(PythonArrowOutput.scala:118)",
+    "\tat org.apache.spark.executor.Executor$TaskRunner.run(Executor.scala:621)",
+]
+
+
 def driver_log(evs: list[dict]) -> str:
-    def ts(ms: int) -> str:
-        return datetime.fromtimestamp(ms / 1000, timezone.utc).strftime("%y/%m/%d %H:%M:%S")
+    """The driver's log4j: start-up, each query, job and stage, the failed task with its Python traceback, shut-down."""
     end = evs[-1]["Timestamp"]
-    lines = [f"{ts(T0)} INFO DriverDaemon: Started Spark driver for cluster {CLUSTER}",
-             f"{ts(T0 + 1_000)} INFO SparkContext: Running Spark version 3.5.0",
-             f"{ts(T0 + 2_000)} INFO DatabricksILoop: Starting DatabricksILoop",
-             f"{ts(T0 + 3_600_000)} WARN TaskSetManager: Lost task in stage: Python worker exited unexpectedly (crashed)",
-             f"{ts(end)} INFO DriverDaemon: Shutting down: the cluster is terminating (INACTIVITY)"]
-    return "\n".join(lines) + "\n"
+    out: list[tuple[int, str]] = [(T0, f"INFO DriverDaemon: Started Spark driver for cluster {CLUSTER}"),
+                                  (T0 + 1_000, "INFO SparkContext: Running Spark version 3.5.0"),
+                                  (T0 + 2_000, "INFO DatabricksILoop: Starting DatabricksILoop"),
+                                  (T0 + 30_000, f"INFO DriverCorral: Cluster shop-nightly-etl: {EXECUTORS} workers requested")]
+    for e in evs:
+        k = e["Event"]
+        if k.endswith("SQLExecutionStart"):
+            out.append((e["time"], f"INFO SQLExecution: Execution {e['executionId']} started: {e['description'][:90]}"))
+        elif k.endswith("SQLExecutionEnd"):
+            out.append((e["time"], f"INFO SQLExecution: Execution {e['executionId']} finished"))
+        elif k == "SparkListenerJobStart":
+            out.append((e["Submission Time"], f"INFO DAGScheduler: Got job {e['Job ID']} (sql at <cell>:1) with stages {e['Stage IDs']}"))
+        elif k == "SparkListenerStageSubmitted":
+            s = e["Stage Info"]
+            out.append((s["Submission Time"], f"INFO DAGScheduler: Submitting {s['Number of Tasks']} missing tasks from stage "
+                                              f"{s['Stage ID']} ({s['Stage Name']})"))
+        elif k == "SparkListenerStageCompleted":
+            s = e["Stage Info"]
+            secs = (s["Completion Time"] - s["Submission Time"]) / 1000
+            out.append((s["Completion Time"], f"INFO DAGScheduler: Stage {s['Stage ID']} ({s['Stage Name']}) finished in {secs:.1f} s"))
+        elif k == "SparkListenerJobEnd":
+            out.append((e["Completion Time"], f"INFO DAGScheduler: Job {e['Job ID']} finished"))
+        elif k == "SparkListenerTaskEnd" and e["Task Info"]["Failed"]:
+            ti = e["Task Info"]
+            out.append((ti["Finish Time"], f"WARN TaskSetManager: Lost task {ti['Index']}.0 in stage {e['Stage ID']}.0 (TID {ti['Task ID']}) "
+                                           f"({ti['Host']} executor {ti['Executor ID']}): " + "\n".join(TRACEBACK)))
+            out.append((ti["Finish Time"] + 5, f"INFO TaskSetManager: Starting task {ti['Index']}.1 in stage {e['Stage ID']}.0 (retry)"))
+    out.append((end, "INFO DriverDaemon: Shutting down: the cluster is terminating (INACTIVITY)"))
+    out.sort(key=lambda x: x[0])
+    return "".join(f"{_ts(ms)} {line}\n" for ms, line in out)
+
+
+def executor_logs(evs: list[dict]) -> dict[str, tuple[str, str]]:
+    """Each executor's stderr (log4j: tasks run and finished, spills, the failed task) and stdout (JVM GC lines)."""
+    err: dict[str, list[tuple[int, str]]] = {e: [] for e in HOSTS}
+    gc: dict[str, list[tuple[int, int]]] = {e: [] for e in HOSTS}  # (time, pause ms)
+    for e, host in HOSTS.items():
+        t = T0 + 45_000 + int(e) * 700
+        err[e] += [(t, f"INFO CoarseGrainedExecutorBackend: Started daemon with process name: executor {e} on {host}"),
+                   (t + 400, f"INFO Executor: Starting executor ID {e} on host {host} with {CORES} cores"),
+                   (t + 900, "INFO MemoryStore: MemoryStore started with capacity 12.0 GiB")]
+    last = T0
+    for ev in evs:
+        if ev["Event"] == "SparkListenerTaskStart":
+            ti = ev["Task Info"]
+            err[ti["Executor ID"]].append((ti["Launch Time"], f"INFO Executor: Running task {ti['Index']}.{ti['Attempt']} in stage "
+                                                             f"{ev['Stage ID']}.0 (TID {ti['Task ID']})"))
+        elif ev["Event"] == "SparkListenerTaskEnd":
+            ti, m = ev["Task Info"], ev["Task Metrics"]
+            ex, fin = ti["Executor ID"], ti["Finish Time"]
+            last = max(last, fin)
+            if ti["Failed"]:
+                err[ex].append((fin - 10, f"ERROR Executor: Exception in task {ti['Index']}.0 in stage {ev['Stage ID']}.0 "
+                                          f"(TID {ti['Task ID']})\n" + "\n".join(TRACEBACK)))
+                continue
+            spill = m["Disk Bytes Spilled"]
+            if spill:  # one line per ~1 GB spilled, spread over the task
+                n = max(1, round(spill / GB))
+                for i in range(n):
+                    at = ti["Launch Time"] + (fin - ti["Launch Time"]) * (i + 1) // (n + 1)
+                    err[ex].append((at, f"INFO UnsafeExternalSorter: Thread {60 + int(ex)} spilling sort data of "
+                                        f"{spill * 3 / n / GB:.1f} GiB to disk ({i} times so far)"))
+            err[ex].append((fin, f"INFO Executor: Finished task {ti['Index']}.{ti['Attempt']} in stage {ev['Stage ID']}.0 "
+                                 f"(TID {ti['Task ID']}). {m['Result Size']} bytes result sent to driver"))
+            gc[ex].append((fin - 5, max(4, m["JVM GC Time"] // 40)))
+    out = {}
+    for e in HOSTS:
+        stdout, n = [], 0
+        for at, pause in sorted(gc[e])[::6]:  # a young pause about every sixth task
+            n += 1
+            stdout.append(f"[{_iso(at)}][{(at - T0) / 1000:.3f}s][info][gc] GC({n}) Pause Young (Normal) (G1 Evacuation Pause) "
+                          f"{rng.uniform(7.5, 10.5):.0f}G->{rng.uniform(3.0, 4.5):.1f}G(24G) {pause:.3f}ms")
+        lines = sorted(err[e], key=lambda x: x[0]) + [(last + 1_000, "INFO CoarseGrainedExecutorBackend: Driver commanded a shutdown")]
+        out[e] = ("".join(f"{_ts(ms)} {line}\n" for ms, line in lines), "\n".join(stdout) + "\n")
+    return out
 
 
 def main(out: Path) -> None:
@@ -351,6 +440,10 @@ def main(out: Path) -> None:
     (d / "eventlog" / f"{CLUSTER}_10_20_0_5" / CTX / "eventlog").write_text("\n".join(json.dumps(e) for e in evs) + "\n", encoding="utf-8")
     (d / "driver").mkdir(parents=True, exist_ok=True)
     (d / "driver" / "log4j-active.log").write_text(driver_log(evs), encoding="utf-8")
+    for e, (stderr, stdout) in executor_logs(evs).items():
+        (d / "executor" / APP / e).mkdir(parents=True, exist_ok=True)
+        (d / "executor" / APP / e / "stderr").write_text(stderr, encoding="utf-8")
+        (d / "executor" / APP / e / "stdout").write_text(stdout, encoding="utf-8")
     tasks = sum(1 for e in evs if e["Event"] == "SparkListenerTaskEnd")
     print(f"{d}: {len(evs):,} events, {tasks:,} tasks")
 

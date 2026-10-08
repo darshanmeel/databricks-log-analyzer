@@ -34,7 +34,8 @@ INCIDENT_COLS = ["cluster_id", "finding_id", "incident_id", "incident_rank", "in
 
 # kind -> (label, level). Lower levels come first in Spark's usual failure order and can cause higher ones.
 KINDS = {
-    "skew": ("task skew", 0), "tiny": ("too many tiny tasks", 0), "spill": ("disk spill", 1),
+    "skew": ("task skew", 0), "tiny": ("too many tiny tasks", 0), "large": ("tasks too big", 0),
+    "big_read": ("big table read", 0), "idle": ("executors idle", 0), "spill": ("disk spill", 1),
     "gc": ("GC pressure", 2), "oom": ("out of memory", 3), "killed": ("executor killed by the OS", 3),
     "disk_full": ("disk full", 3), "lost": ("executor lost", 4), "fetch": ("shuffle fetch failure", 5),
     "task_error": ("error in task code", 5), "driver_error": ("error in driver code", 5), "other_error": ("error", 5),
@@ -42,20 +43,21 @@ KINDS = {
     "query_failed": ("query failed", 8), "reported": ("error reported to the notebook / job", 9),
 }
 CATEGORY_KIND = {
-    "task_skew": "skew", "tiny_tasks": "tiny", "disk_spill": "spill", "log:disk_spill": "spill",
+    "task_skew": "skew", "tiny_tasks": "tiny", "large_tasks": "large", "big_read": "big_read", "executors_idle": "idle",
+    "disk_spill": "spill", "log:disk_spill": "spill",
     "gc_pressure": "gc", "log:gc_pressure": "gc", "jvm_full_gc": "gc", "gc_stuck": "gc", "executor_oom": "oom", "oom_site": "oom",
     "log:executor_oom": "oom", "executor_killed": "killed", "log:disk_full": "disk_full", "executor_lost": "lost",
     "log:executor_lost": "lost", "log:fetch_failure": "fetch", "log:python_error": "task_error",
     "task_retries": "retries", "stage_failed": "stage_failed", "query_failed": "query_failed",
 }
-PERF_KINDS = {"skew", "tiny", "spill", "gc"}
+PERF_KINDS = {"skew", "tiny", "large", "big_read", "idle", "spill", "gc"}
 ERROR_KINDS = {"task_error", "driver_error", "other_error", "reported"}
 FAILURE_KINDS = {"oom", "killed", "disk_full", "lost", "fetch", "task_error", "driver_error", "stage_failed",
                  "job_aborted", "query_failed", "reported"}
 
 # which kinds can cause which: Spark's usual failure paths. An error in user code is a root: nothing above causes it.
 CAUSES = {
-    "spill": {"skew"}, "gc": {"skew", "spill"}, "oom": {"skew", "spill", "gc"},
+    "spill": {"skew", "large"}, "gc": {"skew", "spill", "large"}, "oom": {"skew", "spill", "gc", "large"},
     "killed": {"skew", "spill", "gc", "oom"}, "disk_full": {"spill"}, "lost": {"oom", "killed", "disk_full"},
     "fetch": {"oom", "killed", "lost", "disk_full"}, "other_error": {"oom", "killed", "lost", "fetch", "disk_full"},
     "task_error": set(), "driver_error": set(),
@@ -80,6 +82,9 @@ BECAUSE = {
     ("skew", "spill"): "one partition is much bigger than the rest, so its task holds far more data than memory fits",
     ("skew", "oom"): "one partition is much bigger than the rest, so its task needed far more memory",
     ("skew", "gc"): "the oversized partition fills the heap, so the JVM keeps collecting",
+    ("large", "spill"): "each task was given far more data than the ~128 MB a task is sized for, more than its memory holds",
+    ("large", "gc"): "each task holds far more data than it is sized for, so the heap keeps filling",
+    ("large", "oom"): "each task was given far more data than it is sized for, more than its memory holds",
     ("spill", "gc"): "memory was already full enough to spill; the same pressure shows up as GC time",
     ("spill", "oom"): "data did not fit in memory: spilling usually comes before running out of it",
     ("gc", "oom"): "the heap stayed full after collections, then ran out",

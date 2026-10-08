@@ -186,3 +186,17 @@ def test_many_findings_build_quickly():
     rows = _build(findings, stages=stages, executors=[_exec(str(e)) for e in range(8)])
     assert len(rows) == n
     assert time.perf_counter() - t0 < 5
+
+
+def test_big_read_and_large_tasks_are_slowdowns_not_errors():
+    """A stage that read a whole table, or gave each task 1 GB, is a slowdown: never titled 'error: <table>'."""
+    stages = [_stage(10, 0, q=3, start=H - 5000, end=H + 5000)]
+    rows = _build([_f("F1", "big_read", H, stage_id=10, stage_attempt=0, spark_context_id=C,
+                      entity="Stage 10.0: shop.sales.order_line_item"),
+                   _f("F2", "large_tasks", H, stage_id=10, stage_attempt=0, spark_context_id=C, entity="Stage 10.0"),
+                   _f("F3", "disk_spill", H, stage_id=10, stage_attempt=0, spark_context_id=C, severity="medium")],
+                  stages=stages)
+    by = _by(rows)
+    assert by["F1"]["kind"] == "big table read" and by["F2"]["kind"] == "tasks too big"
+    assert not any(str(r["incident_title"]).count("error") for r in rows)
+    assert by["F3"]["caused_by"] in ("F1", "F2")

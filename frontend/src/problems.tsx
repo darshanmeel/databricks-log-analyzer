@@ -23,6 +23,9 @@ export const MEANING: Record<string, string> = {
   'error reported to the notebook / job': 'How the failure reached your notebook or job: a wrapper around the error that really happened.',
   'disk full': 'Local disk on a node filled up, usually with shuffle or spill files.',
   error: 'An exception logged by the driver or an executor.',
+  'tasks too big': 'Each task was given far more data than the ~128 MB Spark sizes a task for: too few shuffle partitions, or files that cannot be split.',
+  'big table read': 'A stage read a lot from storage, often a whole table where a filter on its partition or clustering columns would skip most files.',
+  'executors idle': 'Executors were up, and paid for, but ran no task for a minute or more.',
 };
 
 /** Fixes in three layers (config / code / infrastructure), the way the tuning tools present them. */
@@ -56,6 +59,14 @@ export const TIPS: Record<string, { layer: 'Config' | 'Code' | 'Cluster'; text: 
     { layer: 'Code', text: 'Compact small files (OPTIMIZE) or coalesce before writing.' },
     { layer: 'Config', text: 'Raise spark.sql.files.maxPartitionBytes so each read task gets more data.' },
   ],
+  'tasks too big': [
+    { layer: 'Config', text: "Raise spark.sql.shuffle.partitions (on Databricks it can be 'auto') or lower spark.sql.files.maxPartitionBytes so each task gets ~128 MB." },
+  ],
+  'big table read': [
+    { layer: 'Code', text: 'Filter on the partition or clustering columns so whole files are skipped; select only the columns you need.' },
+    { layer: 'Cluster', text: 'OPTIMIZE with Z-ORDER or liquid clustering on the columns you filter by.' },
+  ],
+  'executors idle': [{ layer: 'Cluster', text: 'Let autoscaling shrink the cluster, or run fewer, bigger steps back to back.' }],
   'task retries': [{ layer: 'Config', text: 'Retries hide the cause: look at the first failure of each retried task.' }],
   'disk full': [{ layer: 'Cluster', text: 'Bigger local disks or autoscaling local storage; fewer, larger shuffle partitions.' }],
   'error in task code': [
