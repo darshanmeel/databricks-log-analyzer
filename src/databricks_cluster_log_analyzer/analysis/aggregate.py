@@ -241,6 +241,9 @@ def build_spark_jobs(tables: EventTables) -> list[dict]:
     return rows
 
 
+_UUID_TAIL = re.compile(r"(?:^|[./])[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
+
+
 def stage_metric_cols(m: dict) -> dict:
     """The stage columns that come from its tasks (`m`: one value of _stage_metrics), with skew, data skew and GC
     share. Also used to recompute the stages of an older output from its tasks (refresh)."""
@@ -413,7 +416,9 @@ def build_sql_queries(tables: EventTables, stages: list[dict]) -> list[dict]:
     for r in rows:
         r["photon_share"] = photon_share(r.get("operators"))
         r["tables_read"] = name_tables(r["tables_read"], names)
-        r["tables_written"] = name_tables(r["tables_written"], names)
+        # a managed table's storage folder that no plan names (a bare id, as a CTAS writes it) is not a name a
+        # reader knows: left out
+        r["tables_written"] = [x for x in name_tables(r["tables_written"], names) if not _UUID_TAIL.search(str(x))]
     rows.sort(key=lambda r: (r["spark_context_id"], r["sql_execution_id"] if r["sql_execution_id"] is not None else -1))
     return rows
 

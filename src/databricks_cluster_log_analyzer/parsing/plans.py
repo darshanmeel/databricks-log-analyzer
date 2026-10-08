@@ -148,16 +148,7 @@ def _scan_table(text: str, body: str = "") -> str | None:
     return None
 
 
-_UUID_RE = re.compile(r"(?:^|[./])[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
-
-
 def _write_table(text: str, body: str = "") -> str | None:
-    name = _write_table_raw(text, body)
-    # a managed table's storage folder (a bare id, as a CTAS writes it) is not a name a reader knows
-    return None if name and _UUID_RE.search(name) else name
-
-
-def _write_table_raw(text: str, body: str = "") -> str | None:
     m = _HEAD_RE.match(text)
     if not m:
         return None
