@@ -197,7 +197,6 @@ def build(cluster_dir: str | os.PathLike, output_root: str | os.PathLike, *, clu
                                     "executor_profile": ep},
                                    rules)
     timeline = build_timeline(log_signals, cid)
-    incidents = build_incidents(cid, findings, stages, executors, jobs, queries, log_signals, log_errors, tdf, retries, apps)
     qp = query_profile(queries, jobs, stages, tdf, executors, findings, rules)
     sep = stage_executor_profile(tdf, cid)
     sst = spill_shuffle_timeline(tdf, cid, rules)
@@ -224,6 +223,9 @@ def build(cluster_dir: str | os.PathLike, output_root: str | os.PathLike, *, clu
                                              ds["cluster_info"], rules, ds["sql_plan_nodes"])
               if not (f["category"] == "waited_for_cores" and f.get("run_key") in bound)]
     findings = add_findings(findings, runs, later)
+    # incidents after the later findings: a cache bigger than memory and autoscaling that removed executors mid-work
+    # are often the cause of the out of memory and fetch failures
+    incidents = build_incidents(cid, findings, stages, executors, jobs, queries, log_signals, log_errors, tdf, retries, apps)
 
     # ---- write ---------------------------------------------------------------------------------------------
     datasets = {"files": files, "apps": apps, "log_signals": log_signals, "log_errors": log_errors, "tasks": tdf,

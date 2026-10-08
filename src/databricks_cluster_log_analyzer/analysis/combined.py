@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from collections import Counter
 
+import numpy as np
 import pandas as pd
 
 from ..config import FAILURE_REMOVALS, SEVERITY_RANK, Rules
@@ -130,21 +131,44 @@ _SPILL_SHUFFLE_SUMS = ["mem_spill", "disk_spill", "shuffle_read", "shuffle_write
 
 
 def spill_shuffle_timeline(tdf: pd.DataFrame, cluster_id: str, rules: Rules) -> pd.DataFrame:
-    """Task bytes per (context, time bucket, executor, stage attempt). A task's bytes all go to the bucket of its
-    finish time (launch time when it never finished); tasks with neither are left out."""
+    """Task bytes and times per (context, time bucket, executor, stage attempt). A task's numbers are spread over the
+    buckets it ran in, by the share of its run in each (a 4-minute task is not all booked into the minute it ended);
+    `tasks` counts a task once, in the bucket it finished. A task with only one of launch and finish time goes to that
+    bucket; tasks with neither are left out."""
     if tdf.empty:
         return pd.DataFrame(columns=SPILL_SHUFFLE_COLS)
     bucket_ms = int(rules.timeline_bucket_seconds) * 1000
-    ts = tdf["finish_time"].where(tdf["finish_time"].notna(), tdf["launch_time"])
-    t = tdf.loc[ts.notna(), ["spark_context_id", "executor_id", "stage_id", "stage_attempt"] + _SPILL_SHUFFLE_SUMS].copy()
+    end = tdf["finish_time"].where(tdf["finish_time"].notna(), tdf["launch_time"])
+    start = tdf["launch_time"].where(tdf["launch_time"].notna(), end)
+    keep = end.notna()
+    t = tdf.loc[keep, ["spark_context_id", "executor_id", "stage_id", "stage_attempt"] + _SPILL_SHUFFLE_SUMS].copy()
     if t.empty:
         return pd.DataFrame(columns=SPILL_SHUFFLE_COLS)
-    t["minute"] = (ts[ts.notna()] // bucket_ms) * bucket_ms
-    t["stage_attempt"] = t["stage_attempt"].fillna(0)
-    t["executor_id"] = t["executor_id"].astype(object).where(t["executor_id"].notna(), None)
+    s = start[keep].astype("int64").to_numpy()
+    e = end[keep].astype("int64").to_numpy()
+    s = np.minimum(s, e)
+    b0, b1 = s // bucket_ms, e // bucket_ms
+    n = (b1 - b0 + 1).astype("int64")
+    rep = np.repeat(np.arange(len(t)), n)
+    # the bucket of each piece: b0, b0 + 1, ... b1
+    first = np.repeat(np.cumsum(n) - n, n)
+    b = np.repeat(b0, n) + (np.arange(len(rep)) - first)
+    lo = np.maximum(np.repeat(s, n), b * bucket_ms)
+    hi = np.minimum(np.repeat(e, n), (b + 1) * bucket_ms)
+    span = np.repeat(e - s, n)
+    frac = np.where(span > 0, (hi - lo) / np.where(span > 0, span, 1), 1.0)
+    x = t.iloc[rep].reset_index(drop=True)
+    for c in _SPILL_SHUFFLE_SUMS:
+        x[c] = x[c] * frac
+    x["minute"] = b * bucket_ms
+    x["_task"] = (b == np.repeat(b1, n)).astype("int64")
+    x["stage_attempt"] = x["stage_attempt"].fillna(0)
+    x["executor_id"] = x["executor_id"].astype(object).where(x["executor_id"].notna(), None)
     keys = ["spark_context_id", "minute", "executor_id", "stage_id", "stage_attempt"]
-    g = t.groupby(keys, dropna=False, sort=True)
-    df = g[_SPILL_SHUFFLE_SUMS].sum(min_count=1).join(g.size().rename("tasks")).reset_index()
+    g = x.groupby(keys, dropna=False, sort=True)
+    df = g[_SPILL_SHUFFLE_SUMS].sum(min_count=1).join(g["_task"].sum().rename("tasks")).reset_index()
+    for c in _SPILL_SHUFFLE_SUMS:  # whole bytes and milliseconds, as before
+        df[c] = df[c].round()
     df["cluster_id"] = cluster_id
     return df[SPILL_SHUFFLE_COLS]
 

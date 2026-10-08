@@ -1,14 +1,14 @@
 import { Fragment, createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, Outlet, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { api, optional, setRunScope, type ClusterListItem, type RunClock, type RunRow, type Summary } from '../api';
+import { api, optional, waitOf, setRunScope, type ClusterListItem, type RunClock, type RunRow, type Summary } from '../api';
 import { useAsync } from '../hooks';
 import { fmtDuration, fmtNum, fmtTime } from '../format';
 import { ErrorState, Loading, StatusBadge } from './ui';
 import { runGroup, runName, runOption, usualX } from '../runName';
 import { clusterVerdict, runVerdict, type Verdict } from '../status';
 /** The analyzer revision this UI expects (summary.json `analyzer_revision`); older builds lack the newer numbers. */
-const ANALYZER_REVISION = 19;
+const ANALYZER_REVISION = 20;
 
 /* ------------------------------------------------------------ theme */
 
@@ -243,7 +243,7 @@ const SHOW_IN_GROUP = 8;
 /** How the rail orders runs: worst first, or by total, processing (total minus waiting for cores) or waiting time. */
 type RailSort = 'worst' | 'total' | 'processing' | 'waiting';
 const RAIL_SORTS: [RailSort, string][] = [['worst', 'Worst first'], ['total', 'Total time'], ['processing', 'Processing time'], ['waiting', 'Waiting time']];
-const waitingOf = (r: RunRow) => r.waiting_ms ?? 0;
+const waitingOf = (r: RunRow) => waitOf(r);
 const processingOf = (r: RunRow) => Math.max(0, (r.duration_ms ?? 0) - waitingOf(r));
 const railValue = (r: RunRow, by: RailSort) => (by === 'processing' ? processingOf(r) : by === 'waiting' ? waitingOf(r) : r.duration_ms ?? 0);
 const railOrder = (by: RailSort) => (a: RunRow, b: RunRow) => (by === 'worst' ? worstFirst(a, b) : railValue(b, by) - railValue(a, by));

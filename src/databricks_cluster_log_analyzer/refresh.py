@@ -6,7 +6,11 @@ Revision 19 recomputes more from the datasets: the tasks adaptive execution canc
 columns that come from the tasks (skew, data per task, the storage / DataFrame-cache split), the per-query read split,
 the workload findings (DataFrame cache, count-only queries, DDL loops, disk cache), and the summary's status and
 diagnosis. It writes the analyzer revision into summary.json. Not refreshable without the raw logs: the log signals,
-the cloud storage metric of stages built before it was parsed, settings and init scripts."""
+the cloud storage metric of stages built before it was parsed, settings and init scripts.
+
+Revision 20 also rebuilds the capacity findings (tasks queued on a full cluster, autoscaling) with each run's queued
+time, the incidents (now with the cache and autoscaling findings in them) and the per-minute task numbers (spread over
+the minutes each task ran)."""
 
 from __future__ import annotations
 
@@ -20,6 +24,9 @@ import pyarrow.parquet as pq
 
 from . import ANALYZER_REVISION
 from .analysis.aggregate import mark_replanned, restage
+from .analysis.capacity import CATEGORIES as CAPACITY_CATEGORIES, capacity_findings
+from .analysis.combined import spill_shuffle_timeline
+from .analysis.incidents import build_incidents
 from .analysis.contention import CATEGORIES, add_findings, contention_findings, first_tasks, to_ms
 from .analysis.diagnosis import build_summary
 from .analysis.findings import summarize_errors
@@ -63,6 +70,19 @@ def _unflag_replanned_kills(path: Path) -> pd.DataFrame | None:
     return tdf
 
 
+def _ms_frame(tdf: pd.DataFrame | None) -> pd.DataFrame | None:
+    """The task frame with its times in epoch milliseconds, as the pipeline has them."""
+    if tdf is None:
+        return None
+    out = tdf.copy()
+    for c in ("launch_time", "finish_time"):
+        if c in out and pd.api.types.is_datetime64_any_dtype(out[c]):
+            s = out[c]
+            s = s.dt.tz_localize(None) if getattr(s.dt, "tz", None) is not None else s
+            out[c] = (s - pd.Timestamp(0)) // pd.Timedelta(milliseconds=1)  # any stored unit (ns, us, ms)
+    return out
+
+
 def refresh_findings(out_dir: str | os.PathLike, rules: Rules) -> dict:
     """`out_dir` is <output>/<cluster_id>. Returns {"added": n, "by_category": {...}}."""
     d = Path(out_dir)
@@ -89,10 +109,25 @@ def refresh_findings(out_dir: str | os.PathLike, rules: Rules) -> dict:
     merges = {(q["spark_context_id"], q["sql_execution_id"]) for q in queries if "MERGE" in (q.get("description") or "")}
     nodes = [n for n in _rows(d / "sql_plan_nodes.parquet", ["spark_context_id", "sql_execution_id", "name", "metrics_json"])
              if (n["spark_context_id"], n["sql_execution_id"]) in merges and "Scan" in (n.get("name") or "")] if merges else []
-    new = contention_findings(cid, stages, first_tasks(tasks), runs, executors, queries, info, rules, nodes)
+    tms = _ms_frame(tdf)
+    new = capacity_findings(cid, tms, stages, executors, runs, info, signals, rules) if tms is not None else []
+    bound = {f["run_key"] for f in new if f["category"] == "capacity_bound"}
+    new += [f for f in contention_findings(cid, stages, first_tasks(tasks), runs, executors, queries, info, rules, nodes)
+            if not (f["category"] == "waited_for_cores" and f.get("run_key") in bound)]
     new += workload_findings(cid, queries, runs, executors, signals, _rows(d / "event_counts.parquet"), rules, stages)
-    allf = add_findings(findings, runs, new, replace=(*CATEGORIES, *WORKLOAD_CATEGORIES))
+    allf = add_findings(findings, runs, new, replace=(*CATEGORIES, *WORKLOAD_CATEGORIES, *CAPACITY_CATEGORIES))
     write_parquet(allf, d / "findings.parquet", "findings")
+
+    # ---- incidents with the later findings in them, and the per-minute task numbers spread over each task's run --
+    log_errors = _rows(d / "log_errors.parquet")
+    if (d / "incidents.parquet").exists():
+        incidents = build_incidents(cid, allf, stages, executors, jobs, queries, signals, log_errors, tms,
+                                    _rows(d / "task_retries.parquet"), _rows(d / "apps.parquet"))
+        write_parquet(incidents, d / "incidents.parquet", "incidents")
+    else:
+        incidents = []
+    if tms is not None and not tms.empty and (d / "spill_shuffle_timeline.parquet").exists():
+        write_parquet(spill_shuffle_timeline(tms, cid, rules), d / "spill_shuffle_timeline.parquet", "spill_shuffle_timeline")
     write_parquet(runs, d / "runs.parquet", "runs")
     for name, data in (("stages", stages), ("spark_jobs", jobs), ("sql_queries", queries)):
         if (d / f"{name}.parquet").exists():
@@ -109,7 +144,6 @@ def refresh_findings(out_dir: str | os.PathLike, rules: Rules) -> dict:
             "failed_queries": sum(q.get("status") == "failed" for q in queries)})
         if tdf is not None and "failed" in tdf:
             counts["failed_tasks"] = int(tdf["failed"].sum())
-        log_errors = _rows(d / "log_errors.parquet")
         fresh = build_summary({
             "cluster_id": cid, "input_dir": s.get("input_dir"), "empty_reason": s.get("empty_reason"),
             "counts": counts, "totals": s.get("totals", {}), "rows": s.get("rows", {}), "apps": _rows(d / "apps.parquet"),
@@ -117,7 +151,7 @@ def refresh_findings(out_dir: str | os.PathLike, rules: Rules) -> dict:
             "log_signals": signals, "log_errors": log_errors, "error_summary": summarize_errors(log_errors),
             "run_story": _rows(d / "run_story.parquet"), "log_min_ts": None, "log_max_ts": None,
             "task_retries": _rows(d / "task_retries.parquet"), "cluster_info": info,
-            "hotspots": _rows(d / "hotspots.parquet"), "incidents": _rows(d / "incidents.parquet"), "has_runs": bool(runs),
+            "hotspots": _rows(d / "hotspots.parquet"), "incidents": incidents, "has_runs": bool(runs),
         }, rules)
         for k in ("status", "diagnosis", "findings_by_severity", "retries", "analyzer_revision"):
             s[k] = fresh[k]

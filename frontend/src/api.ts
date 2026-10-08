@@ -748,6 +748,8 @@ export interface RunRow extends DataDist, DataIO {
   failed_stages?: number;
   /** waiting for a free core (a stage submitted, none of its stages running) and running tasks, from its stages */
   waiting_ms?: number | null; running_ms?: number | null;
+  /** time with its tasks queued on a full cluster: every core busy, wave after wave (also behind its own tasks) */
+  queued_full_ms?: number | null;
   /** the biggest file read and the biggest shuffle read of one task */
   max_task_input?: number | null; max_task_shuffle?: number | null;
   /** the Databricks job run this task run belongs to, the job's name and the task type (notebook, python, jar…) */
@@ -876,6 +878,8 @@ export interface RunEnd {
   queries: number; spark_jobs: number; failed_queries: number; failed_jobs: number; replanned_jobs: number;
   errors: RunEndError[]; executors_gone: { executor_id: string; removed_time: Ms; removal_category: string | null; removed_reason: string | null }[];
   cluster_end: Ms;
+  /** a job cluster that stopped right after a run that finished: its normal end */
+  normal_end?: boolean;
   engine?: { aqe: EngineCount; photon: EngineCount };
 }
 
@@ -920,6 +924,8 @@ export interface Causes {
 export interface RunSteps {
   run_key: string; start: number | null; end: number | null; total_ms: number | null; waiting_ms: number; running_ms: number;
   outside_ms: number | null; groups: RunStepGroup[]; gaps: [number, number][]; causes?: Causes | null;
+  /** time with its tasks queued on a full cluster (see RunRow) */
+  queued_full_ms?: number | null;
   /** Structured Streaming micro-batches of the run (from the query descriptions) */
   batches?: { stream: string; batch: number; start: number; end: number; queries: (number | null)[]; waiting_ms: number; running_ms: number }[];
 }
@@ -988,3 +994,8 @@ export interface JdbcStep {
   rows: number | null; took_ms: number | null; wrote_rows: number | null; wrote_bytes: number | null; written: string[]; same_as: number | null;
   spread?: { p50_task_rows_in: number | null; max_task_rows_in: number | null; min_task_rows_in: number | null; p50_task_ms: number | null; p90_task_ms: number | null };
 }
+
+/** What a run waited for cores: before its stages could start, or with its tasks queued on a full cluster wave after
+ * wave (behind other runs or its own tasks), whichever is longer. Older analyses have only the first. */
+export const waitOf = (r: { waiting_ms?: number | null; queued_full_ms?: number | null }) =>
+  Math.max(r.waiting_ms ?? 0, r.queued_full_ms ?? 0);

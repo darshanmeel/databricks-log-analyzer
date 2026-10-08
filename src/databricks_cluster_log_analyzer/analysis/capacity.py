@@ -162,6 +162,9 @@ def capacity_findings(cid: str, tdf: pd.DataFrame, stages: list[dict], executors
         st = sw.get(r.get("spark_context_id")) or {}
         rs = (st.get("runs") or {}).get(r["run_key"])
         r0, r1 = to_ms(r.get("start_time")), to_ms(r.get("end_time"))
+        # the run's time with its tasks queued on a full cluster (every wave, also behind its own tasks): the
+        # "waiting for cores" the run pages show
+        r["queued_full_ms"] = int(rs["queued_wall_ms"]) if rs else (0 if st else None)
         if not rs or r0 is None or r1 is None or r1 <= r0:
             continue
         dur, w = r1 - r0, rs["queued_wall_ms"]
@@ -173,7 +176,9 @@ def capacity_findings(cid: str, tdf: pd.DataFrame, stages: list[dict], executors
               f"busy with {lo if lo == hi else f'{lo}-{hi}'} of its tasks waiting "
               f"({rs['queued_task_ms'] / 1000:,.0f} task-seconds queued")
         ev += ", behind its own tasks)" if own >= 0.95 else f", {1 - own:.0%} of it behind other runs)"
-        out.append(_f(cid, r.get("spark_context_id"), "high" if w >= 0.5 * dur else "medium", "capacity_bound",
+        # high only when the run queued behind its own tasks: queueing behind other runs is the cluster's one
+        # cores_full story, not a high finding on every run
+        out.append(_f(cid, r.get("spark_context_id"), "high" if w >= 0.5 * dur and own >= 0.5 else "medium", "capacity_bound",
                       f"run {_run_name(r)}", ev, r0, run_key=r["run_key"]))
 
     # ---- per Spark context: autoscaling ----------------------------------------------------------------------

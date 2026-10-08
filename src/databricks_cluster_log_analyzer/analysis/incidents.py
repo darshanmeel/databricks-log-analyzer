@@ -36,6 +36,7 @@ INCIDENT_COLS = ["cluster_id", "finding_id", "incident_id", "incident_rank", "in
 KINDS = {
     "skew": ("task skew", 0), "tiny": ("too many tiny tasks", 0), "large": ("tasks too big", 0),
     "big_read": ("big table read", 0), "idle": ("executors idle", 0), "spill": ("disk spill", 1),
+    "cache": ("DataFrame cache larger than memory", 1), "autoscale": ("autoscaling removed executors mid-work", 4),
     "gc": ("GC pressure", 2), "oom": ("out of memory", 3), "killed": ("executor killed by the OS", 3),
     "disk_full": ("disk full", 3), "lost": ("executor lost", 4), "fetch": ("shuffle fetch failure", 5),
     "task_error": ("error in task code", 5), "driver_error": ("error in driver code", 5), "other_error": ("error", 5),
@@ -49,7 +50,13 @@ CATEGORY_KIND = {
     "log:executor_oom": "oom", "executor_killed": "killed", "log:disk_full": "disk_full", "executor_lost": "lost",
     "log:executor_lost": "lost", "log:fetch_failure": "fetch", "log:python_error": "task_error",
     "task_retries": "retries", "stage_failed": "stage_failed", "query_failed": "query_failed",
+    "dataframe_cache": "cache", "autoscale_removed": "autoscale",
 }
+# findings about the whole run or cluster (queueing, MERGE, counts, DDL loops, init scripts): no cause -> effect with
+# a failure, so they stay outside incidents (the cache and autoscaling findings above do take part)
+NOT_IN_INCIDENTS = {"capacity_bound", "autoscale_lag", "cores_full", "waited_for_cores", "merge_rewrite", "count_only",
+                    "ddl_loop", "disk_cache", "init_script"}
+AUTOSCALED_RE = re.compile(r"removed \d+ executors? \(([\w, ]+)\)")
 PERF_KINDS = {"skew", "tiny", "large", "big_read", "idle", "spill", "gc"}
 ERROR_KINDS = {"task_error", "driver_error", "other_error", "reported"}
 FAILURE_KINDS = {"oom", "killed", "disk_full", "lost", "fetch", "task_error", "driver_error", "stage_failed",
@@ -57,12 +64,14 @@ FAILURE_KINDS = {"oom", "killed", "disk_full", "lost", "fetch", "task_error", "d
 
 # which kinds can cause which: Spark's usual failure paths. An error in user code is a root: nothing above causes it.
 CAUSES = {
-    "spill": {"skew", "large"}, "gc": {"skew", "spill", "large"}, "oom": {"skew", "spill", "gc", "large"},
-    "killed": {"skew", "spill", "gc", "oom"}, "disk_full": {"spill"}, "lost": {"oom", "killed", "disk_full"},
-    "fetch": {"oom", "killed", "lost", "disk_full"}, "other_error": {"oom", "killed", "lost", "fetch", "disk_full"},
+    "spill": {"skew", "large", "cache"}, "gc": {"skew", "spill", "large", "cache"},
+    "oom": {"skew", "spill", "gc", "large", "cache"},
+    "killed": {"skew", "spill", "gc", "oom", "cache"}, "disk_full": {"spill"}, "lost": {"oom", "killed", "disk_full"},
+    "fetch": {"oom", "killed", "lost", "disk_full", "autoscale"},
+    "other_error": {"oom", "killed", "lost", "fetch", "disk_full", "autoscale"},
     "task_error": set(), "driver_error": set(),
-    "retries": {"oom", "killed", "lost", "fetch", "task_error", "other_error", "disk_full"},
-    "stage_failed": {"oom", "killed", "lost", "fetch", "task_error", "other_error", "disk_full"},
+    "retries": {"oom", "killed", "lost", "fetch", "task_error", "other_error", "disk_full", "autoscale"},
+    "stage_failed": {"oom", "killed", "lost", "fetch", "task_error", "other_error", "disk_full", "autoscale"},
     "job_aborted": {"stage_failed", "task_error", "other_error"},
     "query_failed": {"stage_failed", "job_aborted", "task_error", "driver_error", "other_error"},
     "reported": {"query_failed", "job_aborted", "stage_failed", "driver_error"},
@@ -89,6 +98,14 @@ BECAUSE = {
     ("spill", "oom"): "data did not fit in memory: spilling usually comes before running out of it",
     ("gc", "oom"): "the heap stayed full after collections, then ran out",
     ("gc", "killed"): "the executor's memory stayed full; the OS then killed the process",
+    ("cache", "gc"): "the run cached more data than the executors' memory holds, so the heap stayed full",
+    ("cache", "oom"): "the run cached more data than the executors' memory holds; building the cache ran out of memory",
+    ("cache", "spill"): "the cache took the memory the tasks needed, so they spilled",
+    ("cache", "killed"): "the run cached more data than the executors' memory holds",
+    ("autoscale", "fetch"): "autoscaling removed executors that held shuffle files other tasks still needed",
+    ("autoscale", "other_error"): "the error came from an executor while autoscaling removed it",
+    ("autoscale", "retries"): "tasks on the executors autoscaling removed had to run again",
+    ("autoscale", "stage_failed"): "the stage lost the shuffle files of the executors autoscaling removed",
     ("fetch", "retries"): "tasks that could not read their shuffle input were retried",
     ("other_error", "stage_failed"): "the error failed the stage's tasks until Spark gave up",
     ("oom", "lost"): "the executor ran out of memory, so its process was killed",
@@ -170,6 +187,7 @@ def build_incidents(cid: str, findings: list[dict], stages: list[dict], executor
                     jobs: list[dict], queries: list[dict], log_signals: list[dict], log_errors: list[dict],
                     tasks: pd.DataFrame | None, task_retries: list[dict] | None = None,
                     apps: list[dict] | None = None) -> list[dict]:
+    findings = [f for f in findings if f.get("category") not in NOT_IN_INCIDENTS]
     if not findings:
         return []
     ctxs = sorted({s["spark_context_id"] for s in stages if s.get("spark_context_id")} |
@@ -307,6 +325,10 @@ def build_incidents(cid: str, findings: list[dict], stages: list[dict], executor
             if kind == "query_failed":
                 sc.stages |= {k for k, q in stage_query.items() if q == (ctx, exec_q)}
         scan_text(sc, f.get("evidence") or "", ts, ctx)
+        if kind == "autoscale":
+            m = AUTOSCALED_RE.search(f.get("evidence") or "")
+            for ex in (m.group(1).replace(" ", "").split(",") if m else []):
+                sc.execs.add((ctx or exec_ctx(ex, ts), ex))
         # a log signal stands for every line of that signal: one event per line, so it can be matched line by line
         events = []
         for r in sig_rows.get(f.get("signal") or "", []) if f.get("signal") else []:
@@ -458,7 +480,8 @@ def build_incidents(cid: str, findings: list[dict], stages: list[dict], executor
                                       m["f"]["finding_id"]))
         problems.append({"members": members, "kind": km["kind"], "label": km["label"], "level": level, "sc": sc,
                          "ts": min(tss) if tss else None, "end": max(tss) if tss else None, "lead": lead,
-                         "sev": min(SEV_RANK.get(m["f"]["severity"], 9) for m in ms)})
+                         "sev": min(SEV_RANK.get(m["f"]["severity"], 9) for m in ms),
+                         "runs": {m["f"].get("run_key") for m in ms} - {None}})
 
     # ---- 3. cause -> effect between problems ---------------------------------------------------------------
     def link_score(c: dict, e: dict) -> int:
@@ -467,6 +490,9 @@ def build_incidents(cid: str, findings: list[dict], stages: list[dict], executor
         if c["ts"] is not None and e["ts"] is not None and c["ts"] > e["ts"] + 5_000:
             return 0
         a, b = c["sc"], e["sc"]
+        # a cache bigger than memory fills the heap of every executor of its run, from when it was built
+        if c["kind"] == "cache":
+            return 2 if c["runs"] & e["runs"] else 0
         # GC on one executor does not make another run out of memory
         if c["kind"] == "gc" and e["kind"] in ("oom", "killed") and a.execs and b.execs and not shared_exec(a, b):
             return 0
@@ -505,6 +531,7 @@ def build_incidents(cid: str, findings: list[dict], stages: list[dict], executor
     by_exec: dict[str, list[dict]] = {}
     by_host: dict[str, list[dict]] = {}
     ends = [p for p in problems if p["kind"] in ("query_failed", "job_aborted", "stage_failed", "driver_error")]
+    caches = [p for p in problems if p["kind"] == "cache"]
     for p in problems:
         for k in p["sc"].stages:
             by_stage.setdefault(k, []).append(p)
@@ -528,6 +555,9 @@ def build_incidents(cid: str, findings: list[dict], stages: list[dict], executor
                 cands[id(c)] = c
         if e["kind"] in ("reported", "query_failed"):
             for c in ends:
+                cands[id(c)] = c
+        if e["kind"] in ("gc", "oom", "spill", "killed"):
+            for c in caches:
                 cands[id(c)] = c
         best = None
         for c in cands.values():

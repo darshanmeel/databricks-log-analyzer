@@ -2368,6 +2368,7 @@ def run_end(store: Store, cid: str, run: str) -> dict[str, Any]:
                             order="end_time DESC NULLS FIRST")
         apps = store.select(con, cid, "apps")
         execs = store.select(con, cid, "executors")
+        info = (store.select(con, cid, "cluster_info", limit=1) or [{}])[0]
         errs: list[dict] = []
         epath = store.dataset_path(cid, "log_errors", required=False)
         if epath is not None and t1 is not None:
@@ -2406,8 +2407,13 @@ def run_end(store: Store, cid: str, run: str) -> dict[str, Any]:
     open_q = [q for q in qs if q.get("end_time") is None]
     last_q = next((q for q in qs if q.get("end_time") is not None), None)
     app_end = max((_as_ms(a.get("end_time")) or 0 for a in apps), default=0) or None
+    ended_ok = not failed_q and not failed_j and not open_q and r.get("status") == "succeeded"
+    # executors that went while it ran: up to its end (a minute more for a run that failed: the loss may be why)
     gone = [e for e in execs if e.get("removed_time") and t0 and t1
-            and t0 <= _as_ms(e["removed_time"]) <= t1 + END_ERRORS_AFTER_MS]
+            and t0 <= _as_ms(e["removed_time"]) <= t1 + (0 if ended_ok else END_ERRORS_AFTER_MS)]
+    # a job cluster stops right after its last run: that is its normal end, not a cut-off
+    job_cluster = (info.get("workload_type") or "").upper() == "AUTOMATED"
+    normal_end = bool(job_cluster and ended_ok)
     lines: list[dict] = []  # {tone, text}: the story of the end, most telling first
 
     def say(tone, text):
@@ -2428,7 +2434,10 @@ def run_end(store: Store, cid: str, run: str) -> dict[str, Any]:
     if replanned:
         say("info", f"{len(replanned)} Spark job{'s were' if len(replanned) > 1 else ' was'} cancelled by adaptive query "
                     "execution after it re-planned the query: normal, not a failure.")
-    if app_end and t1 and 0 <= app_end - t1 <= 2 * 60_000:
+    if app_end and t1 and 0 <= app_end - t1 <= 2 * 60_000 and normal_end:
+        say("info", f"The job cluster stopped {_fmt_ms(app_end - t1) if app_end - t1 >= 60_000 else f'{round((app_end - t1) / 1000)} s'} "
+                    "after this run's last Spark work, as a job cluster does after its last run.")
+    elif app_end and t1 and 0 <= app_end - t1 <= 2 * 60_000:
         say("warn", f"The cluster stopped {_fmt_ms(app_end - t1) if app_end - t1 >= 60_000 else f'{round((app_end - t1) / 1000)} s'} "
                     "after this run's last Spark work: the run may have been cut off by the cluster ending "
                     "(job timeout, cancel, or auto-termination).")
@@ -2451,7 +2460,7 @@ def run_end(store: Store, cid: str, run: str) -> dict[str, Any]:
             "queries": len(qs), "spark_jobs": len(jobs), "failed_queries": len(failed_q), "failed_jobs": len(failed_j),
             "replanned_jobs": len(replanned), "errors": errs, "executors_gone": [
                 {k: e.get(k) for k in ("executor_id", "removed_time", "removal_category", "removed_reason")} for e in gone],
-            "cluster_end": app_end, "engine": engine_summary(qs, eng, aqe_set)}
+            "cluster_end": app_end, "normal_end": normal_end, "engine": engine_summary(qs, eng, aqe_set)}
 
 
 GROUP_TOP = 15  # problems listed per kind on a group summary
@@ -2536,6 +2545,26 @@ def group_view(store: Store, cid: str, run_keys: Sequence[str]) -> dict[str, Any
 
 BURST_GAP_MS = 2 * 60_000  # runs starting at most this far apart belong to one burst
 BURST_MIN_RUNS = 5
+
+
+HOG_MS = 30 * 60_000  # a stage that held every core this long blocks every other run on a FIFO scheduler
+
+
+def _core_hog(stages: list[dict], executors: list[dict]) -> tuple[dict, int] | None:
+    """The longest stage (HOG_MS or more) with more tasks than the most worker cores ever up at once, and those cores."""
+    ev = []
+    for e in executors:
+        if str(e.get("executor_id")) == "driver" or not e.get("cores"):
+            continue
+        ev.append((_as_ms(e.get("added_time")) or 0, int(e["cores"])))
+        if e.get("removed_time"):
+            ev.append((_as_ms(e["removed_time"]), -int(e["cores"])))
+    n = most = 0
+    for _, c in sorted(ev, key=lambda x: (x[0], x[1])):
+        n += c
+        most = max(most, n)
+    long_ = [s for s in stages if (s.get("duration_ms") or 0) >= HOG_MS and most and (s.get("tasks") or 0) > most]
+    return (max(long_, key=lambda s: s["duration_ms"]), most) if long_ else None
 
 
 def _start_bursts(runs: list[dict]) -> list[dict]:
@@ -2758,6 +2787,15 @@ def settings_view(store: Store, cid: str) -> dict[str, Any]:
                 + BURST_GAP_MS and e.get("removal_category") == "autoscale"]
         late = sorted(e["added_time"] for e in workers if e.get("added_time") and e["added_time"] > t0
                       and e["added_time"] <= t0 + 30 * 60_000)
+        # started together is not run together: only a burst whose runs overlapped (3 or more at once) shared the cores
+        ev = sorted([(r["start_time"], 1) for r in b["runs"]] + [(r.get("end_time") or r["start_time"], -1) for r in b["runs"]],
+                    key=lambda x: (x[0], x[1]))
+        n_ = top_ = 0
+        for _, k in ev:
+            n_ += k
+            top_ = max(top_, n_)
+        if top_ < 3:
+            continue
         long_ = [r for r in b["runs"] if (r.get("duration_ms") or 0) >= 5 * 60_000]
         failed = sum(1 for r in b["runs"] if r.get("status") == "failed")
         heavy = len(long_) >= 5 and (not cores or len(long_) * 2 > cores)
@@ -2778,12 +2816,29 @@ def settings_view(store: Store, cid: str) -> dict[str, Any]:
     for f in [x for x in newer if x["category"] == "cores_full"][:1]:
         waited = sorted((x for x in newer if x["category"] == "waited_for_cores"),
                         key=lambda x: ({"high": 0, "medium": 1}.get(x["severity"], 2)))
-        add(f["severity"], TAGS + "clusterWorkers", "The runs waited for cores more than they ran",
-            [x.strip().rstrip(".") for x in re.split(r"(?<=\.)\s+", f["evidence"]) if x.strip()],
-            "The cores were the bottleneck, not the data: more runs were started than the executors had cores for, so their stages queued.",
-            ["Give the job more cores when the runs start: raise the job cluster's minimum workers (autoscaling adds workers only minutes later), and the maximum",
-             "or start fewer at once: the for-each task's concurrency, or groups of runs one after another",
-             "Job compute bills per core-hour used: more cores for the same work costs about the same and finishes sooner"],
+        facts = [x.strip().rstrip(".") for x in re.split(r"(?<=\.)\s+", f["evidence"]) if x.strip()]
+        cause = "The cores were the bottleneck, not the data: more runs were started than the executors had cores for, so their stages queued."
+        fixes = ["Give the job more cores when the runs start: raise the job cluster's minimum workers (autoscaling adds workers only minutes later), and the maximum",
+                 "or start fewer at once: the for-each task's concurrency, or groups of runs one after another",
+                 "Job compute bills per core-hour used: more cores for the same work costs about the same and finishes sooner"]
+        # FIFO and one long stage with more tasks than the cluster has cores: it holds every core until it is done,
+        # and every other run's stages queue behind it (more workers or fewer runs at once do not change that)
+        hog = _core_hog(stages, view["executors"])
+        mode = (val("spark.scheduler.mode") or "FIFO").upper()
+        if hog and mode == "FIFO":
+            st_, cores_ = hog
+            jdbc = not st_.get("input_bytes") and (st_.get("input_records") or 0) > 0
+            facts.insert(0, f"Scheduler mode FIFO: stage {st_['stage_id']} (query {st_.get('sql_execution_id')}"
+                            + (f", run {labels.get(st_.get('run_key'), st_.get('run_key'))}" if st_.get("run_key") else "")
+                            + f") ran {st_.get('tasks'):,} tasks for {_fmt_ms(st_['duration_ms'])}"
+                            + (" reading a database over JDBC" if jdbc else "")
+                            + f", more than the {cores_} cores, so it held every core and the other runs queued behind it")
+            cause = ("One long stage held every core: with the FIFO scheduler a stage with more tasks than cores keeps all "
+                     "of them until it is done, so every other run's stages queue behind it.")
+            fixes = ["Give each run its own FAIR scheduler pool (spark.scheduler.mode FAIR, and spark.scheduler.pool per run) so the runs share the cores",
+                     "or run the long stage on its own job cluster" + (", or read it in fewer JDBC partitions (numPartitions) so it leaves cores free" if jdbc else ""),
+                     *fixes[1:2]]
+        add(f["severity"], TAGS + "clusterWorkers", "The runs waited for cores more than they ran", facts, cause, fixes,
             runs=run_refs(x.get("run_key") for x in waited))
     merges = [x for x in newer if x["category"] == "merge_rewrite"]
     merge_info: dict[tuple, dict] = {}  # (ctx, query) -> merge_facts: one number per MERGE on every page
@@ -3389,6 +3444,7 @@ def run_steps(store: Store, cid: str, run: str) -> dict[str, Any]:
     running = sum(e - a for a, e in whole[1])
     total = (r1 - r0) if r0 is not None and r1 is not None else None
     return {"run_key": run, "start": r0, "end": r1, "total_ms": total, "waiting_ms": waiting, "running_ms": running,
+            "queued_full_ms": r.get("queued_full_ms"),
             "outside_ms": max(0, total - waiting - running) if total is not None else None, "groups": out, "gaps": gaps,
             "causes": _causes([t for ts in by_exec.values() for t in ts]), "batches": _micro_batches(out)}
 

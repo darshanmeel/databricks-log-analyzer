@@ -5,7 +5,7 @@
 // executors were, and the runs table narrows to it. Stretches where executors were up but idle are shaded.
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { api, type Causes, type ComputeUse, type ExecutorProfileRow, type RunRow } from '../api';
+import { api, waitOf, type Causes, type ComputeUse, type ExecutorProfileRow, type RunRow } from '../api';
 import { TopFinder } from '../components/TopFinder';
 import { ClusterTop } from '../components/ClusterTop';
 import { bandsLine } from '../components/TaskSizes';
@@ -97,7 +97,7 @@ function ClusterBody({ d }: { d: ClusterViewData }) {
     const by = new Map(scoped.map((r) => [r.run_key, r]));
     return d.runs.filter((r) => r.start_time !== null).map((r) => {
       const x = by.get(r.run_key);
-      return x ? { ...r, failed_stages: x.failed_stages, waiting_ms: x.waiting_ms, running_ms: x.running_ms, max_task_input: x.max_task_input, max_task_shuffle: x.max_task_shuffle } : r;
+      return x ? { ...r, failed_stages: x.failed_stages, waiting_ms: x.waiting_ms, queued_full_ms: x.queued_full_ms, running_ms: x.running_ms, max_task_input: x.max_task_input, max_task_shuffle: x.max_task_shuffle } : r;
     });
   }, [d.runs, scoped]);
   const groups = useMemo(() => {
@@ -587,7 +587,7 @@ export function RunsTable({ runs, goTo, atText, onAtText }: { runs: RunRow[]; go
     read: (r) => (r.input_bytes ?? 0) + (r.shuffle_read ?? 0),
     shuffle: (r) => (r.shuffle_read ?? 0) + (r.shuffle_write ?? 0),
     tasks: (r) => r.tasks ?? -1,
-    wait: (r) => r.waiting_ms ?? -1,
+    wait: (r) => (r.waiting_ms == null && r.queued_full_ms == null ? -1 : waitOf(r)),
     run: (r) => r.running_ms ?? -1,
   };
   // thousands of runs: find the one that ran at a given time, or by name, table or id
@@ -689,8 +689,8 @@ export function RunsTable({ runs, goTo, atText, onAtText }: { runs: RunRow[]; go
                 </td>
                 <td className="mono small">{fmtTime(r.start_time)}</td>
                 <td className="num">{fmtDuration(r.duration_ms)}</td>
-                <td className="num" title={r.waiting_ms != null && r.duration_ms ? `${Math.round((r.waiting_ms / r.duration_ms) * 100)}% of its time` : undefined}>
-                  {r.waiting_ms ? <span className={r.duration_ms && r.waiting_ms / r.duration_ms >= 0.2 ? 'wait-text' : ''} style={{ fontWeight: r.duration_ms && r.waiting_ms / r.duration_ms >= 0.2 ? 600 : undefined }}>{fmtDuration(r.waiting_ms)}</span> : '–'}
+                <td className="num" title={waitOf(r) && r.duration_ms ? `${Math.round((waitOf(r) / r.duration_ms) * 100)}% of its time` : undefined}>
+                  {waitOf(r) ? <span className={r.duration_ms && waitOf(r) / r.duration_ms >= 0.2 ? 'wait-text' : ''} style={{ fontWeight: r.duration_ms && waitOf(r) / r.duration_ms >= 0.2 ? 600 : undefined }}>{fmtDuration(waitOf(r))}</span> : '–'}
                 </td>
                 <td className="num">{r.running_ms != null ? fmtDuration(r.running_ms) : '–'}</td>
                 <td className={`num ${(x ?? 0) >= 2 ? 'st-warn' : 'muted'}`} style={{ fontWeight: (x ?? 0) >= 2 ? 600 : undefined }}>{x !== null ? `${x.toFixed(1)}×` : '–'}</td>

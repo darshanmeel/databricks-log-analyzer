@@ -208,7 +208,7 @@ def _slowest(tdf, stage_info, query_info, rules: Rules, cid: str) -> list[dict]:
 
 _PEAKS = [
     ("shuffle_peak", ["shuffle_read", "shuffle_write"], "shuffle", fmt_bytes),
-    ("spill_peak", ["disk_spill", "mem_spill"], "spill", fmt_bytes),
+    ("spill_peak", ["disk_spill"], "spill to disk", fmt_bytes),
     ("gc_peak", ["gc_ms"], "GC time", fmt_words),
 ]
 

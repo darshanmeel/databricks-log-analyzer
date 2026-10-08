@@ -6,7 +6,7 @@ import { Fragment, useMemo, useState, type ReactNode } from 'react';
 import { TablesRead } from '../components/TableStats';
 import { ChangeList } from '../components/ClusterTop';
 import { Link, useNavigate } from 'react-router-dom';
-import { api, type EngineCount, type FindingRow, type RunEnd, type RunRow, type RunStepGroup, type RunSteps } from '../api';
+import { api, waitOf, type EngineCount, type FindingRow, type RunEnd, type RunRow, type RunStepGroup, type RunSteps } from '../api';
 import { useAsync } from '../hooks';
 import { fmtBytes, fmtDuration, fmtNum, fmtPct, fmtRows, fmtTime, truncate } from '../format';
 import { to } from '../links';
@@ -156,7 +156,7 @@ export function RunOverview({ run }: { run: RunRow }) {
 }
 
 interface Analysis {
-  total: number; running: number; waitShare: number; byTook: RunStepGroup[]; top: RunStepGroup | null; topShare: number;
+  total: number; running: number; waitShare: number; queued: boolean; byTook: RunStepGroup[]; top: RunStepGroup | null; topShare: number;
   merge: ReturnType<typeof mergeOf>; mergeFinding?: FindingRow; mostWaited: RunStepGroup | null;
   waitedFinding?: FindingRow; spillFindings: FindingRow[];
 }
@@ -169,7 +169,7 @@ function analyse(d: RunSteps, fs: FindingRow[]): Analysis {
   const mergeFinding = fs.find((f) => f.category === 'merge_rewrite' && top && f.sql_execution_id === top.id);
   const mostWaited = [...d.groups].filter((g) => g.waiting_ms >= 60_000).sort((x, y) => y.waiting_ms / Math.max(1, y.running_ms) - x.waiting_ms / Math.max(1, x.running_ms))[0] ?? null;
   return {
-    total, running: d.running_ms, waitShare: d.waiting_ms / Math.max(1, total), byTook, top, topShare: top ? top.running_ms / Math.max(1, d.running_ms) : 0,
+    total, running: d.running_ms, waitShare: Math.min(1, waitOf(d) / Math.max(1, total)), queued: (d.queued_full_ms ?? 0) > d.waiting_ms, byTook, top, topShare: top ? top.running_ms / Math.max(1, d.running_ms) : 0,
     merge: mergeOf(mergeFinding), mergeFinding, mostWaited,
     waitedFinding: fs.find((f) => f.category === 'waited_for_cores'),
     spillFindings: fs.filter((f) => f.category === 'disk_spill'),
@@ -184,7 +184,7 @@ function WhySlow({ cid, run, a, execs }: { cid: string; run: RunRow; a: Analysis
   return (
     <>
       <ul className="ro-points">
-        {waited && <li><b>{fmtDuration(d)} waiting for a free core</b> <span className="muted">· {fmtPct(a.waitShare, 0)} of {fmtDuration(a.total)}</span>
+        {waited && <li><b>{fmtDuration(d)} {a.queued ? 'with its tasks queued on a full cluster' : 'waiting for a free core'}</b> <span className="muted">· {fmtPct(a.waitShare, 0)} of {fmtDuration(a.total)}</span>
           {others ? <span className="muted"> · {fmtNum(others)} other runs on the same {execs || ''} executors</span> : null}</li>}
         {/* one line: the cause card below has the detail */}
         {t && <li><b>{gname(t)}{a.merge ? ' (MERGE)' : ''}</b> {a.topShare >= 0.4 ? 'did most of the work' : 'ran longest'}
@@ -213,8 +213,8 @@ function HowEnded({ cid, e, d }: { cid: string; e: RunEnd; d: RunSteps | null })
           : <li><b>No failure in Spark</b> <span className="muted">· {fmtNum(e.queries)} queries, {fmtNum(e.spark_jobs - e.replanned_jobs)} jobs finished</span></li>}
         {lq && <li>Last: query {lq.sql_execution_id} {lq.status === 'failed' ? 'failed' : 'ended'} at <b className="mono">{fmtTime(lq.end_time)}</b>
           {lg && lg.failed_tasks ? <span className="muted"> · {fmtNum(lg.failed_tasks)} task attempts retried</span> : null}</li>}
-        {stopped && <li>Cluster stopped <b>{gapText} later</b></li>}
-        {!bad && stopped && <li>Databricks says failed? It was <b>cut off by the cluster ending</b> <span className="muted">(timeout, cancel or auto-termination)</span></li>}
+        {stopped && <li>Cluster stopped <b>{gapText} later</b>{e.normal_end ? <span className="muted"> · a job cluster stops after its last run</span> : null}</li>}
+        {!bad && stopped && !e.normal_end && <li>Databricks says failed? It was <b>cut off by the cluster ending</b> <span className="muted">(timeout, cancel or auto-termination)</span></li>}
       </ul>
       <div className="ro-links">
         <a href="#ro-end">The end, in order ↓</a>
@@ -236,6 +236,7 @@ function RunClockLine({ d, total }: { d: RunSteps; total: number }) {
   return (
     <div className="note">
       On its clock <b>{fmtDuration(total)}</b>: waited for cores {fmtDuration(d.waiting_ms)}, ran tasks {fmtDuration(d.running_ms)}, no Spark work {fmtDuration(d.outside_ms ?? 0)}.{' '}
+      {(d.queued_full_ms ?? 0) > d.waiting_ms + 60_000 && <>While it ran tasks, more of its tasks queued on a full cluster for <b>{fmtDuration(d.queued_full_ms!)}</b> (every core busy, wave after wave).{' '}</>}
       Its {fmtNum(gs.length)} queries and jobs add up to <b>{fmtDuration(sumQ)}</b>{sumQ > total * 1.05
         ? <> because they overlapped (up to {fmtNum(peak)} at once)</> : sumQ < total * 0.95 ? <>; the rest of the clock is between them</> : null}.
     </div>
@@ -356,7 +357,13 @@ function Fixes({ run, a, spill, findings, failure }: { run: RunRow; a: Analysis;
     fixes.push({ who, plain: rf.fix, text: firstSentences(rf.fix) });
     done.add(rf.category);
   }
-  if (a.waitShare >= 0.2) {
+  const bound = findings.find((f) => f.category === 'capacity_bound');
+  if (a.waitShare >= 0.2 && a.queued && bound?.fix) {
+    // queued behind its own tasks (or other runs) on a full cluster: the capacity finding's fix, not the concurrency one
+    fixes.push({ who: 'Cluster', plain: bound.fix, text: firstSentences(bound.fix), wins: `up to ${fmtDuration(waitMs)} of queueing` });
+    done.add('capacity_bound');
+    done.add('waited_for_cores');
+  } else if (a.waitShare >= 0.2) {
     const plain = `Lower the for-each concurrency to about the cores available, or raise min_workers before the ${fmtTime(run.start_time).slice(0, 5)} schedule.`;
     fixes.push({ who: 'Cluster', plain, text: plain, wins: `up to ${fmtDuration(waitMs)} of waiting` });
     done.add('waited_for_cores');

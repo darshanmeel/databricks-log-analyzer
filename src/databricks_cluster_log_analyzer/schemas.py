@@ -242,6 +242,8 @@ SCHEMAS: dict[str, pa.Schema] = {
         ("bytes_lt10", I), ("bytes_10_128", I), ("bytes_128_256", I), ("bytes_ge256", I),
         ("same_job_runs", I), ("typical_duration_ms", I), ("vs_typical", F), ("program", S), ("subject", S),
         ("parent_run_id", S), ("job_name", S), ("task_type", S),
+        # Revision 20: time with its tasks queued on a full cluster (analysis.capacity)
+        ("queued_full_ms", I),
     ),
 }
 

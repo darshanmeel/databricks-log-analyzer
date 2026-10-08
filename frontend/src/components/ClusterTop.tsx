@@ -3,7 +3,7 @@
 // and its problems as points. The runs themselves are ranked in Find and listed in full below.
 import { Fragment, useMemo, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { api, type Advice, type Causes, type ComputeUse, type ErrorGroup, type FindingRow, type RunRow } from '../api';
+import { api, waitOf, type Advice, type Causes, type ComputeUse, type ErrorGroup, type FindingRow, type RunRow } from '../api';
 import { useAsync } from '../hooks';
 import { fmtBytes, fmtDuration, fmtNum, fmtPct, fmtRows, fmtTime, truncate } from '../format';
 import { to } from '../links';
@@ -41,7 +41,7 @@ function programs(runs: RunRow[]): Program[] {
   for (const r of runs) m.set(runGroup(r), [...(m.get(runGroup(r)) ?? []), r]);
   return [...m].map(([name, rs]) => ({
     name, runs: rs, failed: rs.filter((r) => r.status === 'failed').length, slow: rs.filter(isSlow).length,
-    running: sum(rs, (r) => r.running_ms), waiting: sum(rs, (r) => r.waiting_ms), took: sum(rs, (r) => r.duration_ms),
+    running: sum(rs, (r) => r.running_ms), waiting: sum(rs, waitOf), took: sum(rs, (r) => r.duration_ms),
     spill: sum(rs, (r) => r.disk_spill), read: sum(rs, (r) => (r.input_bytes ?? 0) + (r.shuffle_read ?? 0)),
     usual: rs.find((r) => r.typical_duration_ms)?.typical_duration_ms ?? null,
     worst: [...rs].sort((a, b) => (usualX(b) ?? 0) - (usualX(a) ?? 0) || (b.duration_ms ?? 0) - (a.duration_ms ?? 0))[0],
@@ -66,7 +66,7 @@ export function ClusterTop({ cid, runs, executors, compute, onPick, find, more, 
   const progs = useMemo(() => programs(runs), [runs]);
   const peak = useMemo(() => peakOf(runs), [runs]);
   const took = sum(runs, (r) => r.duration_ms);
-  const waiting = sum(runs, (r) => r.waiting_ms);
+  const waiting = sum(runs, waitOf);
   const running = sum(runs, (r) => r.running_ms);
   const waitShare = waiting / Math.max(1, took);
   const failed = runs.filter((r) => r.status === 'failed');
@@ -272,7 +272,7 @@ function TimeWent({ cid, runs, took, waiting, running, t0, t1, compute, peak, ca
             <tbody>
               {top.map((r) => {
                 const t = r.duration_ms ?? 0;
-                const w = Math.min(r.waiting_ms ?? 0, t);
+                const w = Math.min(waitOf(r), t);
                 const x = usualX(r);
                 return (
                   <tr key={r.run_key}>
@@ -281,7 +281,7 @@ function TimeWent({ cid, runs, took, waiting, running, t0, t1, compute, peak, ca
                       <div className="muted small">{runId(r)}</div>
                     </td>
                     <td className="mono small">{fmtTime(r.start_time)}</td>
-                    <td><WaitRanBar took={t} wait={w} ran={r.running_ms ?? Math.max(0, t - w)} max={maxT} /></td>
+                    <td><WaitRanBar took={t} wait={w} ran={Math.min(r.running_ms ?? t, Math.max(0, t - w))} max={maxT} /></td>
                     <td className={`num ${(x ?? 0) >= 2 ? 'st-warn' : 'muted'}`} style={{ fontWeight: (x ?? 0) >= 2 ? 600 : undefined }}>{x !== null ? `${x.toFixed(1)}×` : '–'}</td>
                     <td className="num">{fmtNum(r.tasks)}</td>
                     {/* a source without read bytes (JDBC) reports rows: show those, not its shuffle. Storage reads are

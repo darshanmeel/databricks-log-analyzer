@@ -3,7 +3,7 @@
 // it (in its own run).
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { api, type RunRow, type TopKind, type TopBy, type TopRow } from '../api';
+import { api, waitOf, type RunRow, type TopKind, type TopBy, type TopRow } from '../api';
 import { useAsync } from '../hooks';
 import { fmtBytes, fmtDuration, fmtNum, fmtTime, truncate } from '../format';
 import { to } from '../links';
@@ -34,7 +34,7 @@ const RUN_VAL: Partial<Record<By, (r: RunRow) => number>> = {
   duration: (r) => r.duration_ms ?? -1,
   ran: (r) => r.running_ms ?? -1,
   usual: (r) => usualX(r) ?? -1,
-  wait: (r) => r.waiting_ms ?? -1,
+  wait: (r) => (r.waiting_ms == null && r.queued_full_ms == null ? -1 : waitOf(r)),
   failed: (r) => (r.status === 'failed' ? 1e15 : 0) + (r.failed_stages ?? 0) * 1e6 + (r.failed_tasks ?? 0),
   spill: (r) => r.disk_spill ?? -1,
   shuffle: (r) => (r.shuffle_read ?? 0) + (r.shuffle_write ?? 0),
@@ -238,7 +238,7 @@ function RunsFound({ cid, rows, q }: { cid: string; rows: RunRow[]; q: string })
           {rows.map((r) => {
             const x = usualX(r);
             const t = r.duration_ms ?? 0;
-            const wait = Math.min(r.waiting_ms ?? 0, t);
+            const wait = Math.min(waitOf(r), t);
             return (
               <tr key={r.run_key}>
                 <td>
