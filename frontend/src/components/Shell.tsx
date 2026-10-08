@@ -6,6 +6,7 @@ import { useAsync } from '../hooks';
 import { fmtDuration, fmtNum, fmtTime } from '../format';
 import { ErrorState, Loading, StatusBadge } from './ui';
 import { runGroup, runName, runOption, usualX } from '../runName';
+import { clusterVerdict, runVerdict, type Verdict } from '../status';
 
 /* ------------------------------------------------------------ theme */
 
@@ -218,9 +219,12 @@ function useRunScope(cid: string, section: string) {
   if (!run && runs.length > 1 && RUN_PAGES.has(section)) run = [...runs].sort(worstFirst)[0].run_key;
   if (runs.length > 1 && CLUSTER_PAGES.has(section)) run = null;
   setRunScope(run); // read by the API client before the pages below fetch
+  const nav = useNavigate();
   const choose = (next: string | null) => {
     storeRun(cid, next ?? ALL_RUNS);
     setPicked(next ?? ALL_RUNS);
+    // the executors page is always the cluster's: picking a run there opens that run
+    if (next && runs.length > 1 && CLUSTER_PAGES.has(section)) nav(`/c/${encodeURIComponent(cid)}?run=${encodeURIComponent(next)}`);
   };
   return { runs, run, choose, loaded: !runsSt.loading, clock: data?.clock ?? null };
 }
@@ -327,13 +331,22 @@ function RunRail({ runs, run, choose }: { runs: RunRow[]; run: string | null; ch
 }
 
 /** Run name, status (only when it did not succeed), × usual, and one meta line. */
+/** The one status chip: red failed, amber succeeded with problems (and why), green succeeded. */
+export function VerdictChip({ v, title }: { v: Verdict; title?: string }) {
+  return <span className={`chip ${v.kind === 'failed' ? 'bad' : v.kind === 'problems' ? 'warn' : 'ok'}`} title={title}>{v.label}{v.reason ? `: ${v.reason}` : ''}</span>;
+}
+
 function RunTitle({ r }: { r: RunRow }) {
   const x = usualOf(r);
+  const { cid } = useCluster();
+  const end = useAsync((s) => api.runEnd(cid, r.run_key, s).catch(() => null), [cid, r.run_key]);
+  const v = runVerdict(r, end.data?.executors_gone);
   return (
     <div className="run-title">
       <div className="run-title-row">
         <h1 className="mono">{runName(r)}</h1>
-        {r.status !== 'succeeded' ? <StatusBadge status={r.status} /> : <span className="chip ok" title="Spark saw no failure; a failure outside Spark (Python, timeout, cancel) is not in the event log">Succeeded in Spark</span>}
+        {r.status !== 'succeeded' && r.status !== 'failed' ? <StatusBadge status={r.status} />
+          : <VerdictChip v={v} title={v.kind === 'failed' ? undefined : 'Spark saw no failed job; a failure outside Spark (Python, timeout, cancel) is not in the event log'} />}
         {x !== null && isSlow(r) && <span className="chip warn">{x.toFixed(1)}× slower than usual</span>}
       </div>
       <div className="run-meta mono">
@@ -434,7 +447,7 @@ export function ClusterLayout() {
         {clusterScope && !summary.empty_reason && (
           <div className="run-head">
             <div className="run-title">
-              <div className="run-title-row"><h1 className="mono">{cid}</h1><ClusterEnd status={summary.status} runs={scope.runs} end={summary.end_time} /></div>
+              <div className="run-title-row"><h1 className="mono">{cid}</h1><ClusterEnd summary={summary} runs={scope.runs} end={summary.end_time} /></div>
               <div className="run-meta mono">{fmtTime(summary.start_time)} → {fmtTime(summary.end_time)}  ·  {fmtDuration(summary.duration_ms)}  ·  {fmtNum(scope.runs.length)} runs</div>
             </div>
             <ClusterTabs base={base} section={EITHER_PAGES.has(section) || CLUSTER_PAGES.has(section) ? section : ''} />
@@ -505,15 +518,13 @@ export function EmptyCluster({ reason }: { reason: string }) {
 
 /** How the cluster's work ended: from its runs when it has them (a job cluster stops after its last run; that is not a
  * failure), else from Spark's jobs. */
-function ClusterEnd({ status, runs, end }: { status: string; runs: RunRow[]; end: number | null }) {
-  if (!runs.length) return status !== 'succeeded' ? <StatusBadge status={status} /> : null;
-  const failed = runs.filter((r) => r.status === 'failed').length;
-  const last = Math.max(...runs.map((r) => r.end_time ?? 0));
+function ClusterEnd({ summary, runs, end }: { summary: Summary; runs: RunRow[]; end: number | null }) {
+  const v = clusterVerdict(summary.status, summary.counts, runs);
+  const last = runs.length ? Math.max(...runs.map((r) => r.end_time ?? 0)) : 0;
   const after = end && last ? end - last : null;
   return (
     <>
-      {failed ? <StatusBadge status="failed" /> : <span className="chip ok">All {fmtNum(runs.length)} runs succeeded</span>}
-      {failed ? <span className="muted small">{fmtNum(failed)} of {fmtNum(runs.length)} runs failed</span> : null}
+      <VerdictChip v={v} />
       {after !== null && after >= 0 && after < 10 * 60_000 ? <span className="muted small">the cluster stopped {fmtDuration(after)} after the last run ended</span> : null}
     </>
   );

@@ -429,10 +429,22 @@ export function useScrollTo(id: string | null | undefined, ready: boolean) {
   }, [id, ready]);
 }
 
+/** One number on an overview. The colour goes on the foot (what is wrong: "12 failed"), not on the total; the long
+ * explanation is on hover. */
+export function Tile({ label, value, foot, tone, title }: { label: string; value: string; foot?: ReactNode; tone?: 'bad' | 'warn'; title?: string }) {
+  return (
+    <div className="kpi" title={title}>
+      <div className="label">{label}</div>
+      <div className="value">{value}</div>
+      {foot ? <div className={`foot ${tone ?? ''}`}>{foot}</div> : null}
+    </div>
+  );
+}
+
 /** Everything past the first screen: one folded block, named by what it holds. Its content mounts only when open
  * (so nothing inside fetches until asked); a link to one of its ids (#id) opens it and scrolls there. The open state
  * is remembered per page kind. */
-export function Fold({ name, title, what, ids = [], children }: { name: string; title: string; what: string[]; ids?: string[]; children: ReactNode }) {
+export function Fold({ name, title, what, hint, ids = [], children }: { name: string; title: string; what?: string[]; hint?: string; ids?: string[]; children: ReactNode }) {
   const key = `fold:${name}`;
   const [open, setOpen] = useState(() => { try { return localStorage.getItem(key) === '1'; } catch { return false; } });
   const [goTo, setGoTo] = useState<string | null>(null);
@@ -454,9 +466,9 @@ export function Fold({ name, title, what, ids = [], children }: { name: string; 
       <button className="fold-head" onClick={() => toggle(!open)} aria-expanded={open}>
         <span className="fold-arrow" aria-hidden>{open ? '▾' : '▸'}</span>
         <b>{title}</b>
-        <span className="muted small">{open ? 'hide' : "what's inside:"}</span>
+        <span className="muted small">{open ? 'hide' : what?.length ? "what's inside:" : hint ?? ''}</span>
       </button>
-      {!open && <ul className="fold-list small">{what.map((w) => <li key={w}>{w}</li>)}</ul>}
+      {!open && what?.length ? <ul className="fold-list small">{what.map((w) => <li key={w}>{w}</li>)}</ul> : null}
       {open && <div className="stack fold-body">{children}</div>}
     </section>
   );

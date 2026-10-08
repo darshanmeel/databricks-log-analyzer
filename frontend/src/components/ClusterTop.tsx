@@ -9,13 +9,14 @@ import { fmtBytes, fmtDuration, fmtNum, fmtPct, fmtRows, fmtTime, truncate } fro
 import { to } from '../links';
 import { runGroup, runId, runName, usualX } from '../runName';
 import { isSlow, useCluster, useRunScopeCtx } from './Shell';
-import { Fold } from './ui';
+import { Fold, Tile } from './ui';
 import { FindingPoints, depthOf, kindName, plainFirst } from './FindingPoints';
 import { AdviceItem, SettingsTable } from './SettingsAdvice';
 import { ClusterTables } from './TableStats';
 import { inRun, WaitRanBar } from './TopFinder';
 import { errorClass } from '../errorClass';
 import { CauseBar, CauseHeadline, CauseLegend, causeOf, causeParts, type CauseKey } from './CauseBar';
+import { WhatBroke, useTopFailure } from './WhatBroke';
 
 const TOP = 5;
 const GB = 1024 ** 3;
@@ -51,16 +52,6 @@ function peakOf(runs: RunRow[]) {
   return { n: best, at };
 }
 
-function Tile({ label, value, foot, tone }: { label: string; value: string; foot?: ReactNode; tone?: 'bad' | 'warn' | 'spill' | 'shuf' }) {
-  return (
-    <div className={`kpi ${tone ?? ''}`}>
-      <div className="label">{label}</div>
-      <div className="value">{value}</div>
-      {foot ? <div className="foot">{foot}</div> : null}
-    </div>
-  );
-}
-
 /** The cluster's first screen (why runs were slow, how they ended, the runs that took longest, the top changes) and,
  * folded under "Details", everything else: the numbers, programs, errors, tables, the ranking and `more` (the
  * timeline and the full runs table). */
@@ -91,36 +82,46 @@ export function ClusterTop({ cid, runs, executors, compute, onPick, find, more, 
   const busy = useMemo(() => busyClock(runs, t1), [runs, t1]);
   const findings = useMemo(() => [...(fs.data?.rows ?? [])].sort(plainFirst), [fs.data]);
   const errs = useAsync((s) => api.errors(cid, s).catch(() => [] as ErrorGroup[]), [cid]);
+  const top = useTopFailure(cid, true);
+  const failedTasks = sum(runs, (r) => r.failed_tasks);
+  const clockTitle = `${up ? `Cluster up ${fmtDuration(up)}; runs going ${fmtDuration(busy)}` : 'First run to last'}. Run time added up over runs: ${fmtDuration(took)}${busy && took / busy >= 1.05 ? ` (${(took / busy).toFixed(1)} runs at once on average)` : ''}.`;
+  const waitTitle = `${fmtDuration(waiting)} added up over runs, ${fmtPct(waitShare, 0)} of run time${clock ? `. On the clock ${fmtDuration(clock.waiting_ms)} with a run waiting${up ? ` (${fmtPct(Math.min(1, clock.waiting_ms / up), 0)} of up time)` : ''}` : ''}.`;
+  // the numbers that say little on the first screen: under Details
+  const moreTiles = (
+    <div className="kpis">
+      <Tile label="At once" value={fmtNum(peak.n)} foot={`at ${fmtTime(peak.at).slice(0, 5)}`} title={`Most runs going at once, on ${fmtNum(executors.length)} executors`} />
+      <Tile label="Tasks" value={fmtNum(sum(runs, (r) => r.tasks))} foot={failedTasks ? `${fmtNum(failedTasks)} attempts failed` : 'none failed'} tone={failedTasks ? 'warn' : undefined} />
+      <Tile label="Shuffle" value={fmtBytes(Math.max(shufR, shufW))} foot={`read ${fmtBytes(shufR)} · write ${fmtBytes(shufW)}`} />
+      <Tile label="Idle compute" value={compute?.idle_share != null ? fmtPct(compute.idle_share, 0) : '–'}
+        foot={compute ? `of ${(compute.core_ms_up / 3_600_000).toFixed(1)} core-hours` : 'no tasks'} tone={(compute?.idle_share ?? 0) >= 0.3 ? 'warn' : undefined}
+        title={use ? `Worker core-seconds paid for (${fmtNum(use.worker_core_s)}) per core-second of successful tasks (${fmtNum(use.useful_task_s)}): ${use.core_s_per_useful}` : undefined} />
+    </div>
+  );
 
   return (
     <>
-      <div className="kpis">
-        <Tile label="Clock time" value={fmtDuration(up ?? busy)}
-          foot={<>{up ? <>cluster up · runs going {fmtDuration(busy)}</> : 'first run to last'} · run time added up <b>{fmtDuration(took)}</b>{busy && took / busy >= 1.05 ? ` (${(took / busy).toFixed(1)} at once on average)` : ''}</>} />
-        <Tile label="Runs" value={fmtNum(runs.length)} foot={failed.length ? `${fmtNum(failed.length)} failed` : retried.length ? `none failed · ${fmtNum(retried.length)} after retries` : 'none failed'}
-          tone={failed.length ? 'bad' : undefined} />
-        <Tile label="Slower than usual" value={fmtNum(slow.length)} foot="2× their usual or more" tone={slow.length ? 'warn' : undefined} />
-        <Tile label="At once" value={fmtNum(peak.n)} foot={`at ${fmtTime(peak.at).slice(0, 5)} on ${fmtNum(executors.length)} executors`} tone={peak.n >= 10 ? 'warn' : undefined} />
-        <Tile label="Waiting for cores" value={fmtDuration(waiting)}
-          foot={<>added up over runs, {fmtPct(waitShare, 0)} of run time{clock ? <> · on the clock <b>{fmtDuration(clock.waiting_ms)}</b> with a run waiting{up ? ` (${fmtPct(Math.min(1, clock.waiting_ms / up), 0)} of up time)` : ''}</> : null}</>} tone={waitShare >= 0.2 ? 'warn' : undefined} />
-        <Tile label="Tasks" value={fmtNum(sum(runs, (r) => r.tasks))} foot={sum(runs, (r) => r.failed_tasks) ? `${fmtNum(sum(runs, (r) => r.failed_tasks))} attempts failed` : 'none failed'}
-          tone={sum(runs, (r) => r.failed_tasks) ? 'warn' : undefined} />
-        <Tile label="Spill" value={fmtBytes(spill)} foot="to disk, all runs" tone={spill >= GB ? 'spill' : undefined} />
-        <Tile label="Shuffle" value={fmtBytes(Math.max(shufR, shufW))} foot={`read ${fmtBytes(shufR)} · write ${fmtBytes(shufW)}`} tone={shufR >= GB ? 'shuf' : undefined} />
-        <Tile label="Idle compute" value={compute?.idle_share != null ? fmtPct(compute.idle_share, 0) : '–'}
-          foot={<span title={use ? `Worker core-seconds paid for (${fmtNum(use.worker_core_s)}) per core-second of successful tasks (${fmtNum(use.useful_task_s)})` : undefined}>
-            {compute ? `of ${(compute.core_ms_up / 3_600_000).toFixed(1)} core-hours up` : 'paid for, no tasks'}{use ? ` · ${use.core_s_per_useful} core-s per useful core-s` : ''}</span>} tone={(compute?.idle_share ?? 0) >= 0.3 ? 'warn' : undefined} />
-      </div>
-
+      <WhatBroke cid={cid} top={top.data} />
       <div className="ro-hero">
         <section className="ro-hero-box">
-          <span className="ro-eyebrow warn">{slow.length || waitShare >= 0.2 ? 'Why runs were slow' : 'Where the time went'}</span>
+          <span className={`ro-eyebrow ${slow.length || waitShare >= 0.2 ? 'warn' : ''}`}>{slow.length || waitShare >= 0.2 ? 'Why runs were slow' : 'Where the time went'}</span>
           <WhySlow cid={cid} progs={progs} waiting={waiting} took={took} running={running} peak={peak.n} execs={executors.length} cores={cores} slow={slow} />
         </section>
         <section className="ro-hero-box">
-          <span className={`ro-eyebrow ${failed.length || lost.length ? 'bad' : 'warn'}`}>How the runs ended</span>
+          <span className={`ro-eyebrow ${failed.length || lost.length ? 'bad' : ''}`}>How the runs ended</span>
           <HowEnded cid={cid} runs={runs} failed={failed} retried={retried} lost={lost} compute={compute} t1={t1} onPick={onPick} />
         </section>
+      </div>
+
+      {/* only the numbers that say something: an empty or normal one is under Details */}
+      <div className="kpis">
+        <Tile label="Clock time" value={fmtDuration(up ?? busy)} foot={up ? 'cluster up' : 'first run to last'} title={clockTitle} />
+        <Tile label="Runs" value={fmtNum(runs.length)}
+          foot={[failed.length ? `${fmtNum(failed.length)} failed` : '', slow.length ? `${fmtNum(slow.length)} slow` : '', !failed.length && !slow.length ? (retried.length ? `${fmtNum(retried.length)} after retries` : 'none failed') : ''].filter(Boolean).join(' · ')}
+          tone={failed.length ? 'bad' : slow.length ? 'warn' : undefined} title={slow.length ? `${fmtNum(slow.length)} took 2× their usual or more` : undefined} />
+        {waitShare >= 0.05 && <Tile label="Waiting for cores" value={fmtPct(waitShare, 0)} foot={`${fmtDuration(waiting)} added up`} tone={waitShare >= 0.2 ? 'warn' : undefined} title={waitTitle} />}
+        {peak.n >= 10 && <Tile label="At once" value={fmtNum(peak.n)} foot={`runs, on ${fmtNum(executors.length)} executors`} tone="warn" />}
+        {spill > 0 && <Tile label="Disk spill" value={fmtBytes(spill)} foot="all runs" tone={spill >= GB ? 'warn' : undefined} />}
+        {failedTasks > 0 && <Tile label="Tasks" value={fmtNum(sum(runs, (r) => r.tasks))} foot={`${fmtNum(failedTasks)} ${failedTasks === 1 ? 'attempt' : 'attempts'} failed`} tone="warn" />}
       </div>
 
       {atBox}
@@ -130,11 +131,8 @@ export function ClusterTop({ cid, runs, executors, compute, onPick, find, more, 
       <ClusterTables cid={cid} />
 
       <Fold name="cluster" title="Details" ids={['cv-find', 'cv-runs', 'cv-errors']}
-        what={[
-          'Find the runs, queries, stages, jobs or tasks that took the most time, read or spilled the most, or were most skewed',
-          `Programs (runs of the same code) and the ${errs.data?.length ? fmtNum(errs.data.length) + ' ' : ''}errors in the logs`,
-          `Executors busy and idle, and all ${fmtNum(runs.length)} runs over time and in one table`,
-        ]}>
+        hint={`more numbers, find, programs, ${errs.data?.length ? fmtNum(errs.data.length) + ' ' : ''}errors, all ${fmtNum(runs.length)} runs`}>
+        {moreTiles}
         <div id="cv-find">{find}</div>
         <div className="ro-two">
           <Programs cid={cid} progs={progs} />
@@ -177,12 +175,19 @@ function HowEnded({ cid, runs, failed, retried, lost, compute, t1, onPick }: {
   const end = compute?.cluster_end ?? null;
   const gap = end !== null && t1 ? end - t1 : null;
   const incomplete = runs.filter((r) => r.status !== 'failed' && r.status !== 'succeeded');
+  // a query can fail with no run around it (a notebook cell, a run the logs did not name): the cluster still failed
+  const fq = useAsync((s) => api.datasetOpt<{ spark_context_id: string; sql_execution_id: number; run_key: string | null; error: string | null; description: string | null }>(
+    cid, 'sql_queries', { status: 'failed', run: '', limit: 200, columns: 'spark_context_id,sql_execution_id,run_key,error,description' }, s), [cid]);
+  const outside = (fq.data?.rows ?? []).filter((q) => !q.run_key);
+  const worst = [...runs].sort((a, b) => (usualX(b) ?? 0) - (usualX(a) ?? 0) || (b.duration_ms ?? 0) - (a.duration_ms ?? 0))[0];
   return (
     <>
       <ul className="ro-points">
         {failed.length
           ? <li className="bad"><b>{fmtNum(failed.length)} of {fmtNum(runs.length)} runs failed in Spark</b>: {failed.slice(0, 3).map((r, i) => <Fragment key={r.run_key}>{i ? ', ' : ''}<Link to={inRun(to.overview(cid), r.run_key)}>{runName(r)}</Link> at {fmtTime(r.end_time).slice(0, 5)}</Fragment>)}{failed.length > 3 ? ` and ${failed.length - 3} more` : ''}</li>
           : <li><b>No failed run</b> <span className="muted">· all {fmtNum(runs.length - incomplete.length)} finished</span></li>}
+        {outside.length ? <li className="bad"><b>{outside.length === 1 ? '1 query' : `${fmtNum(outside.length)} queries`} failed outside any run</b>: {outside.slice(0, 3).map((q, i) => (
+          <Fragment key={`${q.spark_context_id}.${q.sql_execution_id}`}>{i ? ', ' : ''}<Link to={to.query(cid, q.spark_context_id, q.sql_execution_id)}>Query {q.sql_execution_id}</Link>{q.error ? <span className="muted"> ({truncate(q.error.split(/\r?\n/)[0], 70)})</span> : null}</Fragment>))}{outside.length > 3 ? ` and ${fmtNum(outside.length - 3)} more` : ''}</li> : null}
         {retried.length ? <li>{fmtNum(retried.length)} finished only after failed tasks were retried</li> : null}
         {incomplete.length ? <li>{fmtNum(incomplete.length)} {incomplete.length === 1 ? 'run has' : 'runs have'} no end in the logs <span className="muted">(still going, or cut off)</span></li> : null}
         {lost.length ? <li className="bad"><b>{fmtNum(lost.length)} executors lost, killed or out of memory</b></li> : <li>No executor lost, killed or out of memory</li>}
@@ -190,7 +195,8 @@ function HowEnded({ cid, runs, failed, retried, lost, compute, t1, onPick }: {
       </ul>
       <div className="ro-links">
         {failed[0] && <button className="linkish" onClick={() => onPick(failed[0])}>Open the first failed run →</button>}
-        <Link to={to.errors(cid)}>Errors →</Link>
+        <a href="#cv-errors">All errors ↓</a>
+        {worst ? <Link to={inRun(to.errors(cid), worst.run_key)}>Errors in the worst run ({truncate(runName(worst), 30)}) →</Link> : null}
         <Link to={to.executors(cid)}>Executors →</Link>
       </div>
     </>
@@ -439,10 +445,10 @@ export function ChangeList({ cid, rows, loading, runs, run }: { cid: string; row
     <section className="panel" id={run ? 'ro-change' : 'cv-change'}>
       <div className="panel-head">
         <div>
-          <h2>What to change <span className="ro-count">{advice.length}</span></h2>
+          <h2>What to change {sv.loading ? null : <span className="ro-count">{advice.length}</span>}</h2>
           <div className="note">Highest impact first{run ? ', for what this run is part of' : ''}. Click one to open what the data shows{run ? '' : ' across all runs'}, the likely cause, the fix and the problems behind it.</div>
         </div>
-        {run ? <a className="btn small" href="#ro-problems">All {fmtNum(rows.length)} problems ↓</a> : <Link className="btn small" to={to.findings(cid)}>All {fmtNum(rows.length)} problems</Link>}
+        {loading ? null : run ? <a className="btn small" href="#ro-problems">All {fmtNum(rows.length)} problems ↓</a> : null}
       </div>
       <div className="panel-body stack" style={{ gap: 10 }}>
         {sv.loading ? <p className="muted small">Loading…</p> : !advice.length ? <p className="muted small" style={{ margin: 0 }}>{run && rows.length ? 'No cluster-wide change covers this run; its problems are listed below.' : 'Nothing stood out: tasks were sized well, little spill, executors were busy.'}</p> : null}

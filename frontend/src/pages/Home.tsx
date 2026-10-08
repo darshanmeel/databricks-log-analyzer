@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState, type FormEvent, type MouseEvent, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api, isMissing, type ClusterListItem, type SourceCluster, type SourceInfo, type Summary } from '../api';
-import { useClusters } from '../components/Shell';
+import { useClusters, VerdictChip } from '../components/Shell';
+import { clusterVerdict } from '../status';
 import { Empty, ErrorState, Loading, Panel, SeverityBadge, StatusBadge } from '../components/ui';
 import { fmtDuration, fmtNum, fmtOffset, fmtTs, toMs } from '../format';
 import { useAsync } from '../hooks';
@@ -21,15 +22,11 @@ function FindingsCell({ c }: { c: ClusterListItem }) {
 
 /** Why the cluster is failed (its jobs or queries failed), or that it succeeded after task retries: a failed task
  * attempt that was run again is not a failure. */
-function StatusWhy({ c }: { c: ClusterListItem }) {
-  const k = c.counts;
-  if (!k) return null;
-  const fj = k.failed_jobs ?? 0, fq = k.failed_queries ?? 0, ft = k.failed_tasks ?? 0;
-  if ((c.status ?? '').toLowerCase() === 'failed') {
-    const why = [fj ? `${fmtNum(fj)} ${fj === 1 ? 'job' : 'jobs'}` : null, fq ? `${fmtNum(fq)} ${fq === 1 ? 'query' : 'queries'}` : null].filter(Boolean).join(' and ');
-    return why ? <div className="muted small">{why} failed</div> : null;
-  }
-  return ft ? <div className="muted small">after {fmtNum(ft)} task {ft === 1 ? 'retry' : 'retries'}</div> : null;
+/** The same verdict as the cluster's header: failed, succeeded with problems (and why), or succeeded. */
+function StatusCell({ c }: { c: ClusterListItem }) {
+  if (!c.counts || !c.status) return <StatusBadge status={c.status} />;
+  const v = clusterVerdict(c.status, c.counts);
+  return <><VerdictChip v={{ ...v, reason: '' }} />{v.reason ? <div className="muted small">{v.reason}</div> : null}</>;
 }
 
 /** Analyze a cluster again from the raw logs it was built from (the local folder or the download cache), so new
@@ -100,8 +97,7 @@ function ClustersTable({ clusters, reload }: { clusters: ClusterListItem[]; relo
                 {c.empty_reason && <div className="muted small">No cluster logs found</div>}
               </td>
               <td>
-                <StatusBadge status={c.status} />
-                <StatusWhy c={c} />
+                <StatusCell c={c} />
               </td>
               <td className="nowrap">{fmtTs(c.start_time)}</td>
               <td className="num">{fmtDuration(c.duration_ms)}</td>

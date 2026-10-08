@@ -7,11 +7,11 @@ import { fmtDuration, fmtNum, fmtTime, fmtTs } from '../format';
 import { useAsync, useQueryState } from '../hooks';
 import { rowLinks, to } from '../links';
 import { CONF, FAILURE_KINDS, FixTips } from '../problems';
-import { depthOf, plainFirst } from '../components/FindingPoints';
+import { plainFirst } from '../components/FindingPoints';
+import { groupIncidents, type Incident, type Joined, type Problem } from '../incidents';
 
 const SEVS: Severity[] = ['high', 'medium', 'low'];
 
-type Joined = FindingRow & { inc: IncidentRow | null };
 
 /** Findings, grouped into incidents (root cause -> effects) by default, or the flat list. */
 export default function Findings() {
@@ -76,35 +76,6 @@ export default function Findings() {
 }
 
 // ---------------------------------------------------------------------------------------------- incidents
-
-type Problem = { id: string; lead: Joined; same: Joined[]; ts: number | null };
-type Incident = { id: string; head: IncidentRow; problems: Problem[]; byFinding: Map<string, Problem> };
-
-function groupIncidents(rows: Joined[]): Incident[] {
-  const m = new Map<string, Incident>();
-  for (const r of rows) {
-    if (!r.inc) continue;
-    let inc = m.get(r.inc.incident_id);
-    if (!inc) m.set(r.inc.incident_id, (inc = { id: r.inc.incident_id, head: r.inc, problems: [], byFinding: new Map() }));
-    let p = inc.problems.find((x) => x.id === r.inc!.problem_id);
-    if (!p) inc.problems.push((p = { id: r.inc.problem_id, lead: r, same: [], ts: r.ts }));
-    else if (r.inc.role === 'same') p.same.push(r);
-    else {
-      p.same.push(p.lead); // a 'same' row came first and stood in as the lead
-      p.lead = r;
-    }
-    if (r.ts !== null && (p.ts === null || r.ts < p.ts)) p.ts = r.ts;
-  }
-  for (const inc of m.values()) {
-    for (const p of inc.problems) for (const f of [p.lead, ...p.same]) inc.byFinding.set(f.finding_id, p);
-    inc.problems.sort((a, b) => (a.ts ?? Infinity) - (b.ts ?? Infinity) || a.id.localeCompare(b.id));
-  }
-  // failures first; then the plain problems (spill, big reads, slow work) before the GC and memory details that
-  // often explain them, then the log details
-  const fail = (i: Incident) => (i.problems.some((p) => FAILURE_KINDS.has(p.lead.inc!.kind)) ? 0 : 1);
-  const depth = (i: Incident) => Math.min(...i.problems.map((p) => depthOf(p.lead.category)));
-  return [...m.values()].sort((a, b) => fail(a) - fail(b) || depth(a) - depth(b) || a.head.incident_rank - b.head.incident_rank);
-}
 
 function Incidents({ cid, rows, focus }: { cid: string; rows: Joined[]; focus: string | null }) {
   const incs = useMemo(() => groupIncidents(rows), [rows]);
@@ -224,7 +195,7 @@ function IncidentCard({ cid, inc, focus }: { cid: string; inc: Incident; focus: 
           <FixTips kind={root.lead.inc!.kind} fix={root.lead.fix} stackHref={stackHref(cid, root)} />
         </div>
         {chain.length > 0 && (
-          <div className="spread">
+          <div className="inc-spread">
             <div className="lbl">How it spread</div>
             <ol className="spread-steps">
               {chain.map((p) => (
@@ -248,7 +219,7 @@ function IncidentCard({ cid, inc, focus }: { cid: string; inc: Incident; focus: 
           </div>
         )}
         {contributing.length > 0 && (
-          <div className="spread">
+          <div className="inc-spread">
             <div className="lbl">{chain.length ? 'Also found here' : 'Also in this query'}</div>
             {contributing.map((p) => (
               <div key={p.id} className="also">

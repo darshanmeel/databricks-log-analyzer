@@ -11,16 +11,19 @@ import { useAsync } from '../hooks';
 import { fmtBytes, fmtDuration, fmtNum, fmtPct, fmtRows, fmtTime, truncate } from '../format';
 import { to } from '../links';
 import { useCluster, useRunScopeCtx, isSlow } from '../components/Shell';
-import { Fold } from '../components/ui';
+import { Fold, Tile } from '../components/ui';
 import { FindingPoints, depthOf, plainFirst } from '../components/FindingPoints';
 import { RunStepsPanel, whatItDid } from '../components/RunSteps';
 import { TopFinder, WaitRanBar } from '../components/TopFinder';
 import { RunTables } from '../components/RunTables';
 import { ErrClassChip } from '../components/ClusterTop';
 import { CauseBar, CauseHeadline, CauseLegend, causeOf, causeParts, type CauseKey } from '../components/CauseBar';
+import { WhatBroke, useTopFailure, type TopFailure } from '../components/WhatBroke';
 
 const TOP = 5; // queries listed in "where the time went"
 const GB = 1024 ** 3;
+const BAD_GONE = ['oom', 'lost', 'killed'];
+const EXEC_FAILURES = new Set(['executor_oom', 'executor_lost', 'executor_killed', 'oom_site', 'log:executor_oom']);
 
 /** The MERGE numbers from a merge_rewrite finding: what it read of the target, the rows, what it wrote and spilled. */
 function mergeOf(f: FindingRow | undefined) {
@@ -54,11 +57,12 @@ export function RunOverview({ run }: { run: RunRow }) {
   const end = useAsync((s) => api.runEnd(cid, run.run_key, s), [cid, run.run_key]);
   const steps = useAsync((s) => api.runSteps(cid, run.run_key, s), [cid, run.run_key]);
   const fs = useAsync((s) => api.datasetOpt<FindingRow>(cid, 'findings', { limit: 500 }, s), [cid, run.run_key]);
-  // executor findings (GC, memory) belong to the cluster: the executors are shared by every run, so they are on the
-  // cluster's page, not counted as this run's problems
+  // executor findings about GC belong to the cluster: the executors are shared by every run, so they are on the
+  // cluster's page, not counted as this run's problems. An executor lost or out of memory while the run went is kept.
   const findings = useMemo(() => [...(fs.data?.rows ?? [])]
-    .filter((f) => !(f.executor_id != null && f.stage_id == null && f.sql_execution_id == null))
+    .filter((f) => !(f.executor_id != null && f.stage_id == null && f.sql_execution_id == null && !EXEC_FAILURES.has(f.category)))
     .sort(plainFirst), [fs.data]);
+  const top = useTopFailure(cid, false, run.run_key);
   const [allSteps, setAllSteps] = useState(false);
   const e = end.data;
   const d = steps.data && steps.data.start !== null && steps.data.groups.length ? steps.data : null;
@@ -67,42 +71,58 @@ export function RunOverview({ run }: { run: RunRow }) {
   const execs = useMemo(() => new Set((d?.groups ?? []).flatMap((g) => g.stages.flatMap((s) => (s.by_exec ?? []).map((x) => x.executor_id)))).size, [d]);
   // the runs that started within two minutes of it: a burst of runs fights for the same cores
   const burst = scope.runs.filter((r) => r.run_key !== run.run_key && r.start_time != null && run.start_time != null && Math.abs(r.start_time - run.start_time) <= 120_000).length;
+  const gone = e?.executors_gone ?? [];
+  const badGone = gone.filter((x) => BAD_GONE.includes(x.removal_category ?? ''));
+  const goneTitle = gone.length ? Object.entries(gone.reduce<Record<string, number>>((m, x) => ({ ...m, [x.removal_category ?? 'other']: (m[x.removal_category ?? 'other'] ?? 0) + 1 }), {}))
+    .map(([k, n]) => `${n} ${k}`).join(', ') : undefined;
+  const others = run.overlapping_runs?.length ?? 0;
+  // the numbers that say little on the first screen: under Details
+  const moreTiles = (
+    <div className="kpis">
+      <Tile label="Tasks" value={fmtNum(run.tasks)} foot={run.failed_tasks ? `${fmtNum(run.failed_tasks)} attempts failed` : 'none failed'} tone={run.failed_tasks ? 'warn' : undefined} />
+      <Tile label="Spill" value={fmtBytes(spill)} foot={`disk ${fmtBytes(run.disk_spill ?? 0)} · memory ${fmtBytes(run.mem_spill ?? 0)}`} />
+      <Tile label="Shuffle" value={fmtBytes(Math.max(run.shuffle_read ?? 0, run.shuffle_write ?? 0))} foot={`read ${fmtBytes(run.shuffle_read ?? 0)} · write ${fmtBytes(run.shuffle_write ?? 0)}`} />
+      <Tile label="Ran next to it" value={fmtNum(others)} foot="runs on the same executors" />
+      <Tile label="Executors gone" value={e ? fmtNum(gone.length) : '…'} foot={goneTitle ?? 'while it ran'} />
+    </div>
+  );
 
   return (
     <div className="page wide">
       <div className="stack">
-        {/* first screen: the numbers, the verdict, the causes, the fixes, the steps. The rest is under "Details" */}
-        <div className="kpis">
-          <Tile label="Duration" value={fmtDuration(run.duration_ms)}
-            foot={run.typical_duration_ms && run.usual_from === 'history' ? `usual ${fmtDuration(run.typical_duration_ms)} · its last ${run.usual_runs} runs`
-              : run.typical_duration_ms && (run.same_job_runs ?? 0) >= 3 ? `usual ${fmtDuration(run.typical_duration_ms)} · this batch` : 'no usual yet'} />
-          <Tile label="Queries · jobs" value={`${fmtNum(e?.queries ?? null)} · ${fmtNum(run.spark_jobs)}`}
-            foot={e ? (e.failed_jobs || e.failed_queries ? `${e.failed_queries} queries, ${e.failed_jobs} jobs failed` : e.replanned_jobs ? `none failed · ${e.replanned_jobs} replanned` : 'none failed') : null}
-            tone={e && (e.failed_jobs || e.failed_queries) ? 'bad' : undefined} />
-          <Tile label="Tasks" value={fmtNum(run.tasks)} foot={run.failed_tasks ? `${fmtNum(run.failed_tasks)} attempts failed, ${fmtNum(run.retried_tasks)} retried` : 'none failed'} tone={run.failed_tasks ? 'warn' : undefined} />
-          <Tile label="Spill" value={fmtBytes(spill)} foot={`disk ${fmtBytes(run.disk_spill ?? 0)}`} tone={(run.disk_spill ?? 0) >= GB ? 'spill' : undefined} />
-          <Tile label="Shuffle" value={fmtBytes(Math.max(run.shuffle_read ?? 0, run.shuffle_write ?? 0))} foot={`read ${fmtBytes(run.shuffle_read ?? 0)} · write ${fmtBytes(run.shuffle_write ?? 0)}`} tone={(run.shuffle_read ?? 0) >= GB ? 'shuf' : undefined} />
-          <Tile label="Ran next to it" value={fmtNum(run.overlapping_runs?.length ?? 0)} foot="other runs on the same executors" tone={(run.overlapping_runs?.length ?? 0) >= 5 ? 'warn' : undefined} />
-          <Tile label="Executors gone" value={fmtNum(e?.executors_gone.length ?? null)}
-            foot={e?.executors_gone.length ? (e.executors_gone.every((x) => x.removal_category === 'termination') ? 'stopped with the cluster' : <Link to={to.executors(cid)}>see Executors</Link>) : 'while it ran'}
-            tone={e?.executors_gone.some((x) => ['oom', 'lost', 'killed'].includes(x.removal_category ?? '')) ? 'bad' : undefined} />
-        </div>
-
+        {/* first screen: what broke, the verdict, the numbers, the causes, the fixes, the steps. The rest is under "Details" */}
+        <WhatBroke cid={cid} top={top.data} run={run.run_key} />
         <div className="ro-hero">
           <section className="ro-hero-box">
-            <span className="ro-eyebrow warn">{a && (isSlow(run) || a.waitShare >= 0.3) ? 'Why it was slow' : 'Where the time went'}</span>
+            <span className={`ro-eyebrow ${a && (isSlow(run) || a.waitShare >= 0.3) ? 'warn' : ''}`}>{a && (isSlow(run) || a.waitShare >= 0.3) ? 'Why it was slow' : 'Where the time went'}</span>
             {a ? <WhySlow cid={cid} run={run} a={a} execs={execs} /> : <p className="muted small">{steps.loading ? 'Loading…' : 'No Spark work recorded for this run.'}</p>}
           </section>
           <section className="ro-hero-box">
-            <span className={`ro-eyebrow ${e && (e.failed_queries || e.failed_jobs) ? 'bad' : 'warn'}`}>How it ended</span>
+            <span className={`ro-eyebrow ${e && (e.failed_queries || e.failed_jobs || badGone.length) ? 'bad' : ''}`}>How it ended</span>
             {e ? <HowEnded cid={cid} e={e} d={d} /> : <p className="muted small">{end.error ? `Could not load: ${end.error.message}` : 'Loading…'}</p>}
           </section>
+        </div>
+
+        {/* only the numbers that say something: an empty or normal one is under Details */}
+        <div className="kpis">
+          <Tile label="Duration" value={fmtDuration(run.duration_ms)}
+            foot={run.typical_duration_ms && (run.usual_from === 'history' || (run.same_job_runs ?? 0) >= 3) ? `usual ${fmtDuration(run.typical_duration_ms)}` : 'no usual yet'}
+            tone={isSlow(run) ? 'warn' : undefined}
+            title={run.typical_duration_ms ? (run.usual_from === 'history' ? `Usual: the median of its last ${run.usual_runs} runs` : 'Usual: the median of this batch') : undefined} />
+          <Tile label="Queries · jobs" value={e ? `${fmtNum(e.queries)} · ${fmtNum(run.spark_jobs)}` : '…'}
+            foot={e ? (e.failed_jobs || e.failed_queries ? `${e.failed_queries} queries, ${e.failed_jobs} jobs failed` : e.replanned_jobs ? `none failed · ${e.replanned_jobs} replanned` : 'none failed') : null}
+            tone={e && (e.failed_jobs || e.failed_queries) ? 'bad' : undefined} />
+          {run.failed_tasks ? <Tile label="Tasks" value={fmtNum(run.tasks)} foot={`${fmtNum(run.failed_tasks)} ${run.failed_tasks === 1 ? 'attempt' : 'attempts'} failed`} tone="warn" title={`${fmtNum(run.retried_tasks)} retried`} /> : null}
+          {(run.disk_spill ?? 0) > 0 && <Tile label="Disk spill" value={fmtBytes(run.disk_spill)} foot="to disk" tone={(run.disk_spill ?? 0) >= GB ? 'warn' : undefined}
+            title={`Plus ${fmtBytes(run.mem_spill ?? 0)} spilled in memory (the data before it was written out)`} />}
+          {others > 0 && <Tile label="Ran next to it" value={fmtNum(others)} foot="runs on its executors" tone={others >= 5 ? 'warn' : undefined} />}
+          {badGone.length > 0 && <Tile label="Executors lost" value={fmtNum(badGone.length)} foot={<Link to={to.executors(cid)}>out of memory, lost or killed</Link>} tone="bad" title={goneTitle} />}
         </div>
 
         {a && <Causes cid={cid} a={a} run={run} execs={execs} burst={burst}
           toCluster={() => scope.choose(null)} />}
 
-        {a && <Fixes run={run} a={a} spill={spill} findings={findings} />}
+        {a && <Fixes run={run} a={a} spill={spill} findings={findings} failure={top.data} />}
 
         {a && d && <TimeWent cid={cid} d={d} a={a} allSteps={allSteps} setAllSteps={setAllSteps} />}
         {allSteps && <RunStepsPanel cid={cid} run={run.run_key} />}
@@ -112,12 +132,8 @@ export function RunOverview({ run }: { run: RunRow }) {
         <TablesRead cid={cid} scope={{ run: run.run_key }} />
 
         <Fold name="run" title="Details" ids={['ro-find', 'ro-end', 'ro-problems']}
-          what={[
-            'Find the queries, stages, jobs or tasks that took the most time, read or spilled the most, or were most skewed',
-            'Tables read and written, and the ones read more than once',
-            `The end in time order${e?.errors.length ? `, and the ${fmtNum(e.errors.length)} errors logged before it` : ''}`,
-            `All ${fmtNum(findings.length)} problems found in this run, worst first`,
-          ]}>
+          hint={`more numbers, find, tables, the end in order${fs.loading ? '' : `, all ${fmtNum(findings.length)} problems`}`}>
+          {moreTiles}
           <div id="ro-find"><TopFinder cid={cid} run={run.run_key} /></div>
           <RunTables cid={cid} run={run.run_key} />
 
@@ -157,16 +173,6 @@ function analyse(d: RunSteps, fs: FindingRow[]): Analysis {
     waitedFinding: fs.find((f) => f.category === 'waited_for_cores'),
     spillFindings: fs.filter((f) => f.category === 'disk_spill'),
   };
-}
-
-function Tile({ label, value, foot, tone }: { label: string; value: string; foot?: ReactNode; tone?: 'bad' | 'warn' | 'spill' | 'shuf' }) {
-  return (
-    <div className={`kpi ${tone ?? ''}`}>
-      <div className="label">{label}</div>
-      <div className="value">{value}</div>
-      {foot ? <div className="foot">{foot}</div> : null}
-    </div>
-  );
 }
 
 function WhySlow({ cid, run, a, execs }: { cid: string; run: RunRow; a: Analysis; execs: number }) {
@@ -209,9 +215,7 @@ function HowEnded({ cid, e, d }: { cid: string; e: RunEnd; d: RunSteps | null })
         {lq && <li>Last: query {lq.sql_execution_id} {lq.status === 'failed' ? 'failed' : 'ended'} at <b className="mono">{fmtTime(lq.end_time)}</b>
           {lg && lg.failed_tasks ? <span className="muted"> · {fmtNum(lg.failed_tasks)} task attempts retried</span> : null}</li>}
         {stopped && <li>Cluster stopped <b>{gapText} later</b></li>}
-        {!bad && (stopped
-          ? <li>Databricks says failed? It was <b>cut off by the cluster ending</b> <span className="muted">(timeout, cancel or auto-termination)</span></li>
-          : <li>Databricks says failed? <span className="muted">The error was outside Spark: Python, the driver, a timeout or a cancel</span></li>)}
+        {!bad && stopped && <li>Databricks says failed? It was <b>cut off by the cluster ending</b> <span className="muted">(timeout, cancel or auto-termination)</span></li>}
       </ul>
       <div className="ro-links">
         <a href="#ro-end">The end, in order ↓</a>
@@ -338,12 +342,21 @@ function TimeWent({ cid, d, a, allSteps, setAllSteps }: { cid: string; d: RunSte
 
 /** At most three changes, in order, each with what it wins: the cluster's concurrency when the run mostly waited, the
  * query that did most of the work, then the worst other problems that carry a fix. */
-function Fixes({ run, a, spill, findings }: { run: RunRow; a: Analysis; spill: number; findings: FindingRow[] }) {
+function Fixes({ run, a, spill, findings, failure }: { run: RunRow; a: Analysis; spill: number; findings: FindingRow[]; failure: TopFailure | null }) {
   const [copied, setCopied] = useState(false);
   const waitMs = a.total * a.waitShare;
   const t = a.top;
   const fixes: { who: string; text: ReactNode; plain: string; wins?: string }[] = [];
   const done = new Set<string>();
+  // what broke comes first: the fix of the failure's most likely root cause
+  const rf = failure?.root.lead;
+  if (rf?.fix) {
+    const i = rf.inc!;
+    const q = rf.sql_execution_id ?? i.sql_execution_id, st = rf.stage_id ?? i.stage_id;
+    const who = q !== null ? `Query ${q}` : st !== null ? `Stage ${st}` : rf.executor_id ? `Executor ${rf.executor_id}` : 'Cluster';
+    fixes.push({ who, plain: rf.fix, text: firstSentences(rf.fix) });
+    done.add(rf.category);
+  }
   if (a.waitShare >= 0.2) {
     const plain = `Lower the for-each concurrency to about the cores available, or raise min_workers before the ${fmtTime(run.start_time).slice(0, 5)} schedule.`;
     fixes.push({ who: 'Cluster', plain, text: plain, wins: `up to ${fmtDuration(waitMs)} of waiting` });
@@ -564,8 +577,8 @@ function Problems({ cid, rows, loading, d }: { cid: string; rows: FindingRow[]; 
   return (
     <section className="panel" id="ro-problems">
       <div className="panel-head">
-        <div><h2>Problems in this run <span className="ro-count">{rows.length}</span></h2><div className="note">Worst first. Each: what we saw, the likely cause, the fix, and the tables its query reads and writes.</div></div>
-        <Link className="btn small" to={to.findings(cid)}>All {fmtNum(rows.length)} findings</Link>
+        <div><h2>Problems in this run {loading ? null : <span className="ro-count">{rows.length}</span>}</h2><div className="note">Worst first. Each: what we saw, the likely cause, the fix, and the tables its query reads and writes.</div></div>
+        {loading ? null : <Link className="btn small" to={to.findings(cid)}>All {fmtNum(rows.length)} findings</Link>}
       </div>
       <div className="panel-body stack" style={{ gap: 10 }}>
         {loading ? <p className="muted small">Loading…</p> : rows.length ? shown.map((f) => {

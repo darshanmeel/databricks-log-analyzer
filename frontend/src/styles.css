@@ -346,12 +346,14 @@ table.t td .clip { display: block; max-width: 420px; overflow: hidden; text-over
 .status-band .facts b { color: var(--ink); font-weight: 600; }
 .status-band .side { padding: 16px 20px; display: flex; gap: 8px; align-items: center; border-left: 1px solid var(--line-soft); flex-wrap: wrap; }
 
-.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(124px, 1fr)); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); box-shadow: var(--shadow-card); overflow: hidden; }
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); box-shadow: var(--shadow-card); overflow: hidden; }
 .kpi { padding: 12px 16px; border-right: 1px solid var(--line-soft); border-bottom: 1px solid var(--line-soft); margin-right: -1px; margin-bottom: -1px; }
 .kpi .label { font-size: 12.5px; color: var(--ink-2); }
-.kpi .value { font-size: var(--fs-kpi); line-height: var(--lh-kpi); font-weight: 500; letter-spacing: -0.01em; margin-top: 2px; }
+.kpi .value { white-space: nowrap; font-variant-numeric: tabular-nums; font-size: var(--fs-kpi); line-height: var(--lh-kpi); font-weight: 500; letter-spacing: -0.01em; margin-top: 2px; }
 .kpi .value .of { font-size: 14px; color: var(--muted); font-weight: 500; }
 .kpi .foot { font-size: 12px; color: var(--muted); }
+.kpi .foot.bad { color: var(--sev-high-text); font-weight: 600; }
+.kpi .foot.warn { color: var(--sev-medium-text); font-weight: 600; }
 .kpi.bad .value { color: var(--sev-high-text); }
 .kpi.warn .value { color: var(--sev-medium-text); }
 
@@ -1320,6 +1322,7 @@ th .th-sub { font-size: 10.5px; font-weight: 400; color: var(--muted); white-spa
 .run-meta { font-size: 12px; color: var(--text-3); margin-top: 4px; white-space: pre-wrap; }
 .chip { display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 4px; font-size: 12px; font-weight: 500; }
 .chip.warn { background: var(--st-warn-tint); color: var(--st-warn-ink); }
+.chip.bad { background: var(--st-crit-tint); color: var(--st-crit-ink); }
 .tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line); margin-top: 12px; overflow-x: auto; }
 .tabs a { display: inline-flex; align-items: center; gap: 7px; height: 40px; padding: 0 12px; color: var(--ink-2); border-bottom: 2px solid transparent; white-space: nowrap; font-size: 13.5px; }
 .tabs a:hover { color: var(--text); text-decoration: none; }
@@ -1473,6 +1476,13 @@ tr.other-task td { color: var(--text-2); }
 .ro-eyebrow { align-self: flex-start; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; padding: 2px 8px; border-radius: 4px; background: var(--surface-2); color: var(--text-3); }
 .ro-eyebrow.warn { background: var(--st-warn-tint); color: var(--st-warn-ink); }
 .ro-eyebrow.bad { background: var(--st-crit-tint); color: var(--st-crit-ink); }
+/* the first block of an overview when something failed */
+.what-broke { display: flex; flex-direction: column; gap: 6px; padding: 12px 16px; background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--st-crit); border-radius: var(--radius-md); box-shadow: var(--shadow-card); }
+.what-broke .wb-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.what-broke .wb-head b { font-size: 15px; }
+.what-broke p { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.what-broke .wb-lbl { display: inline-block; min-width: 150px; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--text-3); }
+.what-broke .wb-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; justify-content: space-between; }
 .ro-hero-text { margin: 0; font-size: 15px; line-height: 1.55; max-width: 72ch; }
 .ro-links { display: flex; flex-wrap: wrap; gap: 4px 18px; font-size: 13px; margin-top: auto; }
 @media (max-width: 860px) { .ro-hero { grid-template-columns: 1fr; } .ro-hero-box + .ro-hero-box { border-left: 0; border-top: 1px solid var(--border); } }

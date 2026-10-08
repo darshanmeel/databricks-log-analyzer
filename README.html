@@ -236,16 +236,27 @@ dbx-log-analyzer ui --output ./demo_out --cache ./demo_cache</code></pre>
   </ul>
 
   <h2 id="cluster">Cluster overview</h2>
-  <figure><img src="docs/screenshots/cluster-overview.png" alt="Cluster overview: tiles, where the time went, how the runs ended, the runs" loading="lazy">
-    <figcaption>The first screen of a cluster: one row of numbers, two short answers, then every run.</figcaption></figure>
+  <figure><img src="docs/screenshots/cluster-overview.png" alt="Cluster overview: what went wrong, two short answers, the numbers that matter, the runs" loading="lazy">
+    <figcaption>The first screen of a cluster: what went wrong, two short answers, the numbers that matter, then every run.</figcaption></figure>
   <ul class="look">
+    <li><b>The status</b> next to the cluster id is the same everywhere (Home, the cluster, a run): red <i>Failed</i>
+      (and what failed, including a query that failed outside any run), amber <i>Succeeded with problems</i> (out of
+      memory, executors lost, stages failed, task retries) or green <i>Succeeded</i>.</li>
+    <li><b>What went wrong</b> comes first when something failed: the top incident from Findings, its most likely root
+      cause, the first line of its fix and links to the stage, job, query, executor and error. Here: the Python
+      <code>IndexError</code> in <code>normalise_address</code>, line 42. Nothing is shown when nothing failed.</li>
+    <li><b>The numbers</b> come after the two short answers, and only those that say something: a tile with nothing to
+      report (no spill, no waiting, no retries) is left out and kept under Details with the rest (shuffle, idle
+      compute, the most runs at once). The colour sits on the problem ("1 attempt failed"), not on the total; the long
+      explanation is on hover.</li>
     <li><b>Clock time:</b> how long the cluster was up (1h 16m) next to the run time added up over runs (46m 34s), and
       how many runs were going at once on average. When runs overlap, the sum is bigger than the clock: 8 days of run
       time on a 12-hour cluster is not a bug.</li>
     <li><b>Waiting for cores:</b> added up over runs and as a share of run time, and on the clock: how long at least one
       run was waiting.</li>
     <li><b>Where the time went</b> and <b>How the runs ended:</b> the two short answers in plain words, with links to
-      the detail. The first one reads <i>Why runs were slow</i> when runs were slow or waited a lot.</li>
+      the detail. The first one reads <i>Why runs were slow</i> when runs were slow or waited a lot. A link that opens
+      one run says so ("Errors in the worst run (…)"); <i>All errors</i> stays on the cluster.</li>
     <li><b>Where the runs' time went:</b> one bar split by cause, then every run with its wait and run time, its usual
       time, rows and flags (spill, big task reads, retries). The left rail lists the runs grouped by program, worst
       first.</li>
@@ -290,10 +301,12 @@ dbx-log-analyzer ui --output ./demo_out --cache ./demo_cache</code></pre>
   <figure><img src="docs/screenshots/run-overview.png" alt="Run overview: tiles, why it was slow, how it ended, the cause, the fixes and where the time went" loading="lazy">
     <figcaption>A run (a Databricks job run, notebook or session) on its own: what took the time and what to change.</figcaption></figure>
   <ul class="look">
-    <li><b>Tiles:</b> duration against its usual time, queries and jobs, tasks and retries, spill, shuffle, other runs
-      on the same executors, and executors lost.</li>
+    <li><b>The same order as the cluster:</b> what went wrong (when something failed), why it was slow and how it
+      ended, then the numbers that say something: duration against its usual time, queries and jobs, failed task
+      attempts, disk spill (memory spill on hover), other runs on its executors, and executors lost to out of memory,
+      a crash or a kill (autoscaling does not count). Shuffle and the rest are under Details.</li>
     <li><b>Cause cards</b> name the query that did most of the work and what it read, spilled and wrote. <b>The
-      fixes</b> come in the order to make them.</li>
+      fixes</b> come in the order to make them, the fix for what broke first.</li>
     <li><b>On its clock:</b> waited for cores, ran tasks, and no Spark work (driver code). An idle gap of 30 minutes or
       more is called idle, not driver code. Every query is listed with its wait, run time and rows in.</li>
     <li><b>What to change for this run:</b> the same folded cards as the cluster, limited to the changes this run is
