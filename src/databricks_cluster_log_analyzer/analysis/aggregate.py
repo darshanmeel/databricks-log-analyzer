@@ -241,6 +241,50 @@ def build_spark_jobs(tables: EventTables) -> list[dict]:
     return rows
 
 
+def stage_metric_cols(m: dict) -> dict:
+    """The stage columns that come from its tasks (`m`: one value of _stage_metrics), with skew, data skew and GC
+    share. Also used to recompute the stages of an older output from its tasks (refresh)."""
+    p50, mx = m.get("p50_task_ms"), m.get("max_task_ms")
+    skew = round_half_up(mx / max(p50, 1), 1) if (mx is not None and p50 is not None) else None
+    # data skew: the biggest task's input over the median task's (bytes, else rows); null when tasks read nothing
+    data_skew = None
+    for unit in ("bytes", "rows"):
+        dmx, dmed = m.get(f"max_task_{unit}_in"), m.get(f"p50_task_{unit}_in")
+        if dmx:
+            data_skew = round_half_up(dmx / max(dmed or 0, 1), 1)
+            break
+    gc_share = None
+    if m.get("_gc_ms") is not None and m.get("_run_ms"):
+        gc_share = round_half_up(m["_gc_ms"] / m["_run_ms"], 3)
+    return {
+        "tasks": m.get("tasks"), "failed_tasks": m.get("failed_tasks"),
+        "p50_task_ms": p50, "max_task_ms": mx, "min_task_ms": m.get("min_task_ms"), "skew": skew, "data_skew": data_skew,
+        **{k: m.get(k) for k in ("shuffle_read_records", "shuffle_write_records", "output_records",
+                                 *DIST_COLS) if k != "p50_task_ms"}, "gc_share": gc_share,
+        "max_peak_mem": m.get("max_peak_mem"), "mem_spill": m.get("mem_spill"),
+        "disk_spill": m.get("disk_spill"), "input_bytes": m.get("input_bytes"),
+        "input_records": m.get("input_records"), "output_bytes": m.get("output_bytes"),
+        "shuffle_read": m.get("shuffle_read"), "shuffle_write": m.get("shuffle_write"),
+        "executors_used": m.get("executors_used"),
+        # internal (not written): used by query_profile
+        "_gc_ms": m.get("_gc_ms"), "_run_ms": m.get("_run_ms"), "_task_ms_sum": m.get("_task_ms_sum"),
+    }
+
+
+def restage(stages: list[dict], tdf: pd.DataFrame) -> int:
+    """In place: the task-derived columns of these stage rows recomputed from the task frame (rows without tasks
+    are left as they are), then the storage split. Returns how many stages were recomputed."""
+    metrics = _stage_metrics(tdf)
+    n = 0
+    for s in stages:
+        m = metrics.get((s.get("spark_context_id"), s.get("stage_id"), s.get("stage_attempt") or 0))
+        if m:
+            s.update(stage_metric_cols(m))
+            n += 1
+    add_storage_reads(stages)
+    return n
+
+
 def build_stages(tables: EventTables, tdf: pd.DataFrame, jobs: list[dict]) -> list[dict]:
     metrics = _stage_metrics(tdf)
     # stage -> lowest Spark job id listing it (one row per stage attempt)
@@ -267,40 +311,19 @@ def build_stages(tables: EventTables, tdf: pd.DataFrame, jobs: list[dict]) -> li
         start, end = s.get("start_time"), s.get("end_time") if s.get("_completed") else None
         fr = s.get("failure_reason")
         status = "failed" if fr is not None else ("succeeded" if s.get("_completed") else "incomplete")
-        p50, mx = m.get("p50_task_ms"), m.get("max_task_ms")
-        skew = round_half_up(mx / max(p50, 1), 1) if (mx is not None and p50 is not None) else None
-        # data skew: the biggest task's input over the median task's (bytes, else rows); null when tasks read nothing
-        data_skew = None
-        for unit in ("bytes", "rows"):
-            dmx, dmed = m.get(f"max_task_{unit}_in"), m.get(f"p50_task_{unit}_in")
-            if dmx:
-                data_skew = round_half_up(dmx / max(dmed or 0, 1), 1)
-                break
-        gc_share = None
-        if m.get("_gc_ms") is not None and m.get("_run_ms"):
-            gc_share = round_half_up(m["_gc_ms"] / m["_run_ms"], 3)
         rows.append({
             "cluster_id": s["cluster_id"], "spark_context_id": k[0], "stage_id": k[1], "stage_attempt": k[2],
             "stage_name": s.get("stage_name"), "num_tasks": s.get("num_tasks"), "status": status,
             "start_time": start, "end_time": end,
             "duration_ms": (end - start) if start is not None and end is not None else None,
-            "failure_reason": fr, "tasks": m.get("tasks"), "failed_tasks": m.get("failed_tasks"),
-            "p50_task_ms": p50, "max_task_ms": mx, "min_task_ms": m.get("min_task_ms"), "skew": skew, "data_skew": data_skew,
-            **{k: m.get(k) for k in ("shuffle_read_records", "shuffle_write_records", "output_records",
-                                     *DIST_COLS) if k != "p50_task_ms"}, "gc_share": gc_share,
-            "max_peak_mem": m.get("max_peak_mem"), "mem_spill": m.get("mem_spill"),
-            "disk_spill": m.get("disk_spill"), "input_bytes": m.get("input_bytes"),
-            "input_records": m.get("input_records"), "output_bytes": m.get("output_bytes"),
-            "shuffle_read": m.get("shuffle_read"), "shuffle_write": m.get("shuffle_write"),
-            "executors_used": m.get("executors_used"),
+            "failure_reason": fr, **stage_metric_cols(m),
             "spark_job_id": j["spark_job_id"] if j else None,
             "sql_execution_id": j["sql_execution_id"] if j else None,
             "job_description": j["description"] if j else None,
             # Revision 4: DAG + "what is this stage doing"
             "parent_ids": list(s.get("parent_ids") or []), "rdd_names": list(s.get("rdd_names") or []),
             "rdd_scopes": list(s.get("rdd_scopes") or []), "details": s.get("details"),
-            # internal (not written): used by query_profile
-            "_gc_ms": m.get("_gc_ms"), "_run_ms": m.get("_run_ms"), "_task_ms_sum": m.get("_task_ms_sum"),
+            "cloud_bytes": s.get("cloud_bytes"), "disk_cache_bytes": s.get("disk_cache_bytes"),
         })
     # stage retries: attempt N > 0 records why attempt N-1 failed (typically FetchFailed)
     by_key = {(r["spark_context_id"], r["stage_id"], r["stage_attempt"]): r for r in rows}
@@ -313,7 +336,36 @@ def build_stages(tables: EventTables, tdf: pd.DataFrame, jobs: list[dict]) -> li
                 r["retry_of_failure"] = prev["failure_reason"] or None
     rows.sort(key=lambda r: (r["spark_context_id"], r["start_time"] is None, r["start_time"] or 0,
                              r["stage_id"], r["stage_attempt"]))
+    add_storage_reads(rows)
     return rows
+
+
+def add_storage_reads(stages: list[dict]) -> None:
+    """In place, per stage: storage_bytes (read from cloud storage or the Databricks disk cache) and df_cache_bytes
+    (the rest of its input: read from a DataFrame cache). Spark counts a cached-block read as task input, so the
+    input alone overstates what came from storage.
+
+    The cloud storage metric decides. A finished stage without it, in a Spark context whose other stages report it,
+    read no files. Without the metric anywhere (older runtimes, open-source Spark) the input is all there is."""
+    known = {s.get("spark_context_id") for s in stages
+             if s.get("cloud_bytes") is not None or s.get("disk_cache_bytes") is not None}
+    for s in stages:
+        cloud, hits, inp = s.get("cloud_bytes"), s.get("disk_cache_bytes"), s.get("input_bytes")
+        if cloud is not None or hits is not None:
+            s["storage_bytes"] = (cloud or 0) + (hits or 0)
+        elif s.get("spark_context_id") in known and s.get("status") in ("succeeded", "failed", "replanned"):
+            s["storage_bytes"] = 0
+        else:
+            s["storage_bytes"] = inp
+            s["df_cache_bytes"] = None
+            continue
+        s["df_cache_bytes"] = max(0, (inp or 0) - s["storage_bytes"]) if inp is not None else None
+
+
+def storage_bytes(s: dict) -> int:
+    """What a stage read from storage: storage_bytes when the output has it, else its input (older outputs)."""
+    v = s.get("storage_bytes")
+    return (v if v is not None else s.get("input_bytes")) or 0
 
 
 def build_sql_queries(tables: EventTables, stages: list[dict]) -> list[dict]:

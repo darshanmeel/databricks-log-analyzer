@@ -467,6 +467,7 @@ class ExceptionGrouper:
         self.cur: dict | None = None
         self.in_dump = False
         self.dump_counts: dict[str, int] = {}
+        self.record = None  # the last line with its own timestamp: what logged an exception that follows it
 
     def _emit(self) -> list[dict]:
         g, self.cur = self.cur, None
@@ -483,7 +484,11 @@ class ExceptionGrouper:
             out = self._emit()
             self.file_path = row["file_path"]
             self.in_dump = False
+            self.record = None
         line = row["line"]
+        own_ts = row.get("_own_ts")
+        if own_ts is None:
+            own_ts = row.get("level") is not None and not row.get("continuation")
         c0 = line[:1]
         if (c0 == '"' or c0 == "F") and is_thread_dump_header(line):
             out += self._emit()
@@ -509,14 +514,17 @@ class ExceptionGrouper:
                 "file_path": row["file_path"], "file_name": row["file_name"], "seq": row["seq"], "ts": row["ts"],
                 "exception_class": hm.group(1), "message": msg[:MESSAGE_MAX],
                 "_frames": [], "user_frame": None,
+                # not written: the log line that reported it (a listener, a logger), for the benign-by-stack rules
+                "logged_by": (line if own_ts else self.record or "")[:300],
             }
+            if own_ts:
+                self.record = line
             return out
+        if own_ts:
+            self.record = line
         g = self.cur
         if g is None:
             return out
-        own_ts = row.get("_own_ts")
-        if own_ts is None:
-            own_ts = row.get("level") is not None and not row.get("continuation")
         if own_ts or not line.strip():
             out += self._emit()  # the group ends: later frames never attach to it
         elif is_frame:

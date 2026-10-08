@@ -71,6 +71,8 @@ class Rules:
     # exceptions
     exception_high_regex: str = r"OutOfMemoryError|SparkException|Py4JJavaError|PythonException"
     exception_benign_regex: str = ""
+    # (class regex, stack regex): benign only when the stack or the line that logged it matches
+    exception_benign_stack: tuple[tuple[str, str], ...] = ()
     replanned_regex: str = r"Adaptive query execution has replanned|cancelled unused stages"
     framework_frame_prefixes: tuple[str, ...] = ()
     # events and signals
@@ -211,6 +213,7 @@ def load_rules(path: str | os.PathLike | None = None) -> Rules:
         merge_read_ratio=float(th.get("merge_read_ratio", d.merge_read_ratio)),
         exception_high_regex=exc.get("high_severity_regex", d.exception_high_regex),
         exception_benign_regex=exc.get("benign_regex", d.exception_benign_regex),
+        exception_benign_stack=tuple((_checked(b["class"]), _checked(b["stack"])) for b in exc.get("benign_by_stack", [])),
         replanned_regex=_checked(exc.get("replanned_regex", d.replanned_regex)),
         framework_frame_prefixes=tuple(exc.get("framework_frame_prefixes", [])),
         events=tuple(data.get("events", {}).get("names", [])),

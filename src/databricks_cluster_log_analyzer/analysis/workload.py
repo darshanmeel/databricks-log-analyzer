@@ -18,6 +18,7 @@ from collections.abc import Mapping
 
 from ..config import Rules
 from ..util import fmt_bytes, fmt_words
+from .aggregate import storage_bytes
 from .contention import _run_name, to_ms
 
 GB = 1 << 30
@@ -92,9 +93,9 @@ def ddl_shape(text: str | None) -> str | None:
 
 
 def read_split(queries: list[dict], stages: list[dict], plan_nodes: list[dict]) -> None:
-    """Per query, in place: storage_read (from files: the cloud storage metric when the scans report it, else the
-    input of stages that do not read a DataFrame cache), cache_read (input from a DataFrame cache), and the Databricks
-    disk cache hits, misses and writes."""
+    """Per query, in place: storage_read (from cloud storage and the disk cache: the stages' storage_bytes),
+    cache_read (input from a DataFrame cache: their df_cache_bytes), and the Databricks disk cache hits, misses and
+    writes. Stages built before storage_bytes existed count their whole input as storage."""
     metric = {}
     for n in plan_nodes or []:
         mj = n.get("metrics_json")
@@ -108,7 +109,7 @@ def read_split(queries: list[dict], stages: list[dict], plan_nodes: list[dict]) 
         d = metric.setdefault(k, {})
         for m in ms if isinstance(ms, list) else []:
             name = m.get("name")
-            if name in ("cloud storage response size", "cache hits size", "cache misses size", "cache writes size"):
+            if name in ("cache hits size", "cache misses size", "cache writes size"):
                 d[name] = d.get(name, 0) + (m.get("total") or 0)
     by_q: dict[tuple, list[dict]] = {}
     for s in stages:
@@ -117,12 +118,13 @@ def read_split(queries: list[dict], stages: list[dict], plan_nodes: list[dict]) 
     for q in queries:
         k = (q["spark_context_id"], q["sql_execution_id"])
         ss = by_q.get(k, [])
-        cached = sum(s.get("input_bytes") or 0 for s in ss if "InMemoryTableScan" in "|".join(s.get("rdd_scopes") or []))
-        files = sum(s.get("input_bytes") or 0 for s in ss) - cached
         m = metric.get(k, {})
-        q["storage_read"] = int(m["cloud storage response size"]) if m.get("cloud storage response size") else (files if ss else None)
-        q["cache_read"] = cached if ss else None
-        q["disk_cache_hit"] = m.get("cache hits size")
+        q["storage_read"] = sum(storage_bytes(s) for s in ss) if ss else None
+        cached = [s.get("df_cache_bytes") for s in ss if s.get("df_cache_bytes") is not None]
+        q["cache_read"] = sum(cached) if cached else None  # unknown without the cloud storage metric
+        # disk cache hits: from the stages that ran (a plan can repeat the same scan), else the plan's metric
+        hits = [s.get("disk_cache_bytes") for s in ss if s.get("disk_cache_bytes") is not None]
+        q["disk_cache_hit"] = sum(hits) if hits else m.get("cache hits size")
         q["disk_cache_miss"] = m.get("cache misses size")
         q["disk_cache_write"] = m.get("cache writes size")
 

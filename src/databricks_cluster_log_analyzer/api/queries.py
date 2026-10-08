@@ -837,6 +837,12 @@ def runs(store: Store, cid: str) -> dict[str, Any]:
             for r in store.rows(con, f"SELECT run_key, count(*) AS n FROM {store.src(spath)} "
                                      "WHERE status = 'failed' AND run_key IS NOT NULL GROUP BY 1"):
                 failed_stages[r["run_key"]] = r["n"]
+        # where each run's input came from: storage, or a DataFrame cache (outputs built before these columns: none)
+        reads: dict[str, tuple] = {}
+        if spath is not None and {"run_key", "storage_bytes", "df_cache_bytes"} <= set(store.schema(con, spath)):
+            for r in store.rows(con, f"SELECT run_key, sum(storage_bytes) AS st, sum(df_cache_bytes) AS dc FROM {store.src(spath)} "
+                                     "WHERE run_key IS NOT NULL AND status <> 'failed' GROUP BY 1"):
+                reads[r["run_key"]] = (r["st"], r["dc"])
         times = _run_times(store, con, cid)
         # the biggest file read and the biggest shuffle read of one task in each run
         tmax: dict[str, tuple] = {}
@@ -847,6 +853,9 @@ def runs(store: Store, cid: str) -> dict[str, Any]:
                 tmax[r["run_key"]] = (r["mi"], r["ms"])
     for r in rows:
         r["failed_stages"] = failed_stages.get(r["run_key"], 0)
+        st_, dc_ = reads.get(r["run_key"], (None, None))
+        r["storage_read"] = None if st_ is None else int(st_)
+        r["cache_read"] = None if dc_ is None else int(dc_)
         r["max_task_input"], r["max_task_shuffle"] = tmax.get(r["run_key"], (None, None))
         t = times.get(r["run_key"]) or {}
         r["waiting_ms"] = t.get("waiting_ms")
@@ -2558,6 +2567,7 @@ ADVICE_STAGES = 50
 def settings_view(store: Store, cid: str) -> dict[str, Any]:
     """Revision 14: the settings that decide speed and cost, and what each meant for this cluster's work: a list of
     outliers, each with the evidence from the data and what to change."""
+    from ..analysis.aggregate import storage_bytes
     from ..settings_catalog import SETTINGS, TAGS, short_key, size_bytes
 
     store.cluster_dir(cid)
@@ -2598,7 +2608,8 @@ def settings_view(store: Store, cid: str) -> dict[str, Any]:
         for x in sorted(xs, key=lambda x: -(by(x) or 0))[:ADVICE_STAGES]:
             out.append({k: x.get(k) for k in ("spark_context_id", "stage_id", "stage_attempt", "spark_job_id", "sql_execution_id",
                                               "run_key", "duration_ms", "tasks", "input_bytes", "shuffle_read", "shuffle_write",
-                                              "disk_spill", "max_task_bytes_in", "wmed_task_bytes_in")})
+                                              "disk_spill", "max_task_bytes_in", "wmed_task_bytes_in", "storage_bytes",
+                                              "df_cache_bytes")})
             out[-1]["run_label"] = labels.get(x.get("run_key"))
         return {"list": out, "count": len(xs)}
 
@@ -2655,8 +2666,9 @@ def settings_view(store: Store, cid: str) -> dict[str, Any]:
             ["Remove spark.sql.adaptive.skewJoin.enabled = false"], refs(skewed, lambda x: x.get("max_task_bytes_in")))
     # 3. file-reading tasks far above the split size: files that cannot be split
     mpb = size_bytes(val("spark.sql.files.maxPartitionBytes")) or 128 * MB
-    unsplit = [x for x in stages if (x.get("input_bytes") or 0) > 0 and not x.get("shuffle_read")
-               and (x.get("wmed_task_bytes_in") or 0) >= 2 * mpb]
+    # reads from files only: a stage that read mostly a DataFrame cache has no files to split
+    unsplit = [x for x in stages if storage_bytes(x) > 0 and not x.get("shuffle_read")
+               and (x.get("df_cache_bytes") or 0) < storage_bytes(x) and (x.get("wmed_task_bytes_in") or 0) >= 2 * mpb]
     if unsplit:
         add("medium", "spark.sql.files.maxPartitionBytes",
             f"{len(unsplit)} file-reading {'stage' if len(unsplit) == 1 else 'stages'} had tasks far above the split size",
@@ -2689,6 +2701,34 @@ def settings_view(store: Store, cid: str) -> dict[str, Any]:
             ["First make the tasks smaller: more shuffle partitions",
              "If the data per task is already small: a memory-optimised worker type, or fewer cores per executor"],
             refs(spilled, lambda x: x.get("disk_spill")))
+    # 4b. a DataFrame cache bigger than memory: the cause of the out-of-memory and GC findings it brings, so it goes
+    # first, and the memory findings go under it (its key names memory)
+    cache_adv = None
+    with store.connect() as con:
+        mem_f = store.select(con, cid, "findings", "category IN ('dataframe_cache', 'oom_site', 'gc_stuck')", ()) \
+            if store.dataset_path(cid, "findings", required=False) is not None else []
+    caches = [x for x in mem_f if x["category"] == "dataframe_cache"]
+    if caches:
+        facts = [x.strip().rstrip(".") for f in caches for x in re.split(r"(?<=\.)\s+", f["evidence"] or "") if x.strip()]
+        cache_ooms = [x for x in mem_f if x["category"] == "oom_site" and "DataFrame cache" in (x.get("entity") or "")]
+        facts += [x["evidence"] for x in cache_ooms[:3]]
+        stuck = [x for x in mem_f if x["category"] == "gc_stuck"]
+        if stuck:
+            facts.append(f"{', '.join(x['entity'] for x in stuck[:4])} {'was' if len(stuck) == 1 else 'were'} stuck in GC: "
+                         "the heap stayed full after every collection")
+        ids = {(x.get("spark_context_id"), x.get("stage_id")) for x in cache_ooms}
+        add("high", "spark.executor.memory", "DataFrame cache larger than memory", facts,
+            "The code caches (cache() / persist()) more data than the executors' memory holds: blocks do not fit, are "
+            "dropped and rebuilt, and the heap fills until executors stall in GC or run out of memory. More shuffle "
+            "partitions will not help.",
+            ["Cache only the columns that are reused, or write an intermediate Delta table and read it back",
+             "Unpersist the cache when it is no longer needed, and drop count() calls that only fill it",
+             "If it must stay cached: memory-optimized workers"],
+            refs([x for x in stages if (x.get("spark_context_id"), x.get("stage_id")) in ids], lambda x: x.get("duration_ms")),
+            queries=[{"spark_context_id": x.get("spark_context_id"), "sql_execution_id": x.get("sql_execution_id"),
+                      "run_key": x.get("run_key"), "label": labels.get(x.get("run_key"))} for x in caches + cache_ooms
+                     if x.get("sql_execution_id") is not None])
+        cache_adv = advice[-1]
     # 5. sharing: runs at once on the same executors
     runs_ = view["runs"]
     ev = sorted([(r["start_time"], 1) for r in runs_ if r.get("start_time")]
@@ -2866,6 +2906,8 @@ def settings_view(store: Store, cid: str) -> dict[str, Any]:
             a["evidence"] = " ".join(f if f.endswith(".") else f + "." for f in a["facts"])
     first = lambda a: 0 if a["title"].endswith("than they merged") else 1 if a is cores else 2  # noqa: E731
     advice.sort(key=lambda a: (sev_rank(a["severity"]), first(a)))
+    if cache_adv is not None:  # the root cause of the memory findings ranks first
+        advice.insert(0, advice.pop(advice.index(cache_adv)))
     envs = val(TAGS + "clusterNumSparkEnvVars")
     return {"settings": settings, "advice": advice, "env_vars": int(envs) if envs and envs.isdigit() else None,
             "has_settings": bool(rows), "compute": cu}

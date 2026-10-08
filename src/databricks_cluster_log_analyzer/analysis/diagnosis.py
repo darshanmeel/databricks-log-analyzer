@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from datetime import datetime, timezone
 
-from .. import __version__
+from .. import ANALYZER_REVISION, __version__
 from ..config import Rules
 from .findings import frame_text
 from .retries import CATEGORY_LABELS
@@ -418,6 +418,7 @@ def build_summary(t: Mapping, rules: Rules) -> dict:
         "built_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "input_dir": t["input_dir"],
         "tool_version": __version__,
+        "analyzer_revision": ANALYZER_REVISION,
         "rules_file": rules.source_path,
         "empty_reason": t.get("empty_reason"),
         "status": status,

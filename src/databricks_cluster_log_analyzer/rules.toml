@@ -101,7 +101,12 @@ replanned_regex = 'Adaptive query execution has replanned|cancelled unused stage
 high_severity_regex = 'OutOfMemoryError|SparkException|Py4JJavaError|PythonException'
 # Platform lines that are logged on healthy clusters (a probe for an optional file, a profiler folder, a file system
 # nobody uses): low severity and listed last, never chained to a problem.
-benign_regex = '_encryption_meta/manifest\.json|ExecutorJfrCollector|logs/jfr does not exist|No FileSystem for scheme|No filesystem implementation found|NoSuchFieldException.*Promise|Promise.*NoSuchFieldException|ServiceConfigurationError'
+benign_regex = '_encryption_meta/manifest\.json|ExecutorJfrCollector|logs/jfr does not exist|No FileSystem for scheme|No filesystem implementation found|NoSuchFieldException.*Promise|Promise.*NoSuchFieldException|ServiceConfigurationError|SdkClientException\W+The requested metadata is not found at http://169\.254\.169\.254/|\[SHOULD_USE_AUTOSCALING_INFO\]'
+# Platform noise only when its stack, or the log line that reported it, says where it came from: a Spark listener
+# that iterated a collection while it changed (not a Delta write conflict).
+benign_by_stack = [
+    { class = '^java\.util\.ConcurrentModificationException$', stack = 'AsyncEventQueue|QueryProfileListener|AppStatusListener' },
+]
 # Stack frames starting with one of these (after a leading "at ") are framework code; the first frame that
 # does not is reported as `user_frame` ("where to fix").
 framework_frame_prefixes = [
@@ -113,6 +118,8 @@ framework_frame_prefixes = [
     # shaded libraries and cloud SDKs: platform code, never the user's
     "grpc_shaded.", "io.grpc.", "com.amazonaws.", "software.amazon.", "com.azure.", "com.microsoft.azure.",
     "org.apache.hadoop.", "com.google.cloud.", "kotlin.", "okhttp3.", "reactor.", "org.slf4j.", "org.apache.logging.",
+    # JDBC drivers and MLflow: vendor code, the user's call is further down
+    "com.sap.db.", "oracle.jdbc.", "com.microsoft.sqlserver.", "org.postgresql.", "org.mlflow.",
 ]
 
 [events]
@@ -215,7 +222,8 @@ fix = "Shuffle data lost, usually from OOM or spot loss; fix the root cause, ena
 [[signals]]
 name = "executor_lost"
 # "decommission" only as a word, never inside a setting name such as spark.storage.decommission.enabled
-pattern = 'ExecutorLostFailure|Lost executor|(?<![\w.])[Dd]ecommission(?![\w.]*\s*=)'
+# "Lost executor 1 on 10.0.0.1: cluster termination" is the cluster stopping, not a loss
+pattern = 'ExecutorLostFailure|Lost executor(?!.*cluster termination\s*$)|(?<![\w.])[Dd]ecommission(?![\w.]*\s*=)'
 severity = "medium"
 fix = "Spot reclaim or OOM; check executor_oom; consider on-demand fallback."
 

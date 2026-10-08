@@ -202,6 +202,18 @@ def build_incidents(cid: str, findings: list[dict], stages: list[dict], executor
                                        g["stage_id"].to_numpy(), g["stage_attempt"].to_numpy())
         for (ctx, sid, att), g in t.groupby(["spark_context_id", "stage_id", "stage_attempt"], sort=False):
             stage_execs[(ctx, int(sid), int(att))] = {str(x) for x in g["executor_id"].unique()}
+    # the executor of each stage's slowest task, when an executor was stuck in GC: that task was not skewed
+    stuck = {(_str(f.get("spark_context_id")), _str(f.get("executor_id"))) for f in findings if f["category"] == "gc_stuck"}
+    slowest: dict[tuple, tuple] = {}
+    if stuck and tasks is not None and not tasks.empty:
+        d = t.assign(_ms=t["finish_time"].fillna(t["launch_time"]).astype("int64") - t["launch_time"].astype("int64"))
+        for (ctx, sid, att), g in d.groupby(["spark_context_id", "stage_id", "stage_attempt"], sort=False):
+            slowest[(ctx, int(sid), int(att))] = (ctx, str(g.loc[g["_ms"].idxmax(), "executor_id"]))
+    # executors that really went away: out of memory, killed or lost (autoscaling and termination are planned)
+    gone: dict[str, set] = {}
+    for e in executors:
+        if e.get("removal_category") in ("oom", "killed", "lost"):
+            gone.setdefault(str(e["executor_id"]), set()).add(e["spark_context_id"])
     running_owners: dict[str, set] = {}
     for (c, ex) in running:
         running_owners.setdefault(ex, set()).add(c)
@@ -340,6 +352,9 @@ def build_incidents(cid: str, findings: list[dict], stages: list[dict], executor
         if ra != rb:
             parent[max(ra, rb)] = min(ra, rb)
 
+    def shared_exec(a: _Scope, b: _Scope) -> bool:
+        return any(x[1] == y[1] and (x[0] is None or y[0] is None or x[0] == y[0]) for x in a.execs for y in b.execs)
+
     def close(ta, tb) -> bool:
         return ta is None or tb is None or abs(ta - tb) <= SAME_TIME_MS
 
@@ -356,7 +371,10 @@ def build_incidents(cid: str, findings: list[dict], stages: list[dict], executor
                 # ... unless logged together: a Python traceback and the error inside it, the same second
                 return any(ea.execs & eb.execs and ta is not None and tb is not None and abs(ta - tb) <= ERR_SAME_MS
                            for ta, ea in a["events"] for tb, eb in b["events"])
-            if same_text or (sa.stages - sa.inferred) & (sb.stages - sb.inferred):
+            # the same message on two executors is two problems ("Java heap space" on each of them)
+            if same_text and (not sa.execs or not sb.execs or shared_exec(sa, sb)):
+                return True
+            if (sa.stages - sa.inferred) & (sb.stages - sb.inferred):
                 return True
             # the same executor problem seen as a removal, a log line and an exception: same executor, same moment
             return any(ea.execs & eb.execs and close(ta, tb) for ta, ea in a["events"] for tb, eb in b["events"])
@@ -416,12 +434,23 @@ def build_incidents(cid: str, findings: list[dict], stages: list[dict], executor
         km = min(ms, key=lambda m: (m["level"], m["kind"] == "reported", m["kind"] == "driver_error"))
         sc = _Scope()
         for m in ms:
-            if m["multi"] and len(ms) > 1:  # a merged log signal adds only the lines that match this problem
+            if not m["multi"]:
+                sc.update(m["sc"])
+                continue
+            got = False
+            if len(ms) > 1:  # a merged log signal adds only the lines that match this problem
                 for ts_, ev in m["events"]:
                     if any(same_problem({**m, "events": [(ts_, ev)], "sc": ev}, o) for o in ms if o is not m):
                         sc.update(ev)
-            else:
-                sc.update(m["sc"])
+                        got = True
+            if not got:
+                # alone (or no line matched): only its earliest lines, so it never bridges problems cluster-wide
+                stamps = [t_ for t_, _ in m["events"] if t_ is not None]
+                if not stamps:
+                    sc.update(m["events"][0][1])
+                for ts_, ev in m["events"] if stamps else []:
+                    if ts_ is not None and ts_ - min(stamps) <= ERR_SAME_MS:
+                        sc.update(ev)
         tss = [m["ts"] for m in ms if m["ts"] is not None]
         # the finding that tells it best: user code first, then event-log facts, then exceptions, then log signals
         lead = min(ms, key=lambda m: (not m["sc"].frames or m["kind"] == "reported", SEV_RANK.get(m["f"]["severity"], 9),
@@ -438,6 +467,12 @@ def build_incidents(cid: str, findings: list[dict], stages: list[dict], executor
         if c["ts"] is not None and e["ts"] is not None and c["ts"] > e["ts"] + 5_000:
             return 0
         a, b = c["sc"], e["sc"]
+        # GC on one executor does not make another run out of memory
+        if c["kind"] == "gc" and e["kind"] in ("oom", "killed") and a.execs and b.execs and not shared_exec(a, b):
+            return 0
+        # a slow task stuck in GC on its executor was not skewed: the GC came first, not the other way round
+        if c["kind"] == "skew" and e["kind"] == "gc" and any(slowest.get(k) in stuck for k in a.stages):
+            return 0
         # a fetch failure names where the missing shuffle data was: only a problem on that host caused it (an
         # executor that died elsewhere, earlier, did not)
         if e["kind"] == "fetch" and b.fetch_hosts:
@@ -633,7 +668,9 @@ def build_incidents(cid: str, findings: list[dict], stages: list[dict], executor
         st = [stage_by_key[k] for k in own if k in stage_by_key]
         failed_stages = sum(1 for s in st if s.get("status") == "failed")
         failed_tasks = sum(int(s.get("failed_tasks") or 0) for s in st)
-        lost = {e for p in inc["ps"] if p["kind"] in ("oom", "killed", "lost") for e in p["sc"].execs}
+        # counted from the executor removals: out of memory, killed or lost (not autoscaled or stopped with the cluster)
+        lost = {(c if c in gone[ex] else min(gone[ex]), ex) for p in inc["ps"] if p["kind"] in ("oom", "killed", "lost")
+                for c, ex in p["sc"].execs if ex in gone and (c is None or c in gone[ex])}
         failed_q = {q for p in inc["ps"] if p["kind"] == "query_failed" for q in p["sc"].queries}
         wasted = sum(retries_wasted.get(k, 0) for k in own)
         parts = []

@@ -3,6 +3,7 @@ init scripts and names from the code (made-up numbers)."""
 
 import pandas as pd
 
+from databricks_cluster_log_analyzer.analysis.aggregate import add_storage_reads, storage_bytes
 from databricks_cluster_log_analyzer.analysis.capacity import capacity_findings, core_use, makespan
 from databricks_cluster_log_analyzer.analysis.initscripts import init_scripts
 from databricks_cluster_log_analyzer.analysis.workload import (cache_size, count_only, ddl_shape, read_split,
@@ -148,13 +149,32 @@ def test_count_only_cache_and_ddl_loop():
 
 def test_read_split():
     qs = [{"spark_context_id": "c", "sql_execution_id": 1}, {"spark_context_id": "c", "sql_execution_id": 2}]
-    st = [{"spark_context_id": "c", "sql_execution_id": 1, "status": "succeeded", "input_bytes": 300, "rdd_scopes": ["InMemoryTableScan"]},
-          {"spark_context_id": "c", "sql_execution_id": 1, "status": "succeeded", "input_bytes": 150, "rdd_scopes": ["Scan parquet t"]}]
+    # a stage that read a DataFrame cache has input but no cloud storage metric; the file scan has both
+    st = [{"spark_context_id": "c", "sql_execution_id": 1, "status": "succeeded", "input_bytes": 300,
+           "cloud_bytes": None, "disk_cache_bytes": None},
+          {"spark_context_id": "c", "sql_execution_id": 1, "status": "succeeded", "input_bytes": 150,
+           "cloud_bytes": 140, "disk_cache_bytes": 10}]
+    add_storage_reads(st)
+    assert [(s["storage_bytes"], s["df_cache_bytes"]) for s in st] == [(0, 300), (150, 0)]
     nodes = [{"spark_context_id": "c", "sql_execution_id": 2,
               "metrics_json": '[{"name": "cloud storage response size", "total": 70}, {"name": "cache hits size", "total": 5}]'}]
     read_split(qs, st, nodes)
-    assert (qs[0]["storage_read"], qs[0]["cache_read"]) == (150, 300)
-    assert qs[1]["storage_read"] == 70 and qs[1]["disk_cache_hit"] == 5
+    assert (qs[0]["storage_read"], qs[0]["cache_read"], qs[0]["disk_cache_hit"]) == (150, 300, 10)
+    assert qs[1]["storage_read"] is None and qs[1]["disk_cache_hit"] == 5
+
+
+def test_storage_reads_without_the_metric():
+    # no stage of the context reports the cloud storage metric (an older runtime): the input is all there is
+    st = [{"spark_context_id": "d", "status": "succeeded", "input_bytes": 300},
+          {"spark_context_id": "d", "status": "succeeded", "input_bytes": None}]
+    add_storage_reads(st)
+    assert [(s["storage_bytes"], s["df_cache_bytes"]) for s in st] == [(300, None), (None, None)]
+    assert storage_bytes(st[0]) == 300 and storage_bytes({"input_bytes": 7}) == 7
+    # an unfinished stage keeps its input even where the other stages report the metric
+    st = [{"spark_context_id": "e", "status": "succeeded", "input_bytes": 5, "cloud_bytes": 5},
+          {"spark_context_id": "e", "status": "incomplete", "input_bytes": 9}]
+    add_storage_reads(st)
+    assert [s["storage_bytes"] for s in st] == [5, 9]
 
 
 def test_init_scripts():

@@ -310,8 +310,9 @@ def clusters(output, latest, as_json, **kw):
 @click.option("--cluster", "clusters", multiple=True, help="Cluster ID (repeatable; default: every cluster in --output).")
 @click.option("--rules", type=click.Path(dir_okay=False, exists=True), help="Rules TOML overriding the defaults.")
 def refresh_findings_cmd(output, clusters, rules):
-    """Add the newer findings (waiting for cores, cores full, MERGE reading too much) to already-built outputs,
-    from their datasets alone: no raw logs needed. Running it again replaces what it added."""
+    """Add the newer findings (waiting for cores, cores full, MERGE reading too much, DataFrame caches, count-only
+    queries) to already-built outputs, and recompute the stage columns, the status and the diagnosis, from their
+    datasets alone: no raw logs needed. Running it again replaces what it added."""
     from .config import load_rules
     from .refresh import refresh_findings
 
