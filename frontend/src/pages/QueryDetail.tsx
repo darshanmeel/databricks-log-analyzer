@@ -56,13 +56,6 @@ export function QueryPlanTab({ cid, ctx, id }: { cid: string; ctx: string; id: s
               <pre>{d.query.error}</pre>
             </div>
           )}
-          {d.findings.length > 0 && (
-            <Panel title={`Findings (${d.findings.length})`}>
-              <div className="stack" style={{ gap: 10 }}>
-                {d.findings.map((f) => <FindingPoints key={f.finding_id} cid={cid} f={f} reads={d.query.tables_read} writes={d.query.tables_written} />)}
-              </div>
-            </Panel>
-          )}
           {hasLogic(d.logic) && (
             <Panel title="Joins and filters" note="From the final plan: what it joins on, what it filters, what each read pushed down to the files, how it groups.">
               <QueryLogic l={d.logic} />
@@ -85,6 +78,13 @@ export function QueryPlanTab({ cid, ctx, id }: { cid: string; ctx: string; id: s
           >
             <PlanView key={which} text={which === 'final' ? d.query.final_plan : d.query.initial_plan} />
           </Panel>
+          {d.findings.length > 0 && (
+            <Panel title={`Findings (${d.findings.length})`}>
+              <div className="stack" style={{ gap: 10 }}>
+                {d.findings.map((f) => <FindingPoints key={f.finding_id} cid={cid} f={f} reads={d.query.tables_read} writes={d.query.tables_written} />)}
+              </div>
+            </Panel>
+          )}
           {d.query.details && (
             <Panel title="Where it came from" note="Call site and user code stack recorded when the query started">
               <pre className="mono small" style={{ maxHeight: 260, overflow: 'auto' }}>{d.query.details}</pre>

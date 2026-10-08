@@ -444,21 +444,26 @@ function IngestFlow() {
 
 export default function Home() {
   const { clusters, error, reload } = useClusters();
+  // with clusters already analyzed, they come first and the steps to analyze another fold away
+  const some = !!clusters?.length;
+  const [adding, setAdding] = useState(false);
+  const flow = <Panel><IngestFlow /></Panel>;
   return (
     <div className="page">
       <div className="page-head">
         <div>
-          <h1>Analyze a cluster</h1>
-          <p className="sub">
-            Point at a folder of Databricks cluster logs, pick the cluster, and get what happened to its jobs, where time went, what failed and
-            where to fix it. Times are UTC.
-          </p>
+          <h1>{some ? 'Clusters' : 'Analyze a cluster'}</h1>
+          {!some && (
+            <p className="sub">
+              Point at a folder of Databricks cluster logs, pick the cluster, and get what happened to its jobs, where time went, what failed and
+              where to fix it. Times are UTC.
+            </p>
+          )}
         </div>
+        {some && <div className="actions"><button className="btn" onClick={() => setAdding(!adding)} aria-expanded={adding}>{adding ? 'Hide' : 'Analyze another cluster'}</button></div>}
       </div>
       <div className="stack">
-        <Panel>
-          <IngestFlow />
-        </Panel>
+        {(!some || adding) && flow}
         <Panel
           title="Analyzed clusters"
           note="Newest analysis first"

@@ -303,12 +303,14 @@ function Lanes({ cid, ctx, d, by, metric, width, peaks }: { cid: string; ctx: st
         {/* peak markers (Revision 5 hotspots): click for the stage x executor breakdown of that minute */}
         {myPeaks.map((h, i) => {
           const px = x(h.ts_start as number) + Math.max(1, cw) / 2;
+          // a label only when it has room: within 60 px of an earlier peak the marker alone says it (hover for which)
+          const crowded = myPeaks.slice(0, i).some((o) => Math.abs(x(o.ts_start as number) + Math.max(1, cw) / 2 - px) < 60);
           return (
             <g key={`pk${i}`} className="ss-peak" style={{ cursor: 'pointer' }} onClick={() => setSel(sel === h ? null : h)}>
               <path d={`M${px - 6},4 L${px + 6},4 L${px},13 Z`} style={{ fill: sel === h ? 'var(--st-crit)' : 'var(--st-warn)' }} />
-              <text x={px + 9} y={12} style={{ fill: 'var(--text-2)', fontSize: 11 }}>
+              {!crowded && <text x={px + 9} y={12} style={{ fill: 'var(--text-2)', fontSize: 11 }}>
                 peak {i + 1}
-              </text>
+              </text>}
               <title>{h.detail}</title>
             </g>
           );

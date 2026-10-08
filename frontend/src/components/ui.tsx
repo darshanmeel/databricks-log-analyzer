@@ -72,11 +72,11 @@ export function RemovalBadge({ category, reason }: { category: string | null | u
   );
 }
 
-/** "See full table in Data / Debug" link, shown under charts that summarize a dataset. */
+/** "Full table ↗" link to Tables (debug), shown under charts that summarize a dataset. */
 export function DataLink({ cid, dataset, step, q, label }: { cid: string; dataset?: string; step?: string; q?: string | null; label?: string }) {
   return (
     <Link className="data-link" to={to.data(cid, { dataset: dataset ?? null, step: step ?? null, q: q ?? null })}>
-      {label ?? 'See full table in Data / Debug'}
+      {label ?? 'Full table ↗'}
     </Link>
   );
 }
@@ -107,7 +107,8 @@ export function ErrorState({ error, onRetry }: { error: Error | undefined; onRet
     <div className="state error" role="alert">
       <h3>{notFound ? 'Not found' : 'Could not load this view'}</h3>
       <div className="detail">{error.message}</div>
-      {onRetry && (
+      {notFound && <div style={{ marginTop: 12 }}><Link className="btn small" to="/">Back to the clusters</Link></div>}
+      {onRetry && !notFound && (
         <div style={{ marginTop: 12 }}>
           <button className="btn small" onClick={onRetry}>
             Try again

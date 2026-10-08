@@ -70,11 +70,11 @@ export default function Stages() {
     <div className="page wide">
       <div className="page-head">
         <div>
-          <h1>Which stages took the longest, and why?</h1>
-          <p className="sub">
+          <h1>Stages</h1>
+          <details className="sub"><summary>About this page</summary>
             Which stages took the time, which ones struggled, and why. Pick what to rank by, then select a stage to see how its tasks were spread
             across executors and what was retried.
-          </p>
+          </details>
         </div>
         <div className="actions">
           <DataLink cid={cid} dataset="stages" />
@@ -140,7 +140,7 @@ export default function Stages() {
                 />
                 <p className="muted small" style={{ marginTop: 10 }}>
                   Showing {fmtNum(st.data.rows.length)} of {fmtNum(st.data.total)} stage attempts. Every column for every stage is in{' '}
-                  <Link to={to.data(cid, { dataset: 'stages' })}>Data / Debug</Link>.
+                  <Link to={to.data(cid, { dataset: 'stages' })}>Tables (debug)</Link>.
                 </p>
               </>
             )}

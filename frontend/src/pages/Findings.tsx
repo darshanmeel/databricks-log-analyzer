@@ -3,12 +3,12 @@ import { api, type FindingRow, type IncidentRow, type Severity } from '../api';
 import { useCluster } from '../components/Shell';
 import { HBars } from '../components/charts';
 import { Async, DataLink, Empty, EntityChips, Panel, SeverityBadge, ToggleChips, sevColor, useScrollTo } from '../components/ui';
-import { fmtDuration, fmtNum, fmtTime, fmtTs } from '../format';
+import { fmtDuration, fmtNum, fmtTime, fmtTs, tickLabel, timeTicks } from '../format';
 import { useAsync, useQueryState } from '../hooks';
 import { rowLinks, to } from '../links';
 import { CONF, FAILURE_KINDS, FixTips } from '../problems';
 import { plainFirst } from '../components/FindingPoints';
-import { groupIncidents, type Incident, type Joined, type Problem } from '../incidents';
+import { groupIncidents, isFailure, type Incident, type Joined, type Problem } from '../incidents';
 
 const SEVS: Severity[] = ['high', 'medium', 'low'];
 
@@ -38,10 +38,10 @@ export default function Findings() {
       <div className="page-head">
         <div>
           <h1>Findings</h1>
-          <p className="sub">
+          <details className="sub"><summary>About this page</summary>
             What went wrong and why. Findings that are the same problem are merged, and problems are chained cause → effect, so each incident starts from its most
             likely root cause.
-          </p>
+          </details>
         </div>
         <div className="actions">
           <div className="seg" role="group" aria-label="View">
@@ -127,40 +127,73 @@ function LooseFindings({ cid, rows, focus }: { cid: string; rows: Joined[]; focu
 }
 
 /** One row per incident on a shared clock: when each began and ended, so overlapping incidents are visible. */
+/** One row per incident; incidents of one kind on executors only ("Executor 3: GC pressure", six times) share a row. */
+type StripRow = { id: string; label: string; sev: string; s: number | null; e: number | null; dots: { id: string; ts: number; sev: string; kind: string }[] };
+function stripRows(incs: Incident[]): StripRow[] {
+  const rows: StripRow[] = [];
+  const byKind = new Map<string, StripRow & { n: number }>();
+  for (const i of incs) {
+    const dots = i.problems.filter((p) => p.ts !== null).map((p) => ({ id: p.id, ts: p.ts!, sev: p.lead.severity, kind: p.lead.inc!.kind }));
+    const m = /^Executors? [\d, ]+: (.+)$/.exec(i.head.incident_title);
+    if (m && !isFailure(i)) {
+      const g = byKind.get(m[1]);
+      if (g) {
+        g.n += 1; g.dots.push(...dots);
+        g.s = Math.min(g.s ?? Infinity, i.head.incident_start ?? Infinity);
+        g.e = Math.max(g.e ?? -Infinity, i.head.incident_end ?? -Infinity);
+        g.label = `${m[1]} · ${g.n} executors`;
+        continue;
+      }
+      const r = { id: i.id, label: i.head.incident_title, sev: i.head.incident_severity, s: i.head.incident_start, e: i.head.incident_end, dots, n: 1 };
+      byKind.set(m[1], r);
+      rows.push(r);
+      continue;
+    }
+    rows.push({ id: i.id, label: i.head.incident_title, sev: i.head.incident_severity, s: i.head.incident_start, e: i.head.incident_end, dots });
+  }
+  return rows;
+}
+
+const STRIP_TOP = 8;
+
 function IncidentStrip({ incs }: { incs: Incident[] }) {
+  const [all, setAll] = useState(false);
   const pts = incs.flatMap((i) => [i.head.incident_start, i.head.incident_end]).filter((x): x is number => x !== null);
   if (pts.length < 2 || incs.length < 2) return null;
   const t0 = Math.min(...pts);
   const t1 = Math.max(...pts);
   if (t1 <= t0) return null;
   const pct = (t: number) => ((t - t0) / (t1 - t0)) * 100;
+  const rows = stripRows(incs);
+  const shown = all ? rows : rows.slice(0, STRIP_TOP);
+  const ticks = timeTicks(t0, t1, 5);
   return (
     <Panel title="When each incident happened" note="Click an incident to jump to it. Dots are the problems inside it.">
       <div className="inc-strip">
-        {incs.map((i) => {
-          const s = i.head.incident_start ?? t0;
-          const e = i.head.incident_end ?? s;
+        {shown.map((i) => {
+          const s = i.s ?? t0;
+          const e = i.e ?? s;
           return (
             <a key={i.id} className="inc-strip-row" href={`#incident-${i.id}`}>
-              <span className="inc-strip-label">
-                <b>{i.id}</b> {i.head.incident_title}
+              <span className="inc-strip-label" title={i.label}>
+                <b>{i.id}</b> {i.label}
               </span>
               <span className="inc-strip-track">
-                <span className={`inc-strip-bar sev-${i.head.incident_severity}`} style={{ left: `${pct(s)}%`, width: `max(4px, ${pct(e) - pct(s)}%)` }} />
-                {i.problems
-                  .filter((p) => p.ts !== null)
-                  .map((p) => (
-                    <span key={p.id} className={`inc-strip-dot sev-${p.lead.severity}`} style={{ left: `${pct(p.ts!)}%` }} title={`${fmtTime(p.ts)} ${p.lead.inc!.kind}`} />
-                  ))}
+                <span className={`inc-strip-bar sev-${i.sev}`} style={{ left: `${pct(s)}%`, width: `max(4px, ${pct(e) - pct(s)}%)` }} />
+                {i.dots.map((p, k) => (
+                  <span key={`${p.id}.${k}`} className={`inc-strip-dot sev-${p.sev}`} style={{ left: `${pct(p.ts)}%` }} title={`${fmtTime(p.ts)} ${p.kind}`} />
+                ))}
               </span>
             </a>
           );
         })}
+        {rows.length > STRIP_TOP && (
+          <button className="linkish small" style={{ alignSelf: 'flex-start' }} onClick={() => setAll(!all)}>{all ? 'Fewer ↑' : `${rows.length - STRIP_TOP} more ▸`}</button>
+        )}
         <div className="inc-strip-row axis">
           <span />
           <span className="inc-strip-track">
-            <span style={{ left: 0 }}>{fmtTime(t0)}</span>
-            <span style={{ right: 0 }}>{fmtTime(t1)}</span>
+            {ticks.map((x) => <span key={x} style={{ left: `${pct(x)}%`, transform: 'translateX(-50%)' }}>{tickLabel(x, t1 - t0)}</span>)}
           </span>
         </div>
       </div>

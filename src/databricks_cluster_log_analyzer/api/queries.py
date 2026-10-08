@@ -318,7 +318,7 @@ class Store:
             raise NotFound(f"unknown cluster: {cid!r}")
         d = self.output_root / cid
         if not d.is_dir():
-            raise NotFound(f"unknown cluster: {cid!r} (no {d.as_posix()})")
+            raise NotFound(f"No analyzed cluster with id {cid}")  # never the server's folder path
         return d
 
     def dataset_path(self, cid: str, name: str, *, required: bool = True) -> Path | None:

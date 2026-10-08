@@ -160,7 +160,7 @@ function UnitList({ units, current, filters, onPick }: { units: WorkUnit[]; curr
           const inside = current?.kind === 'job' && u.kind !== 'job' && u.jobs.some((j) => j.id === current.id);
           const on = current?.id === u.id || inside;
           return (
-            <li key={u.id} className={on ? 'on' : ''}>
+            <li key={u.id} className={on ? 'on' : ''} ref={on ? (el) => el?.scrollIntoView({ block: 'nearest' }) : undefined}>
               <button className="unit-main" onClick={() => onPick(u.id)} aria-current={on ? 'true' : undefined}>
                 <span className="nl-glyph" style={{ color: STATUS_META[u.vstatus].ink }} aria-hidden>
                   {STATUS_META[u.vstatus].glyph}

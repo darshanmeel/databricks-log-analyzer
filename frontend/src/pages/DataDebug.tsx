@@ -69,11 +69,11 @@ export default function DataDebug() {
     <div className="page wide">
       <div className="page-head">
         <div>
-          <h1>Data / Debug</h1>
-          <p className="sub">
+          <h1>Tables (debug)</h1>
+          <details className="sub"><summary>About this page</summary>
             The intermediate tables behind every view, grouped by the notebook step that produces them. Use these to check a number or dig
             past what the charts show. Click a column to sort, click a row to unwrap long text.
-          </p>
+          </details>
         </div>
       </div>
       <div className="data-layout">

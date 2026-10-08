@@ -230,8 +230,10 @@ function ChildTable({ rows, onPick, word, why }: {
   const perTask = word === 'Stage';
   // one unit per column, written in its heading; the cells are bare numbers
   const ss = rows.map((r) => r.stages);
+  // the three time columns share one unit, so they read side by side (took = waited + processed)
+  const tu = unitFor('ms', [...rows.map((r) => r.dur), ...ss.map(waitOf), ...ss.map(procOf)]);
   const u = {
-    dur: unitFor('ms', rows.map((r) => r.dur)), wait: unitFor('ms', ss.map(waitOf)), proc: unitFor('ms', ss.map(procOf)),
+    dur: tu, wait: tu, proc: tu,
     pt: unitFor('ms', ss.flatMap((st) => [st[0]?.p50_task_ms, st[0]?.p90_task_ms])),
     read: unitFor('b', ss.map((st) => sum(st.map(read)))), pr: unitFor('b', ss.flatMap((st) => [st[0]?.p50_task_bytes_in, st[0]?.p90_task_bytes_in])),
     sr: unitFor('b', ss.map((st) => sum(st.map((x) => x.shuffle_read)))), sw: unitFor('b', ss.map((st) => sum(st.map((x) => x.shuffle_write)))),
@@ -368,7 +370,8 @@ function QuerySteps({ t, id, onJob, onQuery }: { t: QueryTime; id: number; onJob
   const pct = (v: number) => `${Math.min(100, Math.max(0, ((v - t0) / span) * 100))}%`;
   const width = (a: number, b: number) => `${Math.max(0.4, (Math.min(b, t.end!) - Math.max(a, t0)) / span * 100)}%`;
   const bigWait = (s: QueryStep) => s.wait_ms >= 2000 && s.wait_ms >= 0.2 * (s.wait_ms + s.run_ms);
-  const su = { wait: unitFor('ms', steps.map((s) => (s.wait_ms >= 500 ? s.wait_ms : 0))), run: unitFor('ms', steps.map((s) => s.run_ms)) };
+  const stu = unitFor('ms', [...steps.map((s) => (s.wait_ms >= 500 ? s.wait_ms : 0)), ...steps.map((s) => s.run_ms)]);
+  const su = { wait: stu, run: stu };  // waited and ran in one unit
   return (
     <div className="qsteps">
       <div className="stage-time-head"><b><span aria-hidden>{SIGN.time} </span>Step by step</b>

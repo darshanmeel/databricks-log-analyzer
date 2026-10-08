@@ -5,7 +5,7 @@ import { api, type ErrorGroup, type FindingRow, type IncidentRow, type Ms } from
 import { useCluster, useRunScopeCtx } from '../components/Shell';
 import { runName } from '../runName';
 import { HBars } from '../components/charts';
-import { Async, DataLink, Empty, EntityChips, Panel, SeverityBadge, useScrollTo } from '../components/ui';
+import { Async, DataLink, Empty, EntityChips, Panel, SeverityBadge, sevColor, useScrollTo } from '../components/ui';
 import { asList, fmtNum, fmtTime, fmtTs } from '../format';
 import { useAsync, useQueryState } from '../hooks';
 import { rowLinks, to } from '../links';
@@ -51,10 +51,10 @@ export default function Errors() {
               Only the lines that hit this run: on an executor while one of its tasks ran there, or from the driver while it ran.
             </p>
           )}
-          <p className="sub">
+          <details className="sub"><summary>About this page</summary>
             Exceptions from driver and executor logs. The same failure is usually logged several times (thrown on an executor, reported again on the driver,
             wrapped for the notebook), so they are grouped into the problem they come from, with where it happened and how to fix it.
-          </p>
+          </details>
         </div>
         <div className="actions">
           {st.data?.hasInc && (
@@ -263,14 +263,13 @@ function ErrorLanes({ d, focus }: { d: Joined; focus: string | null }) {
                 .map((o, k) => {
                   const p = probOf.get(o.fingerprint);
                   const e = p?.exs.find((x) => x.fingerprint === o.fingerprint);
-                  const idx = p ? d.probs.indexOf(p) : -1;
                   return (
                     <button
                       key={k}
                       tabIndex={-1}
                       aria-hidden
                       className={`err-dot ${o.fingerprint === focus ? 'on' : ''}`}
-                      style={{ left: `${pct(o.ts!)}%`, background: `var(--series-${(idx % 6) + 1})` }}
+                      style={{ left: `${pct(o.ts!)}%`, background: sevColor(p?.leadF?.severity ?? p?.lead?.incident_severity ?? 'medium') }}
                       title={`${fmtTime(o.ts)} ${e ? short(e.exception_class) : o.fingerprint}${p?.lead ? ` (${p.lead.kind})` : ''}`}
                       onClick={() => setQ({ fingerprint: o.fingerprint }, true)}
                     />
@@ -287,10 +286,11 @@ function ErrorLanes({ d, focus }: { d: Joined; focus: string | null }) {
           </span>
         </div>
       </div>
+      {/* coloured by severity, each kind of problem once (the first of its kind is the link) */}
       <div className="err-legend">
-        {d.probs.map((p, i) => (
+        {d.probs.filter((p, i) => d.probs.findIndex((q) => (q.lead?.kind ?? short(q.exs[0].exception_class)) === (p.lead?.kind ?? short(p.exs[0].exception_class))) === i).map((p) => (
           <a key={p.key} href={`#prob-${p.key}`}>
-            <span className="sw" style={{ background: `var(--series-${(i % 6) + 1})` }} />
+            <span className="sw" style={{ background: sevColor(p.leadF?.severity ?? p.lead?.incident_severity ?? 'medium') }} />
             {p.lead?.kind ?? short(p.exs[0].exception_class)}
           </a>
         ))}

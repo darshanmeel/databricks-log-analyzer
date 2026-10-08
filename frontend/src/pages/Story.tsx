@@ -61,7 +61,7 @@ function splitList(v: string | null): string[] {
 export default function Story() {
   const { cid, summary } = useCluster();
   const [sp, setQ] = useQueryState();
-  const kinds = splitList(sp.get('kind'));
+  const kindParam = sp.get('kind');
   const sevs = splitList(sp.get('severity')) as Severity[];
   const ctx = sp.get('ctx') ?? '';
   const selected = sp.get('step');
@@ -73,8 +73,6 @@ export default function Story() {
     if ((sp.get('q') ?? '') !== q) setQ({ q }, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q]);
-  useEffect(() => setOffset(0), [cid, kinds.join(), sevs.join(), ctx, q]);
-
   const apps = useAsync((s) => api.dataset<AppRow>(cid, 'apps', { limit: 200, sort: 'start_time' }, s), [cid]);
   // kinds the backend actually emits (it may add new ones, e.g. retry rows) plus the contract list
   const kindFacet = useAsync((s) => optional(api.facets(cid, 'run_story', 'kind', s)), [cid]);
@@ -86,6 +84,11 @@ export default function Story() {
     const retry = allKinds.filter((k) => k.includes('retr'));
     return KIND_PRESETS.map((p) => (p.label === 'Retries' ? { ...p, kinds: retry } : p.label === 'Problems only' ? { ...p, kinds: [...new Set([...p.kinds.filter((k) => !k.includes('retr')), ...retry])] } : p));
   }, [allKinds]);
+  // the story opens on its problems (hundreds of start and end rows come before the first failure); "all" shows them
+  const problems = presets.find((p) => p.label === 'Problems only')!.kinds;
+  const kinds = kindParam === 'all' ? [] : kindParam ? splitList(kindParam) : problems;
+  const byDefault = !kindParam;
+  useEffect(() => setOffset(0), [cid, kinds.join(), sevs.join(), ctx, q]);
   const st = useAsync(
     (s) =>
       api.dataset<StoryRow>(
@@ -118,7 +121,7 @@ export default function Story() {
                 {presets.map((p) => {
                   const on = p.kinds.join() === kinds.join();
                   return (
-                    <button key={p.label} className={on ? 'on' : ''} onClick={() => setQ({ kind: p.kinds.join(',') || null })}>
+                    <button key={p.label} className={on ? 'on' : ''} onClick={() => setQ({ kind: p.label === 'Problems only' ? null : p.kinds.join(',') || 'all' })}>
                       {p.label}
                     </button>
                   );
@@ -162,7 +165,7 @@ export default function Story() {
                 <ToggleChips<string>
                   options={allKinds}
                   value={kinds}
-                  onChange={(v) => setQ({ kind: v.join(',') || null })}
+                  onChange={(v) => setQ({ kind: v.join(',') || 'all' })}
                   render={(k) => KIND_LABEL[k] ?? k}
                 />
               </div>
@@ -178,8 +181,9 @@ export default function Story() {
         ) : !st.data ? (
           <Loading label="Loading story…" />
         ) : rows.length === 0 ? (
-          <Empty title="No story steps match">
-            {kinds.length || sevs.length || q || ctx ? 'Clear some filters to see more of the run.' : 'The run story is empty for this cluster.'}
+          <Empty title={byDefault ? 'No problems in the events' : 'No story steps match'}>
+            {byDefault ? <button className="linkish" onClick={() => setQ({ kind: 'all' })}>Show every event →</button>
+              : kinds.length || sevs.length || q || ctx ? 'Clear some filters to see more of the run.' : 'The run story is empty for this cluster.'}
           </Empty>
         ) : (
           <>

@@ -224,13 +224,15 @@ dbx-log-analyzer ui --output ./demo_out --cache ./demo_cache</code></pre>
     <code>stdout</code> with JVM GC lines, so every screen below has something to show.</p>
 
   <h2 id="home">Home and Analyze again</h2>
-  <figure><img src="docs/screenshots/home.png" alt="Home: pick a source, root path, cluster, analyze; the analyzed clusters below" loading="lazy">
-    <figcaption>Pick where the logs are, the root folder, then a cluster; below, every analyzed cluster.</figcaption></figure>
+  <figure><img src="docs/screenshots/home.png" alt="Home: the analyzed clusters, and Analyze another cluster" loading="lazy">
+    <figcaption>Every analyzed cluster first; the steps to analyze another open from the button.</figcaption></figure>
   <ul class="look">
-    <li><b>Four steps:</b> where the logs are (local, volume, ADLS, S3), then the root path, then the cluster (it lists
-      them with their last change), then Analyze. Remote logs are copied to a local cache incrementally.</li>
-    <li><b>Analyzed clusters:</b> each row shows the status and why: "2 jobs failed", or "after 3 task retries" when it
-      succeeded anyway. It also shows the jobs failed, the task attempts retried and the findings.</li>
+    <li><b>Analyzed clusters</b> come first. Each row shows the same status as the cluster's own page, and why:
+      <i>Failed</i> with what failed, <i>Succeeded with problems</i> with what went wrong ("1 task retry", "2 out of
+      memory"), or <i>Succeeded</i>. It also shows the jobs failed, the task attempts retried and the findings.</li>
+    <li><b>Analyze another cluster</b> opens four steps: where the logs are (local, volume, ADLS, S3), then the root
+      path, then the cluster (it lists them with their last change), then Analyze. Remote logs are copied to a local
+      cache incrementally. With no cluster analyzed yet, the steps are open from the start.</li>
     <li><b>Analyze again:</b> rebuilds a cluster from the raw logs it was built from, with the newest version of the
       tool. The button is greyed out, with "Raw logs gone", when those logs are no longer on disk.</li>
   </ul>
@@ -286,7 +288,9 @@ dbx-log-analyzer ui --output ./demo_out --cache ./demo_cache</code></pre>
       table that isn't partitioned, and a table scanned several times in one run or query.</li>
     <li><b>The list:</b> top 10 first. Columns: size, files, per file, rows per file, scans, runs, files skipped,
       pulled from the files (only the columns needed: Parquet is columnar), rows read, scan time and task time. The same
-      panel is on every run and every query.</li>
+      panel is on every run and every query. The panel is amber only when a table is flagged; with nothing flagged it
+      shows the one headline line and the list opens from <i>Show the N tables</i>. <i>How to read it</i> explains
+      the columns on hover.</li>
     <li><b>Per file:</b> the average file, and under it the smallest and the largest file read (here 245 MB – 3.4 GB
       for <code>order_line_item</code>). Databricks records both for every scan; on open-source Spark only the
       average is shown. A wide range means a few huge files next to many small ones: compaction
@@ -309,11 +313,12 @@ dbx-log-analyzer ui --output ./demo_out --cache ./demo_cache</code></pre>
       fixes</b> come in the order to make them, the fix for what broke first.</li>
     <li><b>On its clock:</b> waited for cores, ran tasks, and no Spark work (driver code). An idle gap of 30 minutes or
       more is called idle, not driver code. Every query is listed with its wait, run time and rows in.</li>
-    <li><b>What to change for this run:</b> the same folded cards as the cluster, limited to the changes this run is
-      part of, with this run's problems behind each. The full list of problems stays under Details.</li>
+    <li><b>What to change for this run</b> is under Details, so the first screen has one fix list: the same folded
+      cards as the cluster, limited to the changes this run is part of, with this run's problems behind each. The full
+      list of problems is under Details too.</li>
   </ul>
   <figure><img src="docs/screenshots/run-what-to-change.png" alt="What to change for one run" loading="lazy">
-    <figcaption>What to change, for one run.</figcaption></figure>
+    <figcaption>What to change, for one run (under Details).</figcaption></figure>
 
   <h2 id="query">One query</h2>
   <figure><img src="docs/screenshots/query-graph.png" alt="A query: tables it reads, where its time went, step by step with rows in and out" loading="lazy">
@@ -480,8 +485,9 @@ dbx-log-analyzer ui --output ./demo_out --cache ./demo_cache</code></pre>
     <li><b>The event list:</b> query, job and stage starts and ends, task retries, important log lines and findings,
       one stream in time order. Each row shows the clock time and the offset from the run's start. Findings are marked
       with their severity, for example "big_read: Stage 6.0: shop.sales.orders".</li>
-    <li><b>Filters:</b> Everything, Problems only, Retries or Scheduler only; severity (High, Medium, Low, Info); a text
-      search over titles and details; and the event kinds to show.</li>
+    <li><b>Filters:</b> it opens on <b>Problems only</b> (failures, retries, removed executors, log errors and
+      findings); <b>Everything</b> adds every start and end. Also Retries or Scheduler only; severity (High, Medium,
+      Low, Info); a text search over titles and details; and the event kinds to show.</li>
   </ul>
 
   <h2 id="timeline">Timeline</h2>
@@ -494,8 +500,9 @@ dbx-log-analyzer ui --output ./demo_out --cache ./demo_cache</code></pre>
     <li><b>Spark jobs and stages</b> as bars, then <b>one lane per executor</b> with its host and how long it sat idle.
       Each small block is one task; tasks that ran side by side on the cores are stacked.</li>
     <li>Red blocks failed. A lane that ends in a red line lost its executor. Hatched stretches mean the executor was up
-      but idle for a minute or more: paid for, running no task. Diamonds mark disk spills; ticks mark problem lines in
-      the executor's log and out-of-memory or lost events.</li>
+      but idle for a minute or more: paid for, running no task. Diamonds mark disk spills. GC pauses and problem lines
+      in the executor's log are a thin strip at the foot of its lane, darker where they are dense, so thousands of
+      them never hide the tasks; out of memory and lost executors stay full-height red marks.</li>
     <li>Drag across the chart to zoom into a range, scroll over the time axis to zoom, and click a task to open its
       stage. Scoped to a run, only that run's work is drawn, and a note says how many other runs shared the
       executors.</li>
@@ -582,8 +589,7 @@ dbx-log-analyzer ui --output ./demo_out --cache ./demo_cache</code></pre>
   <figure><img src="docs/screenshots/data-debug.png" alt="Tables (debug): the intermediate tables behind every view, grouped by step" loading="lazy">
     <figcaption>Tables (debug): every intermediate table behind the screens. Here the tasks, slowest first: task 909 of
       stage 8 on top.</figcaption></figure>
-  <p>The <b>Tables (debug)</b> tab (the page itself is titled <i>Data / Debug</i>) shows every dataset the screens are
-    built from. Use it to check a number you doubt, or to go past what the charts show.</p>
+  <p>The <b>Tables (debug)</b> tab shows every dataset the screens are built from. Use it to check a number you doubt, or to go past what the charts show.</p>
   <ul class="look">
     <li><b>Grouped by step:</b> Setup (folders and files read), Driver logs, Executor logs (including JVM GC pauses),
       Event logs (tasks, failed task reasons, retries, stages, jobs, queries, executors, spill and shuffle over time,
@@ -591,8 +597,8 @@ dbx-log-analyzer ui --output ./demo_out --cache ./demo_cache</code></pre>
       exceptions, findings, the timeline). Each shows its row count.</li>
     <li><b>Search</b> all text columns, <b>sort</b> by any column, choose rows per page, and click a row to unwrap long
       text such as a plan or a stack.</li>
-    <li>Charts that summarize a dataset carry a <b>See full table in Data / Debug</b> link that opens the table behind
-      them, often already filtered (a stage's tasks, a query's stages).</li>
+    <li>Charts that summarize a dataset carry a <b>Full table ↗</b> link that opens the table behind them here, often
+      already filtered (a stage's tasks, a query's stages).</li>
     <li><b>Outside the UI:</b> the same tables are Parquet files in the output folder, so you can query them
       directly:</li>
   </ul>

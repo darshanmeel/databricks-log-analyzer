@@ -344,8 +344,8 @@ export function PlanGraph({ cid, ctx, id }: { cid: string; ctx: string; id: stri
                       </>
                     );
                   })()}
-                  {share > 0 && <rect x={0} y={NH - 5} width={NW * share} height={5} rx={2} style={{ fill: heat === 'spill' || heat === 'mem' ? 'var(--st-warn)' : 'var(--series-1)' }} />}
-                  {share > 0 && <rect width={NW} height={NH} rx={6} style={{ fill: heat === 'spill' || heat === 'mem' ? 'var(--st-warn)' : 'var(--series-1)', opacity: 0.05 + share * 0.2 }} />}
+                  {share > 0 && <rect x={0} y={NH - 5} width={NW * share} height={5} rx={2} style={{ fill: heat === 'spill' || heat === 'mem' ? 'var(--spill)' : 'var(--series-1)' }} />}
+                  {share > 0 && <rect width={NW} height={NH} rx={6} style={{ fill: heat === 'spill' || heat === 'mem' ? 'var(--spill)' : 'var(--series-1)', opacity: 0.05 + share * 0.2 }} />}
                   <text x={12} y={18} style={{ fill: 'var(--text-1, var(--text))', fontSize: 12.5, fontWeight: 600 }}>
                     {truncate(shortName(n.row.name), 28)}
                   </text>
@@ -420,7 +420,7 @@ export function PlanGraph({ cid, ctx, id }: { cid: string; ctx: string; id: stri
                       <span className="plan-top-name">{shortName(n.row.name)}</span>
                       <span className="plan-top-val">{h.fmt(v)}</span>
                       <span className="mini-bar">
-                        <span style={{ width: `${(v / max) * 100}%`, background: heat === 'spill' || heat === 'mem' ? 'var(--st-warn)' : 'var(--series-1)' }} />
+                        <span style={{ width: `${(v / max) * 100}%`, background: heat === 'spill' || heat === 'mem' ? 'var(--spill)' : 'var(--series-1)' }} />
                       </span>
                     </button>
                   </li>

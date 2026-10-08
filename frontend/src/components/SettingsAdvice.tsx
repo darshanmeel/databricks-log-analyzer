@@ -46,13 +46,13 @@ export function AdviceItem({ cid, a, children, open: open0 = false }: { cid: str
         <dt>What we saw</dt>
         <dd>
           <ul>{(why ? facts : facts.slice(0, 1)).map((f, i) => <li key={i}>{f}</li>)}</ul>
-          {(facts.length > 1 || a.cause) && !why && (
+          {facts.length > 1 && !why && (
             <button className="linkish small" onClick={() => setWhy(true)}>
-              {[facts.length > 1 ? `${facts.length - 1} more ${facts.length === 2 ? 'fact' : 'facts'}` : '', a.cause ? 'the likely cause' : ''].filter(Boolean).join(' and ')} ▸
+              {facts.length - 1} more {facts.length === 2 ? 'fact' : 'facts'} ▸
             </button>
           )}
         </dd>
-        {why && a.cause ? <><dt>Likely cause</dt><dd>{a.cause}</dd></> : null}
+        {a.cause ? <><dt>Likely cause</dt><dd>{a.cause}</dd></> : null}
         <dt>Fix</dt>
         <dd><ul className="adv-fix">{fixes.map((f, i) => <li key={i}>{f}</li>)}</ul></dd>
         {(a.stages?.length || runs.length || a.queries?.length) ? (

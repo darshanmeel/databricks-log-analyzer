@@ -29,7 +29,7 @@ export const STATUS_META: Record<VisualStatus, { label: string; glyph: string; m
 
 /** Fixed metric identity colors (categorical, not status): same in the graph meters and the spill chart. */
 export const METRIC_META = {
-  disk_spill: { label: 'Disk spill', short: 'Disk', color: 'var(--c2)' },
+  disk_spill: { label: 'Disk spill', short: 'Disk', color: 'var(--spill)' },
   mem_spill: { label: 'Memory spill', short: 'Mem', color: 'var(--c5)' },
   shuffle_read: { label: 'Shuffle read', short: 'Read', color: 'var(--c1)' },
   shuffle_write: { label: 'Shuffle write', short: 'Write', color: 'var(--c3)' },

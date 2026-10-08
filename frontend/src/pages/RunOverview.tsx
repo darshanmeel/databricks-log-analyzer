@@ -127,13 +127,14 @@ export function RunOverview({ run }: { run: RunRow }) {
         {a && d && <TimeWent cid={cid} d={d} a={a} allSteps={allSteps} setAllSteps={setAllSteps} />}
         {allSteps && <RunStepsPanel cid={cid} run={run.run_key} />}
 
-        <ChangeList cid={cid} rows={findings} loading={fs.loading} runs={scope.runs} run={run.run_key} />
-
         <TablesRead cid={cid} scope={{ run: run.run_key }} />
 
-        <Fold name="run" title="Details" ids={['ro-find', 'ro-end', 'ro-problems']}
-          hint={`more numbers, find, tables, the end in order${fs.loading ? '' : `, all ${fmtNum(findings.length)} problems`}`}>
+        {/* one fix list on the first screen (Fix, above); the cluster's changes this run is part of, with the evidence
+            behind each, are under Details */}
+        <Fold name="run" title="Details" ids={['ro-change', 'ro-find', 'ro-end', 'ro-problems']}
+          hint={`more numbers, what to change, find, tables, the end in order${fs.loading ? '' : `, all ${fmtNum(findings.length)} problems`}`}>
           {moreTiles}
+          <ChangeList cid={cid} rows={findings} loading={fs.loading} runs={scope.runs} run={run.run_key} />
           <div id="ro-find"><TopFinder cid={cid} run={run.run_key} /></div>
           <RunTables cid={cid} run={run.run_key} />
 
@@ -185,11 +186,9 @@ function WhySlow({ cid, run, a, execs }: { cid: string; run: RunRow; a: Analysis
       <ul className="ro-points">
         {waited && <li><b>{fmtDuration(d)} waiting for a free core</b> <span className="muted">· {fmtPct(a.waitShare, 0)} of {fmtDuration(a.total)}</span>
           {others ? <span className="muted"> · {fmtNum(others)} other runs on the same {execs || ''} executors</span> : null}</li>}
+        {/* one line: the cause card below has the detail */}
         {t && <li><b>{gname(t)}{a.merge ? ' (MERGE)' : ''}</b> {a.topShare >= 0.4 ? 'did most of the work' : 'ran longest'}
-          <span className="muted"> · {fmtDuration(t.running_ms)} of {fmtDuration(a.running)} running</span></li>}
-        {t && a.merge && <li>Read <b>{a.merge.read}</b> of the target ({fmtRows(a.merge.rows)} rows) to write {a.merge.wrote}</li>}
-        {t && !a.merge && (t.input_bytes || t.shuffle_read) ? <li>Read {fmtBytes((t.input_bytes ?? 0) + (t.shuffle_read ?? 0))}</li> : null}
-        {t && (a.merge?.spilled || (t.disk_spill ?? 0) > 0) && <li>Spilled <b>{a.merge?.spilled ?? fmtBytes(t.disk_spill)}</b> to disk</li>}
+          <span className="muted"> · {fmtDuration(t.running_ms)} of {fmtDuration(a.running)} running{a.merge ? `, read ${a.merge.read} of the target` : (t.input_bytes || t.shuffle_read) ? `, read ${fmtBytes((t.input_bytes ?? 0) + (t.shuffle_read ?? 0))}` : ''}{a.merge?.spilled || (t.disk_spill ?? 0) > 0 ? `, spilled ${a.merge?.spilled ?? fmtBytes(t.disk_spill)}` : ''}</span></li>}
       </ul>
       <div className="ro-links">
         <a href="#ro-time">Where the time went ↓</a>

@@ -269,18 +269,7 @@ function ExecSummary({ rows, selected, onPick, probs }: { rows: ExecutorProfileR
                   <td className={`num ${gcBreach(r.gc_share) ? 'bad' : ''}`}>{fmtPct(r.gc_share, 0)}</td>
                   <td className="num">{r.disk_spill ? fmtBytes(r.disk_spill) : '–'}</td>
                   <td>
-                    {(probs.get(r.executor_id) ?? []).map((x) => (
-                      <Link
-                        key={x.problem_id}
-                        className={`stage-prob sev-${x.incident_severity} ${x.role === 'root' ? 'root' : ''}`}
-                        to={to.findings(r.cluster_id, x.finding_id)}
-                        onClick={(e) => e.stopPropagation()}
-                        title={`${x.incident_id}: ${x.incident_title}`}
-                      >
-                        {x.role === 'root' ? '● ' : ''}
-                        {x.kind}
-                      </Link>
-                    ))}
+                    <ExecPills cid={r.cluster_id} exec={r.executor_id} rows={probs.get(r.executor_id) ?? []} />
                   </td>
                 </tr>
               );
@@ -356,11 +345,11 @@ export default function Executors() {
     <div className="page wide">
       <div className="page-head">
         <div>
-          <h1>Which executors left early, and what were they doing?</h1>
-          <p className="sub">
+          <h1>Executors</h1>
+          <details className="sub"><summary>About this page</summary>
             When each executor lived, why it left, and how hard the JVM worked to free memory. Select an executor to see its garbage-collection
             pauses and heap over time.
-          </p>
+          </details>
         </div>
         <div className="actions">
           {multi && (
@@ -627,7 +616,7 @@ function GcCharts({ cid, r }: { cid: string; r: ExecutorProfileRow }) {
           </div>
         </div>
       </div>
-      <DataLink cid={cid} dataset="gc_events" q={r.executor_id === 'driver' ? null : null} label="All GC events in Data / Debug" />
+      <DataLink cid={cid} dataset="gc_events" q={r.executor_id === 'driver' ? null : null} label="All GC events ↗" />
     </div>
   );
 }
@@ -635,4 +624,30 @@ function GcCharts({ cid, r }: { cid: string; r: ExecutorProfileRow }) {
 /** executor id -> the incident problems it took part in (one per problem, root causes first). */
 function problemsByExecutor(rows: IncidentRow[], ctx: string | null): Map<string, IncidentRow[]> {
   return indexProblems(rows.filter((x) => !ctx || !x.spark_context_id || x.spark_context_id === ctx), (x) => (x.executors ?? '').split(', ').filter(Boolean));
+}
+
+
+/** An executor's problems as a few pills: one per kind with a count, root causes first, at most three, then "+N" (all
+ * of them on hover). An executor lost, out of memory or killed is shown only on the executor it is about. */
+const GONE_KINDS = new Set(['out of memory', 'executor lost', 'executor killed by the OS']);
+function ExecPills({ cid, exec, rows }: { cid: string; exec: string; rows: IncidentRow[] }) {
+  const mine = rows.filter((x) => !GONE_KINDS.has(x.kind) || (x.executor_id != null ? x.executor_id === exec : (x.executors ?? '').split(/[,\s]+/).includes(exec)));
+  const by = new Map<string, IncidentRow[]>();
+  for (const x of mine) by.set(x.kind, [...(by.get(x.kind) ?? []), x]);
+  const groups = [...by.values()].sort((a, b) => Number(b.some((x) => x.role === 'root')) - Number(a.some((x) => x.role === 'root')));
+  const shown = groups.slice(0, 3);
+  return (
+    <>
+      {shown.map((g) => {
+        const x = g.find((y) => y.role === 'root') ?? g[0];
+        return (
+          <Link key={x.kind} className={`stage-prob sev-${x.incident_severity} ${x.role === 'root' ? 'root' : ''}`} to={to.findings(cid, x.finding_id)}
+            onClick={(e) => e.stopPropagation()} title={g.map((y) => `${y.incident_id}: ${y.incident_title}`).join('\n')}>
+            {x.role === 'root' ? '● ' : ''}{x.kind}{g.length > 1 ? ` ×${g.length}` : ''}
+          </Link>
+        );
+      })}
+      {groups.length > 3 && <span className="muted small" title={groups.slice(3).map((g) => `${g[0].kind}${g.length > 1 ? ` ×${g.length}` : ''}`).join('\n')}>+{groups.length - 3}</span>}
+    </>
+  );
 }

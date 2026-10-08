@@ -295,7 +295,7 @@ function Links({ cid, m, n }: { cid: string; m: GModel; n: GNode }) {
         Logs around this time
       </Link>
       {(n.type === 'job' || n.type === 'stage') && (
-        <Link className="btn small" to={to.story(cid, { ctx: n.ctx, q: n.type === 'job' ? `job ${n.jobId}` : `stage ${n.stageId}` })}>
+        <Link className="btn small" to={to.story(cid, { ctx: n.ctx, kind: 'all', q: n.type === 'job' ? `job ${n.jobId}` : `stage ${n.stageId}` })}>
           Story
         </Link>
       )}

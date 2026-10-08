@@ -209,7 +209,7 @@ function cssColors() {
     panel2: v('--panel-2'),
     life: v('--panel-3'),
     onBar: v('--on-series'),
-    spill: v('--c2'),
+    spill: v('--spill'),
     font: v('--font') || 'sans-serif',
     mono: v('--mono') || 'monospace',
   };
@@ -391,8 +391,8 @@ function GanttCanvas({ g, width, onOpenStage, zoomTo }: { g: Gantt; width: numbe
             ctx.fillText(why, right ? nb - w - 8 : na + 8, right ? lane.y + lane.h - 10 : lane.y + lane.h / 2);
           }
         };
-        if (lane.exec.added !== null && lane.exec.added > view[0]) notRunning(clipX(xOf(view[0])), xa, 'not running yet');
-        if (lane.exec.removed !== null && lane.exec.removed < view[1]) notRunning(xb, clipX(xOf(view[1])), 'not running (removed)', true);
+        if (lane.exec.added !== null && lane.exec.added > view[0]) notRunning(clipX(xOf(view[0])), xa, '');
+        if (lane.exec.removed !== null && lane.exec.removed < view[1]) notRunning(xb, clipX(xOf(view[1])), '', true);
         // up but running nothing: still paid for
         for (const [ga, gb] of lane.idle?.gaps ?? []) {
           const ia = clipX(xOf(ga));
@@ -483,7 +483,23 @@ function GanttCanvas({ g, width, onOpenStage, zoomTo }: { g: Gantt; width: numbe
       });
 
       // per-lane markers, and a word for how an executor left (the bar alone does not say)
-      for (const m of lane.markers) drawMarker(ctx, m, xOf(m.ts), lane.y + 1, lane.h - 3, c, x0, x1);
+      // GC and log-signal lines come in thousands: a thin strip at the lane's foot, darker where they are dense, so
+      // they never hide the tasks or the red out-of-memory and lost marks (each line is still on hover)
+      const dense = new Map<number, number>();
+      for (const m of lane.markers) {
+        if (m.kind === 'signal' || m.kind === 'full_gc') {
+          const x = Math.round(xOf(m.ts));
+          if (x >= x0 && x <= x1) dense.set(x, (dense.get(x) ?? 0) + 1);
+        } else drawMarker(ctx, m, xOf(m.ts), lane.y + 1, lane.h - 3, c, x0, x1);
+      }
+      if (dense.size) {
+        ctx.fillStyle = c.medium;
+        for (const [x, n] of dense) {
+          ctx.globalAlpha = Math.min(1, 0.3 + n * 0.15);
+          ctx.fillRect(x - 0.5, lane.y + lane.h - 5, 1.5, 4);
+        }
+        ctx.globalAlpha = 1;
+      }
       if (lane.kind === 'exec') {
         const ends = lane.markers.filter((m) => END_WORD[m.kind]);
         const last = ends.length ? ends.reduce((a, b) => (b.ts > a.ts ? b : a)) : null;
@@ -672,14 +688,18 @@ function GanttCanvas({ g, width, onOpenStage, zoomTo }: { g: Gantt; width: numbe
             Out of memory, lost or error (dashed: on the driver)
           </span>
           <span className="item">
-            <span className="mk" style={{ borderColor: 'var(--sev-medium)' }} />
-            Problem line in its log
+            <span style={{ display: 'inline-block', width: 12, height: 4, background: 'var(--sev-medium)', marginRight: 4 }} />
+            GC and problem lines in its log (darker = more)
           </span>
           <span className="item">
             <svg width="10" height="10" aria-hidden>
-              <path d="M5 0.5 L9.5 5 L5 9.5 L0.5 5 Z" style={{ fill: 'var(--c2)' }} />
+              <path d="M5 0.5 L9.5 5 L5 9.5 L0.5 5 Z" style={{ fill: 'var(--spill)' }} />
             </svg>
             Disk spill
+          </span>
+          <span className="item">
+            <span style={{ display: 'inline-block', width: 14, height: 8, border: '1px dashed var(--muted)', marginRight: 4 }} />
+            Executor not up
           </span>
         </div>
         <span className="grow" />
@@ -869,11 +889,11 @@ export default function Timeline() {
     <div className="page wide">
       <div className="page-head">
         <div>
-          <h1>When did things go wrong?</h1>
-          <p className="sub">
+          <h1>Timeline</h1>
+          <details className="sub"><summary>About this page</summary>
             Every Spark job and stage as a bar over time, then one lane per executor: each small block is one task it ran, stacked when tasks ran side by side
             on its cores. Red blocks failed; a lane that ends with a red line lost its executor. Pick an incident to zoom to it, or drag across the chart.
-          </p>
+          </details>
           <OtherRunsNote />
         </div>
         <div className="actions">

@@ -1299,7 +1299,7 @@ th .th-sub { font-size: 10.5px; font-weight: 400; color: var(--muted); white-spa
 .rail-search { width: 100%; font-size: 12.5px; }
 .rail-note { font-size: 11.5px; color: var(--rail-muted); padding: 6px 4px 2px; }
 .rail-group { margin-top: 10px; }
-.rail-group-head { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--rail-muted); padding: 4px 4px; }
+.rail-group-head { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; font-weight: 600; color: var(--rail-muted); padding: 4px 4px; }
 .rail-g { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rail-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 8px; width: 100%; text-align: left; background: transparent; border: 0;
   border-left: 3px solid transparent; padding: 6px 6px 6px 5px; color: var(--rail-text); cursor: pointer; border-radius: 0 4px 4px 0; min-height: 40px; }
@@ -1442,7 +1442,7 @@ tr.other-task td { color: var(--text-2); }
 .advice-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; margin-bottom: 6px; }
 .adv-sev { font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; padding: 1px 7px; border-radius: 4px; background: var(--surface-2); color: var(--text-2); }
 .adv-sev.high { background: color-mix(in srgb, var(--st-crit) 14%, transparent); color: var(--st-crit); }
-.adv-sev.medium { background: color-mix(in srgb, var(--st-warn) 16%, transparent); color: var(--st-warn); }
+.adv-sev.medium { background: color-mix(in srgb, var(--st-warn) 16%, transparent); color: var(--st-warn-ink); }
 .adv-key { font-size: 12px; color: var(--text-3); background: var(--surface-2); padding: 0 6px; border-radius: 4px; }
 .advice-grid { display: grid; grid-template-columns: 104px minmax(0, 1fr); gap: 4px 12px; margin: 0; }
 .advice-grid dt { color: var(--text-3); font-weight: 600; padding-top: 1px; }
@@ -1504,7 +1504,7 @@ tr.other-task td { color: var(--text-2); }
 .qs-lane .ro-hot { background: var(--st-warn) !important; opacity: 1; }
 .ro-flags { white-space: normal; }
 .ro-flag { display: inline-block; font-size: 11.5px; padding: 1px 7px; border-radius: 4px; margin: 1px 4px 1px 0; background: var(--surface-2); color: var(--text-3); border: 1px solid var(--border); white-space: nowrap; }
-.ro-flag.spill { background: var(--spill-tint); color: var(--spill); border-color: transparent; }
+.ro-flag.spill { background: var(--spill-tint); color: color-mix(in srgb, var(--spill) 70%, var(--text)); border-color: transparent; }
 .ro-flag.warn { background: var(--st-warn-tint); color: var(--st-warn-ink); border-color: transparent; }
 .ro-flag.bad { background: var(--st-crit-tint); color: var(--st-crit-ink); border-color: transparent; }
 
@@ -1655,11 +1655,12 @@ ul.flow-points, .flow-points ul { padding-left: 18px; margin: 0 0 8px; }
 .ro-causebar button.on { box-shadow: inset 0 0 0 2px var(--text); }
 .ro-causebar button:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
 .ro-causebar .ro-seg-out { color: var(--text-3); text-shadow: none; }
-.ro-causebar .ro-seg-wait em { background: var(--surface); color: var(--text); text-shadow: none; }
+.ro-causebar button { justify-content: flex-start; padding: 0 6px; }
+.ro-causebar button em { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-style: normal; background: var(--surface); color: var(--text); text-shadow: none; padding: 1px 6px; border-radius: 3px; }
 .ro-seg-cpu { background: var(--series-1); }
-.ro-seg-io { background: var(--shuf); }
-.ro-seg-gc { background: var(--st-warn); }
-.ro-seg-fetch { background: var(--spill); }
+.ro-seg-io { background: var(--c-other); }
+.ro-seg-gc { background: var(--c5); }
+.ro-seg-fetch { background: var(--c6); }
 .ro-seg-fail { background: var(--st-crit); }
 /* the plain kind of an error */
 .err-class { display: inline-block; font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 999px; background: var(--surface-2); color: var(--text-3); white-space: nowrap; vertical-align: 1px; }
@@ -1699,9 +1700,9 @@ details.err-then > summary { cursor: pointer; }
 /* the bar's buttons reset every style; give each cause its colour back (white text on these fills) */
 .ro-causebar button.ro-seg-wait { background: repeating-linear-gradient(135deg, var(--wait) 0 3px, color-mix(in srgb, var(--wait) 45%, transparent) 3px 6px); }
 .ro-causebar button.ro-seg-run, .ro-causebar button.ro-seg-cpu { background: var(--series-1); }
-.ro-causebar button.ro-seg-io { background: var(--shuf); }
-.ro-causebar button.ro-seg-gc { background: var(--st-warn); }
-.ro-causebar button.ro-seg-fetch { background: var(--spill); }
+.ro-causebar button.ro-seg-io { background: var(--c-other); }
+.ro-causebar button.ro-seg-gc { background: var(--c5); }
+.ro-causebar button.ro-seg-fetch { background: var(--c6); }
 .ro-causebar button.ro-seg-fail { background: var(--st-crit); }
 .ro-causebar button.ro-seg-out { background: var(--surface-3); }
 .cause-head { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
@@ -1718,7 +1719,8 @@ details.err-then > summary { cursor: pointer; }
 .why.more { background: var(--surface-3); color: var(--text-2); cursor: help; }
 
 /* Tables read: highlighted, it tells in a second whether a table was read too big, whole or too often */
-.tables-read { border-left: 4px solid var(--st-warn); }
+.tables-read { border-left: 4px solid var(--border); }
+.tables-read.flagged { border-left-color: var(--st-warn); }
 .tables-read.stack, div.tables-read { padding: 12px 14px; border-radius: var(--radius-sm); background: var(--surface-2); }
 .tr-head { display: flex; flex-direction: column; gap: 6px; }
 .tr-line { font-size: 15px; line-height: 1.45; max-width: 110ch; }
@@ -1746,3 +1748,27 @@ details.err-then > summary { cursor: pointer; }
 .rows-strip .rs-arrow { font-size: 22px; color: var(--text-3); align-self: center; }
 .rows-strip .rs-note { flex-basis: 100%; }
 .rows-strip.grew .rs-note b { color: var(--st-crit-ink); }
+
+/* UI review: one base for every table (a header was centred where no table class styled it), numbers that line up
+   and do not wrap, and status chips that do not look like links */
+th { text-align: left; }
+th.num, td.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+table { font-variant-numeric: tabular-nums; }
+.chip.ok, .chip.warn, .chip.bad { cursor: default; border-color: transparent; }
+.chip.ok:hover { background: var(--st-ok-tint); border-color: transparent; }
+.chip.warn:hover { background: var(--st-warn-tint); border-color: transparent; }
+.chip.bad:hover { background: var(--st-crit-tint); border-color: transparent; }
+/* table names wrap instead of pushing the page wider on a phone */
+.fp-table { max-width: 100%; overflow-wrap: anywhere; white-space: normal; }
+/* page headings: plain sans nouns; the intro folds behind "About this page" */
+.page-head h1 { font-family: var(--font); font-size: 20px; font-weight: 600; letter-spacing: -0.01em; line-height: 1.3; }
+details.sub { color: var(--ink-2); margin-top: 2px; max-width: 72ch; font-size: 13px; }
+details.sub > summary { cursor: pointer; color: var(--muted); font-size: 12.5px; list-style: none; }
+details.sub > summary::before { content: 'ⓘ '; }
+details.sub[open] > summary { margin-bottom: 4px; }
+/* phone: the breadcrumb (a long run name) is cut with an ellipsis instead of widening the page */
+@media (max-width: 700px) {
+  .header { flex-wrap: wrap; min-width: 0; }
+  .header .crumbs { min-width: 0; max-width: 100%; overflow: hidden; }
+  .header .crumbs .cur, .header .crumbs a { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}

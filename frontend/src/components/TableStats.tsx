@@ -45,6 +45,7 @@ function flagsOf(t: TS, scope: Scope): { text: string; bad?: boolean }[] {
 export function TablesRead({ cid, scope = {}, embedded = false }: { cid: string; scope?: Scope; embedded?: boolean }) {
   const st = useAsync((s) => api.tables(cid, s, scope), [cid, scope.run, scope.ctx, scope.query]);
   const [all, setAll] = useState(false);
+  const [shown, setShown] = useState(false);
   const rows = (st.data?.tables ?? []).filter((t) => t.size_bytes || t.scan_task_ms);
   if (!rows.length) return null;
   const where = scope.query !== undefined ? 'this query' : scope.run ? 'this run' : 'this cluster';
@@ -55,7 +56,7 @@ export function TablesRead({ cid, scope = {}, embedded = false }: { cid: string;
   const flagged = rows.map((t) => ({ t, f: flagsOf(t, scope) })).filter((x) => x.f.length);
   const head = (
     <div className="tr-head">
-      <span className="ro-eyebrow warn">Tables read</span>
+      <span className={`ro-eyebrow ${flagged.length ? 'warn' : ''}`}>Tables read</span>
       <div className="tr-line">
         <b>{fmtNum(rows.length)} {rows.length === 1 ? 'table' : 'tables'}</b> read from files by {where}: <b>{fmtBytes(pulled)}</b>{rowsAll ? <> and <b>{fmtRows(rowsAll)} rows</b></> : null} pulled, <b>{fmtDuration(allTask)}</b> of task time.
         {' '}Most: <code className="fp-table" title={top.table}>{short(top.table)}</code>
@@ -110,21 +111,25 @@ export function TablesRead({ cid, scope = {}, embedded = false }: { cid: string;
       {rows.length > TOP_ROWS && <button className="linkish small" style={{ marginTop: 6 }} onClick={() => setAll(!all)}>{all ? `Only the top ${TOP_ROWS} ↑` : `All ${fmtNum(rows.length)} tables ↓`}</button>}
     </div>
   );
-  const note = 'Costliest reads first. Size and files from a scan that skipped nothing; min – max is the smallest and largest file read (when the scan recorded them); rows per file is an average; pulled from the files is what the tasks actually read (only the columns they need: Parquet is columnar).';
+  const note = `Costliest reads first. Size and files from a scan that skipped nothing; min – max is the smallest and largest file read (when the scan recorded them); rows per file is an average; pulled from the files is what the tasks actually read (only the columns they need: Parquet is columnar).${scope.run || scope.query !== undefined ? '' : ' Open a run to see which of its queries read and wrote each table.'}`;
+  const cls = `tables-read ${flagged.length ? 'flagged' : ''}`;
+  // nothing flagged: the one line says enough, the list is one click away
+  const body = flagged.length || shown ? table : <button className="linkish small" style={{ alignSelf: 'flex-start' }} onClick={() => setShown(true)}>Show the {fmtNum(rows.length)} {rows.length === 1 ? 'table' : 'tables'} ▸</button>;
+  const help = <span className="muted small" title={note} style={{ cursor: 'help' }}>How to read it ⓘ</span>;
   if (embedded)
     return (
-      <div className="tables-read stack" style={{ gap: 8 }}>
+      <div className={`${cls} stack`} style={{ gap: 8 }}>
         {head}
-        <p className="muted small" style={{ margin: 0 }}>{note}</p>
-        {table}
+        {help}
+        {body}
       </div>
     );
   return (
-    <section className="panel tables-read">
+    <section className={`panel ${cls}`}>
       <div className="panel-body stack" style={{ gap: 10 }}>
         {head}
-        <p className="muted small" style={{ margin: 0 }}>{note}{scope.run || scope.query !== undefined ? '' : ' Open a run to see which of its queries read and wrote each table.'}</p>
-        {table}
+        {help}
+        {body}
       </div>
     </section>
   );

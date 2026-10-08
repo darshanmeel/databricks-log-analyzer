@@ -85,7 +85,7 @@ function SearchView() {
       <div className="page-head">
         <div>
           <h1>Logs</h1>
-          <p className="sub">Driver and executor log lines in file order. Click a line number to see the lines around it. Times are UTC.</p>
+          <details className="sub"><summary>About this page</summary>Driver and executor log lines in file order. Click a line number to see the lines around it. Times are UTC.</details>
         </div>
       </div>
       <div className="panel" style={{ marginBottom: 16 }}>

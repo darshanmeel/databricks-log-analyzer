@@ -140,10 +140,11 @@ const TABS: Tab[] = [
   { label: 'Findings & errors', routes: ['findings', 'errors'], sub: [['findings', 'Findings'], ['errors', 'Errors']],
     // one problem count: the run's own list says how many; the tab only counts for the whole cluster
     count: (r, s) => (r ? undefined : s.counts.findings), alert: (r, s) => (r ? r.max_severity === 'high' : (s.findings_by_severity.high ?? 0) > 0) },
-  { label: 'Queries & stages', routes: ['hierarchy', 'stages', 'queries'], count: (r, s) => (r ? r.spark_jobs : s.counts.spark_jobs),
+  // no count: it counted Spark jobs under a tab named for queries; the page's first line gives both
+  { label: 'Queries & stages', routes: ['hierarchy', 'stages', 'queries'],
     alert: (r, s) => (r ? r.status === 'failed' : (s.counts.failed_jobs ?? 0) > 0) },
   { label: 'Events & timeline', routes: ['story', 'timeline'], sub: [['story', 'Events'], ['timeline', 'Timeline']] },
-  { label: 'Executors', routes: ['executors'], count: (r, s) => (r ? undefined : s.counts.executors), alert: (r, s) => !r && (s.counts.executors_lost ?? 0) > 0 },
+  { label: 'Executors', routes: ['executors'], count: (r, s) => (r ? undefined : s.counts.executors), alert: (r, s) => { const c = s.counts as Summary['counts'] & { executors_oom?: number; executors_killed?: number }; return !r && (c.executors_lost ?? 0) + (c.executors_oom ?? 0) + (c.executors_killed ?? 0) > 0; } },
   { label: 'Logs & tables', routes: ['logs', 'data'], sub: [['logs', 'Logs'], ['data', 'Tables (debug)']] },
 ];
 
@@ -253,7 +254,7 @@ function RailItem({ r, on, longest, choose, by }: { r: RunRow; on: boolean; long
   return (
     <button className={`rail-item ${on ? 'on' : ''}`} onClick={() => choose(r.run_key)} aria-current={on ? 'true' : undefined}
       title={`${runName(r)} · ${runOption(r)} · took ${fmtDuration(r.duration_ms)}, waited ${fmtDuration(waitingOf(r))}, processed ${fmtDuration(processingOf(r))}`}>
-      <span className={`rail-name mono ${r.status === 'failed' ? 'st-crit' : ''}`}>{r.status === 'failed' ? '✕ ' : ''}{r.subject ?? fmtTime(r.start_time)}</span>
+      <span className={`rail-name mono ${r.status === 'failed' ? 'st-crit' : ''}`}>{r.status === 'failed' ? '✕ ' : ''}{railName(r)}</span>
       <span className="rail-took">
         {by === 'processing' ? <>{fmtDuration(v)} <span className="rail-unit">ran</span></> : by === 'waiting' ? <>{fmtDuration(v)} <span className="rail-unit">waited</span></> : fmtDuration(r.duration_ms)}
         {x !== null && by !== 'processing' && by !== 'waiting' && <> · <b className={slow ? 'st-warn' : ''}>{x.toFixed(1)}×</b></>}
@@ -262,6 +263,11 @@ function RailItem({ r, on, longest, choose, by }: { r: RunRow; on: boolean; long
     </button>
   );
 }
+
+/** The run's name in the rail: its subject, unless that is a word the logs use for every run (a Spark Connect
+ * session id), then its program, then its start time. */
+const VAGUE = /^(session_id|user_id|operation_id|job_id|run_id)$/i;
+const railName = (r: RunRow) => (r.subject && !VAGUE.test(r.subject) ? r.subject : runGroup(r) || fmtTime(r.start_time));
 
 /** Runs on this cluster, by program, worst first. Programs whose runs all took about their usual time fold to one line. */
 function RunRail({ runs, run, choose }: { runs: RunRow[]; run: string | null; choose: (k: string) => void }) {
@@ -279,7 +285,7 @@ function RunRail({ runs, run, choose }: { runs: RunRow[]; run: string | null; ch
   }, [shown, by]);
   const longest = Math.max(1, ...runs.map((r) => railValue(r, by)));
   return (
-    <aside className="rail" aria-label="Runs on this cluster">
+    <aside className="rail" aria-label="Runs on this cluster" title="Amber: a run that took 2× its usual time or more">
       <div className="rail-head">
         <b>Runs on this cluster</b>
         <span className="cnt">{fmtNum(runs.length)}</span>
@@ -293,7 +299,7 @@ function RunRail({ runs, run, choose }: { runs: RunRow[]; run: string | null; ch
           {RAIL_SORTS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
         </select>
       </div>
-      <div className="rail-note">{by === 'processing' ? 'Processing = total time minus waiting for a free core' : by === 'waiting' ? 'Time waiting for a free core' : 'Amber = 2× its usual or more'}</div>
+      {(by === 'processing' || by === 'waiting') && <div className="rail-note">{by === 'processing' ? 'Processing = total time minus waiting for a free core' : 'Time waiting for a free core'}</div>}
       {!shown.length && <div className="rail-note">No run matches.</div>}
       {groups.map(({ g, rs }) => {
         const slow = rs.filter(isSlow).length;

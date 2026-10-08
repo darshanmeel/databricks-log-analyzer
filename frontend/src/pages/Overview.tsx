@@ -79,6 +79,8 @@ function Kpis({ s }: { s: Summary }) {
   const c = s.counts;
   const t = s.totals;
   const spill = (t.mem_spill ?? 0) + (t.disk_spill ?? 0);
+  const x = c as typeof c & { executors_oom?: number; executors_killed?: number };
+  const gone = (x.executors_lost ?? 0) + (x.executors_oom ?? 0) + (x.executors_killed ?? 0);
   return (
     <div className="kpis">
       <Kpi label="Duration" value={fmtDuration(s.duration_ms)} />
@@ -88,7 +90,8 @@ function Kpis({ s }: { s: Summary }) {
       <Kpi label="Task attempts retried" value={fmtNum(c.failed_tasks ?? 0)} of={fmtNum(c.tasks ?? 0)} tone={c.failed_tasks ? 'warn' : undefined} />
       <Kpi label="Spill" value={fmtBytes(spill)} foot={`disk ${fmtBytes(t.disk_spill ?? 0)}`} tone={(t.disk_spill ?? 0) >= 1024 ** 3 ? 'warn' : undefined} />
       <Kpi label="GC share of task time" value={fmtPct(t.gc_share)} tone={gcBreach(t.gc_share) ? 'warn' : undefined} />
-      <Kpi label="Executors lost" value={fmtNum(c.executors_lost ?? 0)} of={fmtNum(c.executors ?? 0)} tone={c.executors_lost ? 'bad' : undefined} />
+      {/* lost, out of memory or killed: each removal counted once (autoscaling is not a loss) */}
+      <Kpi label="Executors lost" value={fmtNum(gone)} of={fmtNum(c.executors ?? 0)} tone={gone ? 'bad' : undefined} />
       <Kpi label="Error log lines" value={fmtNum(c.error_lines ?? 0)} foot={`${fmtNum(c.log_errors ?? 0)} exceptions`} tone={c.error_lines ? 'warn' : undefined} />
     </div>
   );

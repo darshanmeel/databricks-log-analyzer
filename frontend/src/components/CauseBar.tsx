@@ -68,7 +68,8 @@ export function CauseBar({ parts, total, by, onBy }: { parts: CausePart[]; total
         <button key={p.key} className={`${p.cls} ${by === p.key ? 'on' : ''}`} style={{ width: `${(p.ms / Math.max(1, total)) * 100}%` }}
           title={`${p.label}: ${fmtDuration(p.ms)} (${fmtPct(p.ms / Math.max(1, total), 0)}). ${p.tip}`}
           aria-pressed={onBy ? by === p.key : undefined} disabled={!p.rank || !onBy} onClick={() => onBy?.(by === p.key ? null : p.key)}>
-          {p.ms / total >= 0.12 ? <em>{p.label} {fmtDuration(p.ms)} · {fmtPct(p.ms / total, 0)}</em> : ''}
+          {/* a label only where the part is wide enough to hold it; the legend names every part */}
+          {p.ms / total >= 0.25 ? <em>{p.label} {fmtDuration(p.ms)} · {fmtPct(p.ms / total, 0)}</em> : ''}
         </button>
       ))}
     </div>
