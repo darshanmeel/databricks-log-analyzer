@@ -10,20 +10,27 @@ Point it at the logs Databricks delivers for a cluster (driver and executor logs
 Parquet datasets and opens a **local web UI** that answers:
 
 - **Where did the time go?** How long the cluster was up next to the run time added up over all runs, how much of it
-  was spent waiting for a free core, and each run's time split by cause.
+  was spent queued on a full cluster (every core busy), and each run's time split by cause.
 - **What failed, and why?** Failed jobs and queries, task retries that still succeeded, lost or out-of-memory
   executors, and errors grouped with the first line of your own code.
 - **What should I change?** Grouped fixes, highest impact first, each with what the data shows, the likely cause and
   the setting or code change. For the whole cluster and for each run.
 - **Which tables cost the most?** Size, files, file size (average, smallest and largest), rows per file, files
-  skipped, bytes and rows pulled, and scan time, for the cluster, a run or one query. It flags files over 1 GB (on
+  skipped, bytes and rows pulled, and scan time, for the cluster, a run or one query. It flags files over 1 GiB (on
   average or the largest one), big tables read whole, and tables scanned again and again.
 - **Where did the rows go?** Rows read and written per table, rows in and out of every stage (per parent stage), and
   rows passed from one query or Spark job to the next. It flags a join that puts out more rows than came in.
 - **Which stage or task is to blame?** Drill down from cluster to run, query, Spark job, stage and task, with skew,
   spill, shuffle, GC and executor charts.
+- **Are the logs complete?** When event-log files, executor logs or GC lines are missing, a Coverage line under the
+  title says what is missing and which numbers that leaves partial.
 
 Everything runs on your laptop: no Spark, no cluster, nothing leaves the machine.
+
+A cluster has its own tabs: **Overview, Findings, Errors, Executors, Logs and Raw data**, all for the whole cluster
+(Findings and Errors list every run's problems, each with a chip naming its run). Pick a run and you get the run's
+tabs: Overview, Findings & errors, Queries & stages, Events & timeline, Executors and Logs & raw data. Sizes are
+binary everywhere (KiB, MiB, GiB).
 
 | Cluster overview | A query: step by step, rows in → out |
 |---|---|
@@ -62,7 +69,8 @@ A browser tab opens at http://127.0.0.1:8765. On **Home**:
 3. Pick the cluster and click **Analyze**.
 
 Every analyzed cluster has an **Analyze again** button. It rebuilds the analysis from the same raw logs with the
-newest version of the tool, as long as those logs are still on disk.
+newest version of the tool, as long as those logs are still on disk. Outputs built before analyzer revision 20 need
+it to show the newest numbers.
 
 ### Without installing the package
 
