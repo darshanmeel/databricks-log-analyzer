@@ -303,7 +303,9 @@ dbx-log-analyzer ui --output ./demo_out --cache ./demo_cache</code></pre>
     <li><b>Flags:</b> files over 1 GiB on average (on a MERGE target without deletion vectors, a MERGE rewrites whole
       files) or a largest file over 1 GiB (some files need compacting), a big table read whole with no files skipped,
       a table that isn't partitioned, and a table scanned several times in one run or query. A table read by a
-      stream is sized over all its micro-batches.</li>
+      stream is sized over all its micro-batches. A streaming batch's file scan sits in a query that runs no job
+      itself; it counts for the run of the queries under it, so every table the cluster lists also shows on the run
+      that read it (a run whose batch read no files has none to show).</li>
     <li><b>The list:</b> top 10 first. Columns: size, files, per file, rows per file, scans, runs, files skipped,
       pulled from the files (only the columns needed: Parquet is columnar), rows read, scan time and task time. The same
       panel is on every run and every query. The panel is amber only when a table is flagged; with nothing flagged it
