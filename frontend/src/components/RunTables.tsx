@@ -6,7 +6,7 @@ import { api, type RunTableRead, type RunTables as RT, type WriteRows } from '..
 import { useAsync } from '../hooks';
 import { fmtBytes, fmtDuration, fmtNum, fmtRows, fmtTime, truncate } from '../format';
 import { to } from '../links';
-import { TableStatsLines } from './TableStats';
+import { TableStatsLines, fileRange } from './TableStats';
 
 const short = (t: string) => (/^[a-z]+:\/\/|^\//.test(t) ? `…/${t.split('/').filter(Boolean).pop()}` : t);
 const GB = 1024 ** 3;
@@ -22,6 +22,8 @@ function pruning(r: RunTableRead): { text: string; tone?: 'warn' | 'ok' } | null
   if (r.files_read != null) {
     const pr = r.files_pruned ?? 0;
     bits.push(`${fmtNum(r.files_read)} file${r.files_read === 1 ? '' : 's'} in scope${r.bytes_read ? ` (${fmtBytes(r.bytes_read)})` : ''}`);
+    const range = fileRange(r.min_file_bytes, r.max_file_bytes);
+    if (range) bits.push(`files ${range}`);
     if (pr > 0) { bits.push(`${fmtNum(pr)} skipped${r.bytes_pruned ? ` (${fmtBytes(r.bytes_pruned)})` : ''} by data skipping`); tone = 'ok'; }
     else if ((r.bytes_read ?? 0) >= 10 * GB && !(r.partition_cols ?? 0)) { bits.push('nothing skipped'); tone = 'warn'; }
   }

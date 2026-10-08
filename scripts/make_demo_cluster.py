@@ -55,7 +55,7 @@ class Node:
 
 SCAN_M = [("number of output rows", "sum"), ("number of files read", "sum"), ("number of files pruned", "sum"),
           ("size of files read", "size"), ("number of bytes pruned", "size"), ("number of partition columns", "sum"),
-          ("scan time", "timing")]
+          ("size of the smallest file read", "size"), ("size of the largest file read", "size"), ("scan time", "timing")]
 
 
 def scan(table: str, cols: str, fmt: str = "parquet") -> Node:
@@ -257,8 +257,10 @@ def build() -> list[dict]:
                                 (m["number of files pruned"][0], round(s["pruned_files"] * share)),
                                 (m["size of files read"][0], int((s["table_bytes"] - s["pruned_bytes"]) * share)),
                                 (m["number of bytes pruned"][0], int(s["pruned_bytes"] * share)), (m["scan time"][0], run * 6 // 10)]
-                        if i == 0:
-                            upd.append((m["number of partition columns"][0], s["part_cols"]))
+                        if i == 0:  # recorded once per scan (on the driver), not summed over tasks
+                            avg = s["table_bytes"] // max(1, s["files"])
+                            upd += [(m["number of partition columns"][0], s["part_cols"]),
+                                    (m["size of the smallest file read"][0], avg // 6), (m["size of the largest file read"][0], int(avg * 2.3))]
                     if s["write"] and ok:
                         for k2, v in s["write_rows"].items():
                             upd.append((s["write"].metrics[k2][0], int(v * share)))

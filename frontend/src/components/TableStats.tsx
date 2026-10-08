@@ -7,6 +7,9 @@ import { TOP_ROWS } from './SettingsAdvice';
 import { fmtBytes, fmtDuration, fmtNum, fmtRows } from '../format';
 
 export const BIG_FILE = 1024 ** 3;
+
+/** "3.1 MB – 1.4 GB": the smallest and the largest file read, when the scan recorded them (Databricks does). */
+export const fileRange = (lo?: number | null, hi?: number | null) => (lo && hi ? `${fmtBytes(lo)} – ${fmtBytes(hi)}` : hi ? `up to ${fmtBytes(hi)}` : null);
 const short = (t: string) => (/^[a-z]+:\/\/|^\//.test(t) ? `…/${t.split('/').filter(Boolean).pop()}` : t);
 
 /** A few lines under a table's name: size, files, average file, scans and their cost. */
@@ -14,7 +17,7 @@ export function TableStatsLines({ s }: { s: TS }) {
   const big = (s.avg_file_bytes ?? 0) >= BIG_FILE;
   return (
     <div className="small tstats">
-      {s.size_bytes ? <div><b>~{fmtBytes(s.size_bytes)}</b> in {fmtNum(s.files)} {s.files === 1 ? 'file' : 'files'} · <span className={big ? 'st-warn' : ''}>{fmtBytes(s.avg_file_bytes)} per file</span></div> : null}
+      {s.size_bytes ? <div><b>~{fmtBytes(s.size_bytes)}</b> in {fmtNum(s.files)} {s.files === 1 ? 'file' : 'files'} · <span className={big ? 'st-warn' : ''}>{fmtBytes(s.avg_file_bytes)} per file</span>{fileRange(s.min_file_bytes, s.max_file_bytes) ? <span className="muted"> ({fileRange(s.min_file_bytes, s.max_file_bytes)})</span> : null}{s.rows_per_file ? <span className="muted"> · ~{fmtRows(s.rows_per_file)} rows per file</span> : null}</div> : null}
       <div className="muted">scanned {fmtNum(s.scans)}×{s.bytes_from_files ? <> · {fmtBytes(s.bytes_from_files)} pulled from the files</> : null}{s.scan_task_ms ? <> · {fmtDuration(s.scan_task_ms)} of task time</> : null}</div>
       {big && <div className="st-warn">Files of {fmtBytes(s.avg_file_bytes)}: data skipping works per file, so a filter can skip little, and without deletion vectors a MERGE rewrites every file with one matching row. Aim for 64–256 MB files and cluster by the merge keys.</div>}
     </div>
@@ -30,6 +33,7 @@ type Scope = { run?: string; ctx?: string; query?: number };
 function flagsOf(t: TS, scope: Scope): { text: string; bad?: boolean }[] {
   const f: { text: string; bad?: boolean }[] = [];
   if ((t.avg_file_bytes ?? 0) >= BIG_FILE) f.push({ text: `${fmtBytes(t.avg_file_bytes)} per file: a MERGE rewrites whole files`, bad: true });
+  else if ((t.max_file_bytes ?? 0) >= BIG_FILE) f.push({ text: `largest file ${fmtBytes(t.max_file_bytes)} (average ${fmtBytes(t.avg_file_bytes)}): some files need compacting`, bad: true });
   if ((t.size_bytes ?? 0) >= BIG_TABLE && !t.files_pruned) f.push({ text: `read whole: no file skipped${t.partition_cols ? '' : ', not partitioned'}` });
   const again = scope.query !== undefined ? t.scans : t.runs ? t.scans / t.runs : t.scans;
   if (again >= 2) f.push({ text: scope.query !== undefined ? `scanned ${fmtNum(t.scans)}× in this query` : t.runs > 1 ? `scanned ${fmtNum(t.scans)}× over ${fmtNum(t.runs)} runs` : `scanned ${fmtNum(t.scans)}× in one run` });
@@ -75,7 +79,7 @@ export function TablesRead({ cid, scope = {}, embedded = false }: { cid: string;
       <table className="ro-find">
         <thead>
           <tr>
-            <th>Table</th><th className="num">Size</th><th className="num">Files</th><th className="num">Per file</th><th className="num">Scans</th>
+            <th>Table</th><th className="num">Size</th><th className="num">Files</th><th className="num">Per file <span className="th-sub">avg · min – max</span></th><th className="num">Rows per file <span className="th-sub">avg</span></th><th className="num">Scans</th>
             {scope.query === undefined && <th className="num">Runs</th>}
             <th className="num">Skipped</th><th className="num">Pulled from the files</th><th className="num">Rows read</th><th className="num">Scan time</th><th className="num">Task time</th>
           </tr>
@@ -83,12 +87,14 @@ export function TablesRead({ cid, scope = {}, embedded = false }: { cid: string;
         <tbody>
           {(all ? rows : rows.slice(0, TOP_ROWS)).map((t) => {
             const big = (t.avg_file_bytes ?? 0) >= BIG_FILE;
+            const range = fileRange(t.min_file_bytes, t.max_file_bytes);
             return (
               <tr key={t.table}>
                 <td><code className="fp-table" title={t.table}>{short(t.table)}</code>{t.partition_cols ? <div className="muted small">partitioned ({t.partition_cols} columns)</div> : <div className="muted small">not partitioned</div>}</td>
                 <td className="num">{t.size_bytes ? `~${fmtBytes(t.size_bytes)}` : '–'}</td>
                 <td className="num">{fmtNum(t.files)}</td>
-                <td className={`num ${big ? 'st-warn' : ''}`} title={big ? 'Over 1 GB per file: a MERGE rewrites whole files' : undefined}>{fmtBytes(t.avg_file_bytes)}</td>
+                <td className={`num ${big ? 'st-warn' : ''}`} title={big ? 'Over 1 GB per file: a MERGE rewrites whole files' : undefined}>{fmtBytes(t.avg_file_bytes)}{range ? <div className={`small ${(t.max_file_bytes ?? 0) >= BIG_FILE ? 'st-warn' : 'muted'}`}>{range}</div> : null}</td>
+                <td className="num" title="Rows read ÷ files read: the logs count rows per scan, not per file">{t.rows_per_file ? `~${fmtRows(t.rows_per_file)}` : '–'}</td>
                 <td className="num">{fmtNum(t.scans)}</td>
                 {scope.query === undefined && <td className="num">{t.runs ? fmtNum(t.runs) : '–'}</td>}
                 <td className="num">{t.files_pruned ? <>{fmtNum(t.files_pruned)} files<div className="muted small">{fmtBytes(t.bytes_pruned)}</div></> : <span className="muted">none</span>}</td>
@@ -104,7 +110,7 @@ export function TablesRead({ cid, scope = {}, embedded = false }: { cid: string;
       {rows.length > TOP_ROWS && <button className="linkish small" style={{ marginTop: 6 }} onClick={() => setAll(!all)}>{all ? `Only the top ${TOP_ROWS} ↑` : `All ${fmtNum(rows.length)} tables ↓`}</button>}
     </div>
   );
-  const note = 'Costliest reads first. Size and files from a scan that skipped nothing; pulled from the files is what the tasks actually read (only the columns they need: Parquet is columnar).';
+  const note = 'Costliest reads first. Size and files from a scan that skipped nothing; min – max is the smallest and largest file read (when the scan recorded them); rows per file is an average; pulled from the files is what the tasks actually read (only the columns they need: Parquet is columnar).';
   if (embedded)
     return (
       <div className="tables-read stack" style={{ gap: 8 }}>

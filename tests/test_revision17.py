@@ -269,6 +269,10 @@ def test_table_stats_and_merge_cycles(client):
     assert r.status_code == 200, r.text
     for t in r.json()["tables"]:
         assert t["scans"] >= 1 and isinstance(t["runs"], int)
+        # smallest/largest file only when the scan recorded them (Databricks); rows per file is an average
+        assert {"min_file_bytes", "max_file_bytes", "rows_per_file"} <= t.keys()
+        if t["min_file_bytes"] and t["max_file_bytes"]:
+            assert t["min_file_bytes"] <= t["max_file_bytes"]
     every = {t["table"]: t["scans"] for t in r.json()["tables"]}
     # one query's (or one run's) tables are a subset of the cluster's, scanned no more often
     qs = client.get(f"/api/clusters/{mf.MAIN}/datasets/sql_queries", params={"limit": 50}).json()["rows"]

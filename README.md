@@ -15,8 +15,9 @@ Parquet datasets and opens a **local web UI** that answers:
   executors, and errors grouped with the first line of your own code.
 - **What should I change?** Grouped fixes, highest impact first, each with what the data shows, the likely cause and
   the setting or code change. For the whole cluster and for each run.
-- **Which tables cost the most?** Size, files, file size, files skipped, bytes and rows pulled, and scan time, for the
-  cluster, a run or one query. It flags files over 1 GB, big tables read whole, and tables scanned again and again.
+- **Which tables cost the most?** Size, files, file size (average, smallest and largest), rows per file, files
+  skipped, bytes and rows pulled, and scan time, for the cluster, a run or one query. It flags files over 1 GB (on
+  average or the largest one), big tables read whole, and tables scanned again and again.
 - **Where did the rows go?** Rows read and written per table, rows in and out of every stage (per parent stage), and
   rows passed from one query or Spark job to the next. It flags a join that puts out more rows than came in.
 - **Which stage or task is to blame?** Drill down from cluster to run, query, Spark job, stage and task, with skew,

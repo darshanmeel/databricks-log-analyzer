@@ -154,9 +154,9 @@
       grouped by fingerprint, each with the first frame of your own code.</li>
     <li><b>What to change:</b> fixes grouped by impact, each with what the data shows, the likely cause, the setting or
       code change, and the problems found behind it. For the whole cluster and for each run.</li>
-    <li><b>Tables:</b> for the cluster, a run or one query: size, file count, file size, files skipped, bytes and rows
-      pulled, scan time and task time. It flags files over 1 GB, big tables read whole, and tables scanned again and
-      again.</li>
+    <li><b>Tables:</b> for the cluster, a run or one query: size, file count, file size (average, smallest and
+      largest), rows per file, files skipped, bytes and rows pulled, scan time and task time. It flags files over 1 GB,
+      big tables read whole, and tables scanned again and again.</li>
     <li><b>Rows:</b> rows read and written (inserted, updated, deleted, copied unchanged) per table and query; rows in
       (per parent stage) and out of every stage, with a flag on a join that puts out more rows than came in; and the
       rows passed between Spark jobs and between queries.</li>
@@ -270,11 +270,20 @@ dbx-log-analyzer ui --output ./demo_out --cache ./demo_cache</code></pre>
   <ul class="look">
     <li><b>The headline:</b> how many tables, the bytes and rows pulled from files, the task time, and the costliest
       table with its share of the time.</li>
-    <li><b>Flags:</b> files over 1 GB (a MERGE rewrites whole files), a big table read whole with no files skipped, a
+    <li><b>Flags:</b> files over 1 GB on average (a MERGE rewrites whole files) or a largest file over 1 GB (some
+      files need compacting), a big table read whole with no files skipped, a
       table that isn't partitioned, and a table scanned several times in one run or query.</li>
-    <li><b>The list:</b> top 10 first. Columns: size, files, per file, scans, runs, files skipped, pulled from the files
-      (only the columns needed: Parquet is columnar), rows read, scan time and task time. The same panel is on every run
-      and every query.</li>
+    <li><b>The list:</b> top 10 first. Columns: size, files, per file, rows per file, scans, runs, files skipped,
+      pulled from the files (only the columns needed: Parquet is columnar), rows read, scan time and task time. The same
+      panel is on every run and every query.</li>
+    <li><b>Per file:</b> the average file, and under it the smallest and the largest file read (here 245 MB – 3.4 GB
+      for <code>order_line_item</code>). Databricks records both for every scan; on open-source Spark only the
+      average is shown. A wide range means a few huge files next to many small ones: compaction
+      (<code>OPTIMIZE</code>) evens them out.</li>
+    <li><b>Rows per file:</b> rows read ÷ files read. It is an average only: the logs count rows per scan, not per
+      file.</li>
+    <li><b>On a run,</b> the Pruning column of <i>What it read and wrote</i> also shows each query's smallest and
+      largest file read.</li>
   </ul>
 
   <h2 id="run">One run</h2>

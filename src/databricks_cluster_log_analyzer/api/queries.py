@@ -3582,9 +3582,11 @@ _DELTA_ROOT = re.compile(r"^(.*?)/_delta_log(?:/.*)?$")
 _MERGE_STEP = re.compile(r"MERGE operation - (?:MERGE operation - )?(.+)$")
 _SCAN_METRICS = {
     "number of files read": "files_read", "number of files pruned": "files_pruned", "size of files read": "bytes_read",
-    "number of bytes pruned": "bytes_pruned", "number of partitions read": "partitions_read",
+    "number of bytes pruned": "bytes_pruned", "size of files pruned": "bytes_pruned", "number of partitions read": "partitions_read",
     "number of partition columns": "partition_cols", "dynamic pruning - num filters (DPP)": "dpp_filters",
     "dynamic pruning - num filters (DFP)": "dfp_filters",
+    # Databricks only: the smallest and the largest file the scan read
+    "size of the smallest file read": "min_file_bytes", "size of the largest file read": "max_file_bytes",
 }
 # rows a write reported, by metric name (appends and overwrites: output rows; Delta MERGE, UPDATE and DELETE: what
 # each did to the target; "copied" = rows of rewritten files that did not change)
@@ -3739,6 +3741,10 @@ def run_tables(store: Store, cid: str, run: str) -> dict[str, Any]:
             for f in ("rows", "files_read", "files_pruned", "bytes_read", "bytes_pruned", "partitions_read", "partition_cols", "dpp_filters", "dfp_filters"):
                 if sc.get(f) is not None:
                     r[f] = (r.get(f) or 0) + sc[f] if f not in ("partition_cols",) else max(r.get(f) or 0, sc[f])
+            if sc.get("min_file_bytes"):
+                r["min_file_bytes"] = min(r.get("min_file_bytes") or sc["min_file_bytes"], sc["min_file_bytes"])
+            if sc.get("max_file_bytes"):
+                r["max_file_bytes"] = max(r.get("max_file_bytes") or 0, sc["max_file_bytes"])
             if sc.get("filter"):
                 r["filter"] = sc["filter"]
         writes = []
@@ -4089,7 +4095,8 @@ _BATCH = re.compile(r"[Bb]atch[ =]+(\w+)")
 def table_stats(store: Store, con, cid: str, run: str | None = None, query: tuple[str, int] | None = None) -> dict[str, dict[str, Any]]:
     """Per table read from files (one query, one run, or the whole cluster): its size and file count from a scan that skipped
     nothing (files read + files skipped; the largest scan, as tables grow), the average file, how many times it was
-    scanned and in how many runs, what the scan stages pulled from the files (only the needed columns: Parquet is
+    scanned and in how many runs, the smallest and largest file read (Databricks scans record both), the average rows per
+    file, what the scan stages pulled from the files (only the needed columns: Parquet is
     columnar), and their wall and task time."""
     npath = store.dataset_path(cid, "sql_plan_nodes", required=False)
     qpath = store.dataset_path(cid, "sql_queries", required=False)
@@ -4119,17 +4126,23 @@ def table_stats(store: Store, con, cid: str, run: str | None = None, query: tupl
             pass
         t = out.setdefault(tbl, {"table": tbl, "scans": 0, "runs": set(), "size_bytes": None, "files": None,
                                  "files_read": 0, "bytes_read": 0, "files_pruned": 0, "bytes_pruned": 0,
+                                 "min_file_bytes": None, "max_file_bytes": None,
                                  "partition_cols": 0, "scan_stages": 0, "bytes_from_files": 0, "rows_from_files": 0, "scan_wall_ms": 0, "scan_task_ms": 0})
         t["scans"] += 1
         if r.get("run_key"):
             t["runs"].add(r["run_key"])
         fr, fp = mt.get("number of files read", 0), mt.get("number of files pruned", 0)
-        br, bp = mt.get("size of files read", 0), mt.get("number of bytes pruned", 0)
+        br, bp = mt.get("size of files read", 0), mt.get("number of bytes pruned") or mt.get("size of files pruned", 0)
         t["files_read"] += fr
         t["files_pruned"] += fp
         t["bytes_read"] += br
         t["bytes_pruned"] += bp
         t["partition_cols"] = max(t["partition_cols"], mt.get("number of partition columns", 0))
+        lo, hi = mt.get("size of the smallest file read", 0), mt.get("size of the largest file read", 0)
+        if lo and fr:
+            t["min_file_bytes"] = lo if t["min_file_bytes"] is None else min(t["min_file_bytes"], lo)
+        if hi:
+            t["max_file_bytes"] = max(t["max_file_bytes"] or 0, hi)
         if br + bp and (t["size_bytes"] is None or br + bp > t["size_bytes"]):
             t["size_bytes"], t["files"] = br + bp, fr + fp
     if out and spath is not None:
@@ -4165,6 +4178,8 @@ def table_stats(store: Store, con, cid: str, run: str | None = None, query: tupl
     for t in out.values():
         t["runs"] = len(t["runs"])
         t["avg_file_bytes"] = round(t["size_bytes"] / t["files"]) if t["size_bytes"] and t["files"] else None
+        # rows per file: only an average (the logs count rows per scan, not per file)
+        t["rows_per_file"] = round(t["rows_from_files"] / t["files_read"]) if t["rows_from_files"] and t["files_read"] else None
     return out
 
 

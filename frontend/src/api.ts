@@ -939,6 +939,8 @@ export interface RunTableRead {
   rows?: number | null;
   files_read?: number | null; files_pruned?: number | null; bytes_read?: number | null; bytes_pruned?: number | null;
   partitions_read?: number | null; partition_cols?: number | null; dpp_filters?: number | null; dfp_filters?: number | null;
+  /** Databricks scans only: the smallest and the largest file read */
+  min_file_bytes?: number | null; max_file_bytes?: number | null;
 }
 export interface RunTablesQuery {
   ctx: string; id: number; start: number | null; end: number | null; status: string | null; description: string; op: string;
@@ -965,6 +967,8 @@ export interface TableStats {
   table: string; size_bytes: number | null; files: number | null; avg_file_bytes: number | null; scans: number; runs: number;
   files_read: number; files_pruned: number; bytes_read: number; bytes_pruned: number; partition_cols: number;
   scan_stages: number; bytes_from_files: number; rows_from_files?: number; scan_wall_ms: number; scan_task_ms: number;
+  /** Databricks scans only: the smallest and the largest file read; rows per file is an average (no per-file counts) */
+  min_file_bytes?: number | null; max_file_bytes?: number | null; rows_per_file?: number | null;
 }
 export interface MergeCycle {
   batch: string | null; start: number | null; end: number | null; kind: 'upserts' | 'deletes' | null; target: string | null;
