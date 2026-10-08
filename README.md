@@ -33,12 +33,46 @@ python3 -m pip install -e .
 dbx-log-analyzer ui --output ~/dbx/output --cache ~/dbx/cache
 ```
 
+### Or run it without installing the package
+
+The app runs straight from the folder: install only the libraries it uses once, then point Python at `src` each
+time. Nothing is registered with Python, so a fresh download or a moved folder just works.
+
+**Windows (PowerShell)**, from the repo folder:
+
+```powershell
+python -m pip install pandas pyarrow duckdb click fastapi uvicorn   # once
+$env:PYTHONPATH = "src"                                            # in every new PowerShell window
+python -m databricks_cluster_log_analyzer ui --output C:\dbx\output --cache C:\dbx\cache
+```
+
+**macOS / Linux**, from the repo folder:
+
+```bash
+python3 -m pip install pandas pyarrow duckdb click fastapi uvicorn   # once
+PYTHONPATH=src python3 -m databricks_cluster_log_analyzer ui --output ~/dbx/output --cache ~/dbx/cache
+```
+
+Every command in this README works this way: write `python -m databricks_cluster_log_analyzer` where it says
+`dbx-log-analyzer`, for example `python -m databricks_cluster_log_analyzer analyze --root ... --cluster ...`. For a
+cloud source, also install its libraries: `databricks-sdk` (Unity Catalog volumes), `azure-storage-file-datalake
+azure-identity` (ADLS) or `boto3` (S3).
+
+What the libraries are for: `pandas` and `pyarrow` read the logs and write the Parquet datasets, `duckdb` queries them
+for the UI, `fastapi` and `uvicorn` are the local web server (it listens on your machine only), `click` is the
+command line.
+
+### Then
+
 A browser tab opens at http://127.0.0.1:8765. On **Home**: pick **Local folder**, paste the folder that *contains*
 the cluster-id folder (e.g. `C:\logs\cluster_logs` for `C:\logs\cluster_logs\1006-120000-sample01\`), pick the
 cluster, then **Analyze**. Results are written to `<output>\<cluster_id>\`; local log folders are read in place.
 
-- **Update**: `git pull`, then start the UI again with the same command. Run `pip install -e .` again only if you
-  moved the folder. Clusters analyzed before an update still open; click **Analyze again** for the newest charts.
+- **Update**: `git pull` (or download the zip again), then start the UI again with the same command. With the
+  package installed, run `pip install -e .` again only if you moved the folder or use a new download; without it,
+  nothing to redo.
+- **No module named databricks_cluster_log_analyzer**: the package is not installed for this folder (or was
+  installed from a folder that moved). Run `python -m pip install -e .` here, or set `PYTHONPATH` to `src` as above. Clusters analyzed before an update still open; click **Analyze again** for the newest charts.
 - **Command not found**: use `python -m databricks_cluster_log_analyzer ui --output ... --cache ...` (Python's
   Scripts folder is not on PATH).
 - **Port in use**: add `--port 8766` and open http://127.0.0.1:8766.
