@@ -19,6 +19,19 @@ function FindingsCell({ c }: { c: ClusterListItem }) {
   );
 }
 
+/** Why the cluster is failed (its jobs or queries failed), or that it succeeded after task retries: a failed task
+ * attempt that was run again is not a failure. */
+function StatusWhy({ c }: { c: ClusterListItem }) {
+  const k = c.counts;
+  if (!k) return null;
+  const fj = k.failed_jobs ?? 0, fq = k.failed_queries ?? 0, ft = k.failed_tasks ?? 0;
+  if ((c.status ?? '').toLowerCase() === 'failed') {
+    const why = [fj ? `${fmtNum(fj)} ${fj === 1 ? 'job' : 'jobs'}` : null, fq ? `${fmtNum(fq)} ${fq === 1 ? 'query' : 'queries'}` : null].filter(Boolean).join(' and ');
+    return why ? <div className="muted small">{why} failed</div> : null;
+  }
+  return ft ? <div className="muted small">after {fmtNum(ft)} task {ft === 1 ? 'retry' : 'retries'}</div> : null;
+}
+
 function ClustersTable({ clusters }: { clusters: ClusterListItem[] }) {
   const nav = useNavigate();
   if (!clusters.length)
@@ -33,7 +46,7 @@ function ClustersTable({ clusters }: { clusters: ClusterListItem[] }) {
             <th>Started (UTC)</th>
             <th className="num">Duration</th>
             <th className="num">Jobs failed</th>
-            <th className="num">Tasks failed</th>
+            <th className="num" title="Task attempts that failed. Spark runs a failed task again, so these do not fail the cluster unless a job or query failed too.">Task attempts retried</th>
             <th>Findings</th>
             <th>Analyzed</th>
           </tr>
@@ -49,6 +62,7 @@ function ClustersTable({ clusters }: { clusters: ClusterListItem[] }) {
               </td>
               <td>
                 <StatusBadge status={c.status} />
+                <StatusWhy c={c} />
               </td>
               <td className="nowrap">{fmtTs(c.start_time)}</td>
               <td className="num">{fmtDuration(c.duration_ms)}</td>

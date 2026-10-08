@@ -85,7 +85,7 @@ function Kpis({ s }: { s: Summary }) {
       <Kpi label="Spark applications" value={fmtNum(c.apps ?? 0)} />
       <Kpi label="Jobs failed" value={fmtNum(c.failed_jobs ?? 0)} of={fmtNum(c.spark_jobs ?? 0)} tone={c.failed_jobs ? 'bad' : undefined} />
       <Kpi label="Stages" value={fmtNum(c.stages ?? 0)} foot={c.failed_stages ? `${fmtNum(c.failed_stages)} failed` : 'none failed'} tone={c.failed_stages ? 'bad' : undefined} />
-      <Kpi label="Tasks failed" value={fmtNum(c.failed_tasks ?? 0)} of={fmtNum(c.tasks ?? 0)} tone={c.failed_tasks ? 'warn' : undefined} />
+      <Kpi label="Task attempts retried" value={fmtNum(c.failed_tasks ?? 0)} of={fmtNum(c.tasks ?? 0)} tone={c.failed_tasks ? 'warn' : undefined} />
       <Kpi label="Spill" value={fmtBytes(spill)} foot={`disk ${fmtBytes(t.disk_spill ?? 0)}`} tone={(t.disk_spill ?? 0) >= 1024 ** 3 ? 'warn' : undefined} />
       <Kpi label="GC share of task time" value={fmtPct(t.gc_share)} tone={gcBreach(t.gc_share) ? 'warn' : undefined} />
       <Kpi label="Executors lost" value={fmtNum(c.executors_lost ?? 0)} of={fmtNum(c.executors ?? 0)} tone={c.executors_lost ? 'bad' : undefined} />

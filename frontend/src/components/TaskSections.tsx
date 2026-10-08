@@ -18,7 +18,7 @@ import { Fold } from './ui';
 type Kind = 'ms' | 'b';
 type MetricKey = 'start_wait' | 'task_ms' | 'cpu_ms' | 'gc_ms' | 'input_bytes' | 'shuffle_read' | 'shuffle_write' | 'mem_spill' | 'disk_spill' | 'peak_mem' | 'output_bytes' | 'fetch_wait_ms';
 const METRICS: { k: MetricKey; label: string; kind: Kind; peak?: boolean; missing?: string; noRate?: boolean }[] = [
-  { k: 'start_wait', label: 'Waited to start', kind: 'ms', noRate: true, missing: 'no start times for these tasks' },
+  { k: 'start_wait', label: 'Each task waited', kind: 'ms', noRate: true, missing: 'no start times for these tasks' },
   { k: 'task_ms', label: 'Duration', kind: 'ms' },
   { k: 'cpu_ms', label: 'CPU time', kind: 'ms', missing: 'not kept in this output: re-run analyze with task metrics to get it' },
   { k: 'gc_ms', label: 'GC time', kind: 'ms' },
@@ -113,12 +113,12 @@ function MetricRows({ c, idx, mode, scaleOf, hideEmpty, waits, totalOf }: {
     <>
       {ws && wu && mode === 'task' && (
         <tr className="wait-row">
-          <td><b className="wait-text">Waited for a core</b><U u={wu.u} /><div className="muted small">per stage, submitted → first task</div></td>
+          <td><b className="wait-text" title="One value per stage: from the stage being submitted to its first task starting. Small here and large below means the stage started at once but its tasks ran in waves.">Stage's first task waited</b><U u={wu.u} /><div className="muted small">one per stage: submitted → its first task started</div></td>
           <td className="num muted">{wu.f(ws.min)}</td><td className="num">{wu.f(ws.p10)}</td><td className="num">{wu.f(ws.p50)}</td>
           <td className="num">{wu.f(ws.p90)}</td><td className="num wait-text"><b>{wu.f(ws.max)}</b></td>
           <td><Spark vals={ws.vals} scale={ws.max} /></td>
           <td className="num wait-text">{wu.f(ws.sum)}</td>
-          <td className="num">{fmtNum(ws.vals.filter((x) => x >= 1000).length)} of {fmtNum(ws.n)} stages</td>
+          <td className="num">{fmtNum(ws.vals.filter((x) => x >= 1000).length)} of {fmtNum(ws.n)} stages over 1 s</td>
         </tr>
       )}
       {rows.map(({ m, st, why }) => {
@@ -148,7 +148,7 @@ function MetricRows({ c, idx, mode, scaleOf, hideEmpty, waits, totalOf }: {
         const share = totalOf && mode === 'task' && !m.peak && !m.noRate ? (totalOf(m.k) ? st.sum / totalOf(m.k) : null) : null;
         return (
           <tr key={m.k}>
-            <td className={m.k.includes('spill') ? 'spill-label' : m.k === 'start_wait' ? 'wait-text' : ''}>{m.label}<U u={f.u} />{m.k === 'start_wait' ? <div className="muted small">stage submitted → the task got a core</div> : null}</td>
+            <td className={m.k.includes('spill') ? 'spill-label' : m.k === 'start_wait' ? 'wait-text' : ''}>{m.label}<U u={f.u} />{m.k === 'start_wait' ? <div className="muted small" title="One value per task: tasks queue behind the stage's own earlier tasks (waves) and behind other work holding the cores.">one per task: stage submitted → this task started</div> : null}</td>
             <td className="num muted">{f.f(st.min)}</td>
             <td className="num">{f.f(st.p10)}</td>
             <td className="num">{f.f(st.p50)}</td>
