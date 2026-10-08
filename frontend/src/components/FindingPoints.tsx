@@ -68,7 +68,7 @@ export const whereOf = (f: FindingRow) => {
   return e.replace('driver/executor logs', 'driver and executor logs');
 };
 
-/** Sentences, kept whole: "14.1 GB" and "e.g. 26/09" are not sentence ends. */
+/** Sentences, kept whole: "14.1 GiB" and "e.g. 26/09" are not sentence ends. */
 const sentences = (s: string | null | undefined) =>
   (s ?? '').split(/(?<=[.!?])\s+(?=[A-Z(])/).map((x) => x.trim().replace(/\.$/, '')).filter(Boolean);
 const IS_CAUSE = /\b(does not|doesn't|because|too small|too few|too many|cannot|can't)\b/i;

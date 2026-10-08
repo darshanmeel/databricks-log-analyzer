@@ -166,7 +166,8 @@ def _root_cause(t, rules: Rules) -> dict | None:
     if len(steps) == 1:
         text = f"{head['incident_title']}: {chain}."
     else:
-        text = (f"{head['incident_title']}. In time order: {chain}. Read it left to right: the first item is the most "
+        # cause to effect, not strictly by clock: a log line can be stamped a moment after the failure it caused
+        text = (f"{head['incident_title']}. Cause to effect: {chain}. Read it left to right: the first item is the most "
                 "likely root cause; each later one is linked to the one before by a shared stage, executor or host.")
     others = []
     for rank in ranks[1:4]:

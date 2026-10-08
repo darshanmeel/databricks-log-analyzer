@@ -263,7 +263,7 @@ def test_stage_skew(ds):
     s0 = stage(ds, A, 0)
     assert s0.p50_task_ms == 5000 and s0.max_task_ms == 900_000
     assert s0["skew"] == pytest.approx(180.0)
-    # Revision 11: every task read the same 128 MB, so the time skew is not data skew
+    # Revision 11: every task read the same 128 MiB, so the time skew is not data skew
     assert s0.data_skew == pytest.approx(1.0) and s0.p50_task_bytes_in == s0.max_task_bytes_in == 128 * 2**20
     assert s0.input_records == 20_000_000 and s0.shuffle_write_records == 20_000
     assert s0.status == "succeeded" and is_null(s0.failure_reason)
@@ -435,7 +435,7 @@ def test_findings_details(ds):
     assert "180.0" in skew.evidence and "900" in skew.evidence
     assert skew.stage_id == 0 and skew.stage_attempt == 0 and to_ms(skew.ts) == ta(922)
     spill = one(a[a.category == "disk_spill"])
-    assert spill.severity == "medium" and "3.0 GB" in spill.evidence and spill.stage_id == 1
+    assert spill.severity == "medium" and "3.0 GiB" in spill.evidence and spill.stage_id == 1
     gc = one(a[a.category == "gc_pressure"])
     # 30% GC on a short stage cost it under a minute: low, not medium
     assert gc.severity == "low" and "30" in gc.evidence and gc.stage_id == 3

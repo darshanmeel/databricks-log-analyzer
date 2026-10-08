@@ -66,7 +66,7 @@ def node(qid, name, files, pruned=0, size=0, parts=0):
 
 def scenario(scan="Scan parquet"):
     """The upsert MERGE (queries 10, 20, 25, 30) and the start of the delete MERGE of the same batch (40, 50). Its write
-    step (30) reads the source copy back (12 GB, not the target) and 300 GB of the target, and keeps the matched rows."""
+    step (30) reads the source copy back (12 GiB, not the target) and 300 GiB of the target, and keeps the matched rows."""
     queries = [
         q(10, "materialize source", 0, input_bytes=6 * GB, final_plan=f"(1) Scan parquet {SOURCE}"),
         q(20, "scanning files for matches", 1, input_bytes=32 * GB, final_plan=SCAN_PLAN),
@@ -104,7 +104,7 @@ def facts(queries, stages, nodes, step=30):
 def test_merge_facts_with_dv_and_cdf(scan):
     f = facts(*scenario(scan))
     assert f["target"] == TARGET
-    # the target only: not the 12 GB re-read of the source copy, not the replanned scan of the delete MERGE
+    # the target only: not the 12 GiB re-read of the source copy, not the replanned scan of the delete MERGE
     assert f["target_bytes"] == 300 * GB and f["target_rows"] == 500_000_000 and f["target_stages"] == [301]
     assert f["copy_bytes"] == 12 * GB and f["copy_rows"] == S
     assert f["scan_bytes"] == 20 * GB  # the scanning step's target scan, without its copy read
@@ -169,10 +169,10 @@ def test_merge_rewrite_finding_uses_merge_facts():
     f = out[0]
     assert f["entity"] == f"MERGE into {TARGET} (query 30)" and f["sql_execution_id"] == 30
     ev = f["evidence"]
-    assert "read 300 GB of the target (500,000,000 rows) and wrote 20.0 GB" in ev
+    assert "read 300 GiB of the target (500,000,000 rows) and wrote 20.0 GiB" in ev
     assert f"Matched rows marked deleted (deletion vectors); {S:,} data rows written, {OUT - S:,} change rows (CDF)" in ev
     assert "rewrote" not in ev and "rewritten" not in ev
-    assert "The source copy was read again: 12.0 GB" in ev and "scanned another 20.0 GB" in ev
+    assert "The source copy was read again: 12.0 GiB" in ev and "scanned another 20.0 GiB" in ev
     assert "Liquid Clustering by order_id" in f["fix"] and "deletion vectors are off" not in f["fix"]
 
 

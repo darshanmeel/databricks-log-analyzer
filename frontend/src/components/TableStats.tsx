@@ -1,5 +1,5 @@
 // Revision 20: how big a table is and what reading it cost. The size and file count come from a scan that skipped
-// nothing (files read + files skipped); a MERGE rewrites every file it touches, so files over 1 GB are flagged.
+// nothing (files read + files skipped); a MERGE rewrites every file it touches, so files over 1 GiB are flagged.
 import { api, type TableStats as TS } from '../api';
 import { useState } from 'react';
 import { useAsync } from '../hooks';
@@ -8,7 +8,7 @@ import { fmtBytes, fmtDuration, fmtNum, fmtRows } from '../format';
 
 export const BIG_FILE = 1024 ** 3;
 
-/** "3.1 MB – 1.4 GB": the smallest and the largest file read, when the scan recorded them (Databricks does). */
+/** "3.1 MiB – 1.4 GiB": the smallest and the largest file read, when the scan recorded them (Databricks does). */
 export const fileRange = (lo?: number | null, hi?: number | null) => (lo && hi ? `${fmtBytes(lo)} – ${fmtBytes(hi)}` : hi ? `up to ${fmtBytes(hi)}` : null);
 const short = (t: string) => (/^[a-z]+:\/\/|^\//.test(t) ? `…/${t.split('/').filter(Boolean).pop()}` : t);
 
@@ -19,7 +19,7 @@ export function TableStatsLines({ s }: { s: TS }) {
     <div className="small tstats">
       {s.size_bytes ? <div><b>~{fmtBytes(s.size_bytes)}</b> in {fmtNum(s.files)} {s.files === 1 ? 'file' : 'files'} · <span className={big ? 'st-warn' : ''}>{fmtBytes(s.avg_file_bytes)} per file</span>{fileRange(s.min_file_bytes, s.max_file_bytes) ? <span className="muted"> ({fileRange(s.min_file_bytes, s.max_file_bytes)})</span> : null}{s.rows_per_file ? <span className="muted"> · ~{fmtRows(s.rows_per_file)} rows per file</span> : null}</div> : null}
       <div className="muted">scanned {fmtNum(s.scans)}×{s.bytes_from_files ? <> · {fmtBytes(s.bytes_from_files)} pulled from the files</> : null}{s.scan_task_ms ? <> · {fmtDuration(s.scan_task_ms)} of task time</> : null}</div>
-      {big && <div className="st-warn">Files of {fmtBytes(s.avg_file_bytes)}: data skipping works per file, so a filter can skip little, and without deletion vectors a MERGE rewrites every file with one matching row. Aim for 64–256 MB files and cluster by the merge keys.</div>}
+      {big && <div className="st-warn">Files of {fmtBytes(s.avg_file_bytes)}: data skipping works per file, so a filter can skip little, and without deletion vectors a MERGE rewrites every file with one matching row. Aim for 64–256 MiB files and cluster by the merge keys.</div>}
     </div>
   );
 }
@@ -94,7 +94,7 @@ export function TablesRead({ cid, scope = {}, embedded = false }: { cid: string;
                 <td><code className="fp-table" title={t.table}>{short(t.table)}</code>{t.partition_cols ? <div className="muted small">partitioned ({t.partition_cols} columns)</div> : <div className="muted small">not partitioned</div>}</td>
                 <td className="num">{t.size_bytes ? `~${fmtBytes(t.size_bytes)}` : '–'}</td>
                 <td className="num">{fmtNum(t.files)}</td>
-                <td className={`num ${big ? 'st-warn' : ''}`} title={big ? 'Over 1 GB per file: a MERGE rewrites whole files' : undefined}>{fmtBytes(t.avg_file_bytes)}{range ? <div className={`small ${(t.max_file_bytes ?? 0) >= BIG_FILE ? 'st-warn' : 'muted'}`}>{range}</div> : null}</td>
+                <td className={`num ${big ? 'st-warn' : ''}`} title={big ? 'Over 1 GiB per file: a MERGE rewrites whole files' : undefined}>{fmtBytes(t.avg_file_bytes)}{range ? <div className={`small ${(t.max_file_bytes ?? 0) >= BIG_FILE ? 'st-warn' : 'muted'}`}>{range}</div> : null}</td>
                 <td className="num" title="Rows read ÷ files read: the logs count rows per scan, not per file">{t.rows_per_file ? `~${fmtRows(t.rows_per_file)}` : '–'}</td>
                 <td className="num">{fmtNum(t.scans)}</td>
                 {scope.query === undefined && <td className="num">{t.runs ? fmtNum(t.runs) : '–'}</td>}

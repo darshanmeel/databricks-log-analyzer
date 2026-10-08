@@ -519,8 +519,8 @@ _NAMED_TEXT = {"findings": ("evidence", "entity"), "run_story": ("detail",), "st
 
 
 def stage_what(scopes, s: Mapping[str, Any]) -> str | None:
-    """What a stage does, from the operators Spark ran in it and its bytes: "scan my_catalog.sales.orders, 408 GB",
-    "sort-merge join, spilled 67 GB", "write 45 GB"."""
+    """What a stage does, from the operators Spark ran in it and its bytes: "scan my_catalog.sales.orders, 408 GiB",
+    "sort-merge join, spilled 67 GiB", "write 45 GiB"."""
     sc = list(scopes or [])
     bits: list[str] = []
     for x in sc:
@@ -2668,17 +2668,18 @@ def settings_view(store: Store, cid: str) -> dict[str, Any]:
         big = [x for x in at_n if max(x.get("wmed_task_bytes_in") or 0, x.get("p50_task_bytes_in") or 0) >= 128 * MB]
         if big:
             need = max((x.get("shuffle_read") or 0) for x in big)
-            suggest = max(n, int(math.ceil(need / (128 * MB) / 100.0)) * 100)
+            # the same count the large_tasks finding gives (one partition per 128 MiB of the biggest shuffle)
+            suggest = max(n, int(math.ceil(need / (128 * MB))))
             spill = sum(x.get("disk_spill") or 0 for x in big)
             dflt = merged.get("spark.sql.shuffle.partitions", {}).get("source") in (None, "default")
             add("high" if spill >= GB else "medium", "spark.sql.shuffle.partitions",
                 f"{len(big)} big shuffle {'stage was' if len(big) == 1 else 'stages were'} cut into only {n} tasks",
-                [f"{len(at_n)} {'stage' if len(at_n) == 1 else 'stages'} ran exactly {n} tasks, {'the default' if dflt else 'the setting'}",
-                 f"In {len(big)} of them half the data was in tasks of 128 MB or more",
+                [f"{len(at_n)} {'stage' if len(at_n) == 1 else 'stages'} ran exactly {n} tasks, {'the default' if dflt else 'as set in the ' + str(merged['spark.sql.shuffle.partitions'].get('source'))}",
+                 f"In {len(big)} of them half the data was in tasks of 128 MiB or more",
                  f"The biggest read {_fmt_bytes(need)} of shuffle",
                  f"They spilled {_fmt_bytes(spill)} to disk" if spill else None],
                 f"spark.sql.shuffle.partitions = {n} is too few for this much data: each task gets more than fits in its memory.",
-                [f"Set spark.sql.shuffle.partitions ≈ {suggest} for these jobs (biggest shuffle read ÷ 128 MB)",
+                [f"Set spark.sql.shuffle.partitions ≈ {suggest} for these jobs (biggest shuffle read ÷ 128 MiB)",
                  "or turn on spark.databricks.adaptive.autoOptimizeShuffle.enabled (shuffle.partitions = auto) so Databricks sizes it"],
                 refs(big, lambda x: x.get("shuffle_read")))
     # 2. adaptive execution off
@@ -2690,7 +2691,7 @@ def settings_view(store: Store, cid: str) -> dict[str, Any]:
     skewed = [x for x in stages if (x.get("data_skew") or 0) >= 5 and (x.get("max_task_bytes_in") or 0) >= 256 * MB]
     if skewed and (val("spark.sql.adaptive.skewJoin.enabled") or "true").lower() == "false":
         add("high", "spark.sql.adaptive.skewJoin.enabled", "Skew-join handling is off while stages are skewed",
-            [f"{len(skewed)} stages had a task with at least 5× the median data and 256 MB or more",
+            [f"{len(skewed)} stages had a task with at least 5× the median data and 256 MiB or more",
              "spark.sql.adaptive.skewJoin.enabled = false"],
             "A few keys hold most of the data and Spark is not allowed to split them.",
             ["Remove spark.sql.adaptive.skewJoin.enabled = false"], refs(skewed, lambda x: x.get("max_task_bytes_in")))
@@ -2705,7 +2706,7 @@ def settings_view(store: Store, cid: str) -> dict[str, Any]:
             [f"Half their data was read by tasks of up to {_fmt_bytes(max(x['wmed_task_bytes_in'] for x in unsplit))}",
              f"The split size is {_fmt_bytes(mpb)}"],
             "The files cannot be split: gzip, one huge file, or one huge row group.",
-            ["Store the input as splittable Parquet / Delta with files of 128 MB – 1 GB (OPTIMIZE)",
+            ["Store the input as splittable Parquet / Delta with files of 128 MiB – 1 GiB (OPTIMIZE)",
              "or repartition right after reading"],
             refs(unsplit, lambda x: x.get("wmed_task_bytes_in")))
     # 4. spill: execution memory per task
@@ -2891,7 +2892,7 @@ def settings_view(store: Store, cid: str) -> dict[str, Any]:
         if heavy:
             add("info", TAGS + "runtimeEngine", "Photon was not used",
                 [f"No query plan has a Photon operator ({eng.lower() or 'standard'} runtime)",
-                 f"{len(heavy)} queries were MERGEs or joins or read 10 GB or more"],
+                 f"{len(heavy)} queries were MERGEs or joins or read 10 GiB or more"],
                 "The job runs on the standard engine.",
                 ["Try the job on a Photon runtime: MERGE, joins and aggregations often run 2–3× faster, at a higher DBU rate"])
     # 7. paying for executors that ran nothing
@@ -3001,11 +3002,11 @@ def _fmt_dur(ms) -> str:
 
 def _fmt_bytes(v) -> str:
     v = float(v or 0)
-    for u in ("B", "KB", "MB", "GB", "TB"):
-        if v < 1024 or u == "TB":
-            return f"{v:.0f} {u}" if u in ("B", "KB") or v >= 100 else f"{v:.1f} {u}"
+    for u in ("B", "KiB", "MiB", "GiB", "TiB"):
+        if v < 1024 or u == "TiB":
+            return f"{v:.0f} {u}" if u in ("B", "KiB") or v >= 100 else f"{v:.1f} {u}"
         v /= 1024
-    return f"{v:.1f} TB"
+    return f"{v:.1f} TiB"
 
 
 def _fmt_ms(ms) -> str:
@@ -3308,9 +3309,9 @@ def _gantt_markers(store, con, cid, executors, app_ids, start, end, *, single_ct
         for r in rows:
             heap = ""
             if r.get("heap_before_mb") is not None and r.get("heap_after_mb") is not None:
-                heap = f", heap {r['heap_before_mb']:.0f} -> {r['heap_after_mb']:.0f} MB"
+                heap = f", heap {r['heap_before_mb']:.0f} -> {r['heap_after_mb']:.0f} MiB"
                 if r.get("heap_total_mb") is not None:
-                    heap += f" of {r['heap_total_mb']:.0f} MB"
+                    heap += f" of {r['heap_total_mb']:.0f} MiB"
             markers.append(
                 {
                     "ts": r["ts"],
@@ -4165,7 +4166,7 @@ def _related_stages(store: Store, con, cid: str, q: Mapping[str, Any], scope_lik
 
 def _source_copy_fact(store: Store, con, cid: str, q: Mapping[str, Any]) -> str | None:
     """What the MERGE's source copy cost: the stages of this MERGE that read the copy back, how much each read and
-    how many times. "Source copy: 30.9 GB on local disk, read 2 times (61.8 GB in all)"."""
+    how many times. "Source copy: 30.9 GiB on local disk, read 2 times (61.8 GiB in all)"."""
     reads = [r["input_bytes"] or 0 for r in _related_stages(store, con, cid, q, "%mergeMaterializedSource%", True)]
     reads = [b for b in reads if b > 0]
     if not reads:

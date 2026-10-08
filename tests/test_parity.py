@@ -143,7 +143,7 @@ def test_evidence_formats_match_notebook(ds):
     secs = _spark_round(s0.max_task_ms / 1000)
     assert re.fullmatch(rf"slowest task {int(secs)}(\.0)?s = {re.escape(str(float(s0["skew"])))}x the median", skew.evidence), skew.evidence
     spill = a[a.category == "disk_spill"].iloc[0]
-    assert spill.evidence.startswith("3.0 GB spilled to disk")  # then how much went to memory first
+    assert spill.evidence.startswith("3.0 GiB spilled to disk")  # then how much went to memory first
     gc = a[a.category == "gc_pressure"].iloc[0]
     assert re.fullmatch(r"30(\.0)?% of task time in GC", gc.evidence), gc.evidence
     tiny = a[a.category == "tiny_tasks"].iloc[0]

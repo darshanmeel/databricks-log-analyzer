@@ -56,7 +56,7 @@ def test_big_read_counts_storage_not_the_dataframe_cache():
            "tasks": 10, "duration_ms": MIN, "start_time": 0, "rdd_scopes": ["Scan parquet shop.orders"]}]
     f = _big_read_findings("c", st, [], rules)
     assert [r["stage_id"] for r in f] == [8]
-    assert "read 40 GB from storage" in f[0]["evidence"] and "another 20 GB came from a DataFrame cache" in f[0]["evidence"]
+    assert "read 40 GiB from storage" in f[0]["evidence"] and "another 20 GiB came from a DataFrame cache" in f[0]["evidence"]
 
 
 # ---- #5: incidents ------------------------------------------------------------------------------------------------
@@ -254,7 +254,7 @@ def test_cache_advice_ranks_first(output_root, tmp_path):
     f = pq.read_table(d / "findings.parquet").to_pylist()
     n = len(f)
     f += [_f(f"F{n + 1:03d}", "dataframe_cache", H, entity="query 3: DataFrame cache", spark_context_id=C,
-             sql_execution_id=3, evidence="2 queries read a DataFrame cache (cache() or persist()); the largest is 40 GB. "
+             sql_execution_id=3, evidence="2 queries read a DataFrame cache (cache() or persist()); the largest is 40 GiB. "
                                           "It was never released (no unpersist)."),
           _f(f"F{n + 2:03d}", "gc_stuck", H, entity="executor 2", executor_id="2", spark_context_id=C,
              evidence="stuck in GC")]

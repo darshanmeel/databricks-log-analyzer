@@ -44,7 +44,7 @@ export function gcBreach(share: number | null | undefined): boolean {
   return (share ?? 0) >= TH.gcShare;
 }
 
-/** Revision 19: what one task reads (input + shuffle read). Over 128 MB is a warning, over 256 MB critical: the task
+/** Revision 19: what one task reads (input + shuffle read). Over 128 MiB is a warning, over 256 MiB critical: the task
  * holds too much at once (spill, GC, long tails); more partitions would split it. */
 export const TASK_READ_WARN = 128 * 1024 ** 2;
 export const TASK_READ_CRIT = 256 * 1024 ** 2;

@@ -17,7 +17,7 @@ export function hasLogic(l: PlanLogic | null | undefined): l is PlanLogic {
     l.scans.some((s) => s.partition_filters.length || s.data_filters.length || s.pushed_filters.length));
 }
 
-const hasCost = (f: string) => /\d\s?(B|KB|MB|GB|TB|s|ms|min|h)\b/.test(f);
+const hasCost = (f: string) => /\d\s?(B|KiB|MiB|GiB|TiB|s|ms|min|h)\b/.test(f);
 /** A plan note in two or three words (the sentence is its tooltip). */
 const shortFact = (f: string) =>
   /Change Data Feed/.test(f) ? 'change data feed on' : /Optimized write/.test(f) ? 'optimized write: one more shuffle'

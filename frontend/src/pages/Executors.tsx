@@ -311,7 +311,7 @@ function GcPerExecutor({ rows, selected, onPick }: { rows: ExecutorProfileRow[];
             flagged: jvm ? (r.full_gcs ?? 0) >= FULL_GC_MIN : gcBreach(r.gc_share),
             selected: selected === ekey(r),
             title: jvm
-              ? `${fmtNum(r.gc_pauses)} pauses, ${fmtNum(r.full_gcs)} full GCs, heap after GC up to ${r.max_heap_after_mb ? `${fmtNum(r.max_heap_after_mb)} MB` : '–'}`
+              ? `${fmtNum(r.gc_pauses)} pauses, ${fmtNum(r.full_gcs)} full GCs, heap after GC up to ${r.max_heap_after_mb ? `${fmtNum(r.max_heap_after_mb)} MiB` : '–'}`
               : `GC ${fmtDuration(r.gc_ms)} of ${fmtDuration(r.run_ms)} task run time`,
             onClick: () => onPick(r),
           }))}
@@ -574,7 +574,7 @@ function GcCharts({ cid, r }: { cid: string; r: ExecutorProfileRow }) {
           </>
         ) : null}
         .{model.longest ? ` Longest pause ${fmtDuration(model.longest.pause_ms)} at ${fmtTime(model.longest.ts)} (${model.longest.kind ?? 'GC'}${model.longest.cause ? `, ${model.longest.cause}` : ''}).` : ''}
-        {model.maxAfter ? ` Heap still in use after GC peaked at ${fmtNum(model.maxAfter)} MB${model.maxTotal ? ` of ${fmtNum(model.maxTotal)} MB (${fmtPct(fullShare, 0)})` : ''}.` : ''}
+        {model.maxAfter ? ` Heap still in use after GC peaked at ${fmtNum(model.maxAfter)} MiB${model.maxTotal ? ` of ${fmtNum(model.maxTotal)} MiB (${fmtPct(fullShare, 0)})` : ''}.` : ''}
         {fullShare !== null && fullShare >= 0.8 ? ' Memory that GC cannot free is close to the heap size: give the executor more memory or process less data per task.' : ''}
       </p>
       <div className="grid-2">
@@ -586,7 +586,7 @@ function GcCharts({ cid, r }: { cid: string; r: ExecutorProfileRow }) {
                 <CartesianGrid vertical={false} />
                 {xAxis}
                 <YAxis tickLine={false} axisLine={false} width={54} tickFormatter={(v: number) => fmtNum(v)} />
-                <Tooltip {...tooltipStyle} labelFormatter={(v) => `${fmtTs(Number(v), true)} UTC`} formatter={(v: number, n: string) => [`${fmtNum(v)} MB`, n]} />
+                <Tooltip {...tooltipStyle} labelFormatter={(v) => `${fmtTs(Number(v), true)} UTC`} formatter={(v: number, n: string) => [`${fmtNum(v)} MiB`, n]} />
                 <Legend wrapperStyle={{ fontSize: 12.5, color: 'var(--ink-2)' }} iconSize={10} />
                 <Line name="Heap size" dataKey="total" stroke="var(--axis)" strokeDasharray="4 3" strokeWidth={1.5} dot={false} isAnimationActive={false} />
                 <Line name="In use after GC" dataKey="after" stroke="var(--series-1)" strokeWidth={2} dot={false} isAnimationActive={false} />

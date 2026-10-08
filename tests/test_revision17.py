@@ -35,7 +35,7 @@ def stage(run, sid, start, first, end, q=None):
 
 def scenario():
     """Three runs started together on one 8-core executor; a second executor arrives 7 minutes later. Run b's stages
-    each wait about 20 minutes for a core and then run briefly; its MERGE reads 120 GB of the target for a 2 GB source."""
+    each wait about 20 minutes for a core and then run briefly; its MERGE reads 120 GiB of the target for a 2 GiB source."""
     runs, stages = [], []
     for i, k in enumerate("abc"):
         rk = f"job_run:42-{k}"
@@ -83,7 +83,7 @@ def test_contention_findings():
     assert "8 cores" in cf["evidence"] and "16" in cf["evidence"] and "between 1 and 2 workers" in cf["evidence"]
     mr = by["merge_rewrite"]
     assert [f["sql_execution_id"] for f in mr] == [9]
-    assert mr[0]["severity"] == "high" and "rewrote 321 files" in mr[0]["evidence"] and "2.0 GB" in mr[0]["evidence"]
+    assert mr[0]["severity"] == "high" and "rewrote 321 files" in mr[0]["evidence"] and "2.0 GiB" in mr[0]["evidence"]
     assert mr[0]["run_key"] == "job_run:42-b"
 
 
@@ -304,10 +304,10 @@ def test_stage_what_names_stages_by_what_they_do():
     from databricks_cluster_log_analyzer.api.queries import stage_what
     GB_ = 1 << 30
     assert stage_what(["Exchange", "Scan parquet my_catalog.sales.orders", "Filter"], {"input_bytes": 408 * GB_}) \
-        == "scan my_catalog.sales.orders, read 408 GB"
+        == "scan my_catalog.sales.orders, read 408 GiB"
     assert stage_what(["AQEShuffleRead", "Sort", "SortMergeJoin"], {"shuffle_read": 34 * GB_, "disk_spill": 67 * GB_}) \
-        == "sort-merge join, shuffle read 34.0 GB, spilled 67.0 GB"
-    assert stage_what(["WriteFiles", "AQEShuffleRead", "Sort"], {"output_bytes": 45 * GB_}) == "write 45.0 GB"
+        == "sort-merge join, shuffle read 34.0 GiB, spilled 67.0 GiB"
+    assert stage_what(["WriteFiles", "AQEShuffleRead", "Sort"], {"output_bytes": 45 * GB_}) == "write 45.0 GiB"
     assert stage_what([], {}) is None
 
 

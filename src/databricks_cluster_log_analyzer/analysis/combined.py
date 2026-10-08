@@ -480,7 +480,7 @@ def run_story(cluster_id: str, apps, jobs, stages, queries, executors, findings,
                 if s["skew"] is not None:
                     bits.append(f"skew {s['skew']}x")
                 if s["disk_spill"]:
-                    bits.append(f"{s['disk_spill'] / (1 << 30):.1f} GB disk spill")
+                    bits.append(f"{s['disk_spill'] / (1 << 30):.1f} GiB disk spill")
                 if s["failed_tasks"]:
                     bits.append(f"{s['failed_tasks']} failed task attempts")
                 add(ctx, s["end_time"], "stage_end", "info",

@@ -175,7 +175,9 @@ def workload_findings(cid: str, queries: list[dict], runs: list[dict], executors
         sizes = [(cache_size(_plan(q)), q) for q in qs]
         big, bq = max(sizes, key=lambda x: x[0])
         ex = [e for e in executors if e.get("spark_context_id") == ctx and e.get("executor_id") not in (None, "driver")]
-        per = max((e.get("storage_memory") or 0 for e in ex), default=0)
+        # a cache can take all of the unified memory (Spark's MemoryStore capacity) while tasks do not need it, not only
+        # the storage fraction of it
+        per = max((e.get("unified_memory") or e.get("storage_memory") or 0 for e in ex), default=0)
         alive = _max_alive(ex)
         cap = per * alive
         not_fit = len(sig.get("cache_not_fit", []))
@@ -191,9 +193,9 @@ def workload_findings(cid: str, queries: list[dict], runs: list[dict], executors
         if big:
             ev += f"; the largest is {fmt_bytes(big)} (query {bq['sql_execution_id']})"
             if cap:
-                ev += f", {big / cap:.1f}× the {fmt_bytes(cap)} of storage memory ({fmt_bytes(per)} on each of {alive} executors)"
+                ev += f", {big / cap:.1f}× the {fmt_bytes(cap)} of memory a cache can use ({fmt_bytes(per)} on each of {alive} executors)"
         elif cap:
-            ev += f"; the executors had {fmt_bytes(cap)} of storage memory ({fmt_bytes(per)} each)"
+            ev += f"; the executors had {fmt_bytes(cap)} of memory a cache can use ({fmt_bytes(per)} each)"
         parts = []
         if not_fit:
             parts.append(f"{not_fit:,} blocks did not fit in memory" + (f" (one reached {fmt_bytes(computed)})" if computed else ""))
@@ -203,7 +205,9 @@ def workload_findings(cid: str, queries: list[dict], runs: list[dict], executors
             parts.append(f"{lost:,} were lost when executors went away and had to be rebuilt")
         if parts:
             ev += ". " + "; ".join(parts)[0].upper() + "; ".join(parts)[1:]
-        ev += ". " + ("It was never released (no unpersist)." if not released else f"{released} unpersist call{'s' if released != 1 else ''}.")
+        # the event log counts unpersist calls but does not say which cache they released
+        ev += ". " + ("Nothing was released (no unpersist)." if not released else
+                      f"The app called unpersist {released} time{'s' if released != 1 else ''}; the logs do not say whether this cache was one of them.")
         sev = "high" if (cap and big > 2 * cap) or lost >= 100 or not_fit >= 100 else "medium"
         out.append(_f(cid, ctx, sev, "dataframe_cache", f"query {bq['sql_execution_id']}: DataFrame cache", ev,
                       to_ms(bq.get("start_time")), sql_execution_id=bq["sql_execution_id"], run_key=bq.get("run_key")))
@@ -222,11 +226,23 @@ def workload_findings(cid: str, queries: list[dict], runs: list[dict], executors
         tot = sum(cost(q) for q in counts)
         if counts and tot >= 60_000 and (not dur or tot >= 0.1 * dur):
             counts.sort(key=lambda q: -cost(q))
-            cached = sum(1 for q in counts if _CACHE_RE.search(_plan(q)))
+            # a count over a cache that is used for the first time fills it (its cost moves to the next action that reads
+            # the cache if the count is dropped); later counts only read it
+            seen, filled, read = set(), 0, 0
+            for q in sorted((q for q in qs if _CACHE_RE.search(_plan(q))), key=lambda q: to_ms(q.get("start_time")) or 0):
+                sz = cache_size(_plan(q))
+                if q in counts:
+                    if sz in seen:
+                        read += 1
+                    else:
+                        filled += 1
+                seen.add(sz)
             ev = (f"{len(counts)} quer{'ies' if len(counts) != 1 else 'y'} only counted rows: {fmt_words(tot)}" + (" of Spark work," if busy else "")
                   + (f" of its {fmt_words(dur)} ({tot / dur:.0%})" if dur else "") + ". "
                   + ", ".join(f"query {q['sql_execution_id']} {fmt_words(cost(q))}" for q in counts[:4])
-                  + (f"; {cached} of them filled a DataFrame cache" if cached else ""))
+                  + (f"; {filled} of them filled a DataFrame cache (dropping that count moves its work to the next "
+                       "action on the cache)" if filled else "")
+                  + (f"; {read} only read a cache" if read else ""))
             out.append(_f(cid, counts[0]["spark_context_id"], "high" if dur and tot >= 0.3 * dur else "medium",
                           "count_only", f"run {_run_name(r) if r else rk}", ev, to_ms(counts[0].get("start_time")),
                           run_key=rk, sql_execution_id=counts[0]["sql_execution_id"]))

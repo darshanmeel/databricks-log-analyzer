@@ -23,7 +23,7 @@ export const MEANING: Record<string, string> = {
   'error reported to the notebook / job': 'How the failure reached your notebook or job: a wrapper around the error that really happened.',
   'disk full': 'Local disk on a node filled up, usually with shuffle or spill files.',
   error: 'An exception logged by the driver or an executor.',
-  'tasks too big': 'Each task was given far more data than the ~128 MB Spark sizes a task for: too few shuffle partitions, or files that cannot be split.',
+  'tasks too big': 'Each task was given far more data than the ~128 MiB Spark sizes a task for: too few shuffle partitions, or files that cannot be split.',
   'big table read': 'A stage read a lot from storage, often a whole table where a filter on its partition or clustering columns would skip most files.',
   'executors idle': 'Executors were up, and paid for, but ran no task for a minute or more.',
 };
@@ -60,7 +60,7 @@ export const TIPS: Record<string, { layer: 'Config' | 'Code' | 'Cluster'; text: 
     { layer: 'Config', text: 'Raise spark.sql.files.maxPartitionBytes so each read task gets more data.' },
   ],
   'tasks too big': [
-    { layer: 'Config', text: "Raise spark.sql.shuffle.partitions (on Databricks it can be 'auto') or lower spark.sql.files.maxPartitionBytes so each task gets ~128 MB." },
+    { layer: 'Config', text: "Raise spark.sql.shuffle.partitions (on Databricks it can be 'auto') or lower spark.sql.files.maxPartitionBytes so each task gets ~128 MiB." },
   ],
   'big table read': [
     { layer: 'Code', text: 'Filter on the partition or clustering columns so whole files are skipped; select only the columns you need.' },
@@ -72,6 +72,10 @@ export const TIPS: Record<string, { layer: 'Config' | 'Code' | 'Cluster'; text: 
   'error in task code': [
     { layer: 'Code', text: 'Fix the line marked "Fix here". Bad input rows are the usual cause: validate or quarantine them (try/except returning null, or a filter) instead of failing the job.' },
     { layer: 'Config', text: 'Retrying will not help: the same row fails every attempt. Lower spark.task.maxFailures only to fail faster while you debug.' },
+  ],
+  'source database connection': [
+    { layer: 'Cluster', text: 'The source database or the network dropped the connection; when every retry succeeded the job only lost time. Check the database load and the number of parallel connections (JDBC numPartitions).' },
+    { layer: 'Config', text: 'Fewer JDBC partitions or a longer socket timeout on the connection; a separate job for the extraction keeps its retries off the other runs.' },
   ],
   'stage failed': [{ layer: 'Code', text: 'A symptom: fix the first error of the failing task (the root cause above it).' }],
   'error reported to the notebook / job': [{ layer: 'Code', text: 'A wrapper: the real error is the one it was caused by. Catch it in the notebook only to add context, not to retry blindly.' }],

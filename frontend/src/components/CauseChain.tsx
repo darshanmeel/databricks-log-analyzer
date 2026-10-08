@@ -12,7 +12,7 @@ interface Step {
 
 /** "In time order: a (18:03:42) -> b (18:04:10) -> … . Read it left to right…" → steps. */
 export function parseChain(text: string | null | undefined): Step[] {
-  const m = (text ?? '').match(/In time order:\s*([\s\S]+?)(?:\.\s+Read|\.?$)/);
+  const m = (text ?? '').match(/(?:In time order|Cause to effect):\s*([\s\S]+?)(?:\.\s+Read|\.?$)/);
   if (!m) return [];
   return m[1]
     .split(/\s*->\s*/)
@@ -52,7 +52,7 @@ export function CauseChain({ cid, s }: { cid: string; s: Summary }) {
   // built from an incident: one finding link per step, in step order, and the incident title before the chain
   const stepFindings = (root?.links ?? []).filter((l) => l.type === 'finding');
   const perStep = stepFindings.length === steps.length;
-  const title = root?.text.match(/^(.+?)\.\s+In time order:/)?.[1] ?? null;
+  const title = root?.text.match(/^(.+?)\.\s+(?:In time order|Cause to effect):/)?.[1] ?? null;
   const separately = root?.text.match(/(?:Also|Separately):\s*(.+?)\.?$/)?.[1] ?? null;
   return (
     <Panel

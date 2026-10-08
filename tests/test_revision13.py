@@ -96,7 +96,7 @@ def test_big_read_finding():
     qs = [{"spark_context_id": "c", "sql_execution_id": 3, "tables_read": ["my_catalog.sales.customers", "jdbc:src.x"]}]
     f = {r["stage_id"]: r for r in _big_read_findings("x", st, qs, rules)}
     assert set(f) == {7, 8}
-    assert f[7]["severity"] == "high" and "my_catalog.sales.orders" in f[7]["entity"] and "408 GB" in f[7]["evidence"]
+    assert f[7]["severity"] == "high" and "my_catalog.sales.orders" in f[7]["entity"] and "408 GiB" in f[7]["evidence"]
     # no scan in the stage: the query's only (non-JDBC) table
     assert f[8]["severity"] == "medium" and f[8]["entity"].endswith("my_catalog.sales.customers")
 

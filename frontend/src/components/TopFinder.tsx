@@ -155,15 +155,15 @@ export function WaitRanBar({ took: t, wait, ran, max }: { took: number; wait: nu
   );
 }
 
-const READ_TIP = 'Read: from files (tables, paths). Shuffle read: data another stage shuffled to this one. One task reading over 128 MB of either is a warning, over 256 MB critical.';
+const READ_TIP = 'Read: from files (tables, paths). Shuffle read: data another stage shuffled to this one. One task reading over 128 MiB of either is a warning, over 256 MiB critical.';
 
-/** One task's read, marked over 128 MB (warning) and over 256 MB (critical). */
+/** One task's read, marked over 128 MiB (warning) and over 256 MiB (critical). */
 function Mark({ v }: { v: number | null | undefined }) {
   const lv = taskReadLevel(v);
   return (
     <>
-      {v ? <span className={lv ? `task-read ${lv}` : ''} title={lv === 'crit' ? 'Over 256 MB in one task: critical' : lv === 'warn' ? 'Over 128 MB in one task: warning' : undefined}>{fmtBytes(v)}</span> : '–'}
-      {lv ? <div className={`small task-read-note ${lv}`}>{lv === 'crit' ? 'over 256 MB' : 'over 128 MB'}</div> : null}
+      {v ? <span className={lv ? `task-read ${lv}` : ''} title={lv === 'crit' ? 'Over 256 MiB in one task: critical' : lv === 'warn' ? 'Over 128 MiB in one task: warning' : undefined}>{fmtBytes(v)}</span> : '–'}
+      {lv ? <div className={`small task-read-note ${lv}`}>{lv === 'crit' ? 'over 256 MiB' : 'over 128 MiB'}</div> : null}
     </>
   );
 }
@@ -213,7 +213,7 @@ function Row({ r, kind, cid, showRun, runName, b, max }: { r: TopRow; kind: TopK
       <ReadCell total={r.shuffle_read} task={kind === 'tasks' ? undefined : r.max_task_shuffle} shuffle />
       <td className="num" style={{ color: r.shuffle_write ? 'var(--shuf)' : undefined }}>{b(r.shuffle_write)}</td>
       <td className="num" style={{ color: r.disk_spill ? 'var(--spill)' : undefined }}>{b(r.disk_spill)}</td>
-      {kind !== 'tasks' && kind !== 'queries' && <td className="num">{(r.input_bytes ?? 0) + (r.shuffle_read ?? 0) < 1024 ** 2 ? <span className="muted">– under 1 MB</span> : skew ? `${Number(skew).toFixed(1)}×` : '–'}</td>}
+      {kind !== 'tasks' && kind !== 'queries' && <td className="num">{(r.input_bytes ?? 0) + (r.shuffle_read ?? 0) < 1024 ** 2 ? <span className="muted">– under 1 MiB</span> : skew ? `${Number(skew).toFixed(1)}×` : '–'}</td>}
     </tr>
   );
 }

@@ -55,7 +55,7 @@ def test_summary_root_cause_follows_the_top_incident(ds, main_id):
     rc = next(d for d in s["diagnosis"] if d["kind"] == "root_cause")
     # the query failed because of the code error, not because of the earlier spill / GC / OOM on the first attempt
     assert rc["text"].startswith("Query 3 failed")
-    assert "In time order: error in task code (" in rc["text"]
+    assert "Cause to effect: error in task code (" in rc["text"]
     assert ("Also: Stage 6.0 failed (query 3), starting from out of memory (an earlier failure in the same query"
             in rc["text"])
     assert "error reported to the notebook / job (18:07:54)" in rc["text"]

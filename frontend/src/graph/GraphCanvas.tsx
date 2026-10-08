@@ -291,7 +291,7 @@ function CtxCard({ c, side, r, box, to }: { c: FlowCtx; side: 'before' | 'after'
 
 /* ------------------------------------------------------------------ edges */
 
-/** "38.7M rows · 2.1 GB": what a link passed along (rows a stage wrote to the shuffle, or a query wrote to a table). */
+/** "38.7M rows · 2.1 GiB": what a link passed along (rows a stage wrote to the shuffle, or a query wrote to a table). */
 const passed = (rows?: number | null, bytes?: number | null) =>
   [rows != null ? `${fmtRows(rows)} rows` : null, bytes ? fmtBytes(bytes) : null].filter(Boolean).join(' · ');
 
@@ -730,7 +730,7 @@ function TimeScene({ m, L, view, W, H, px, sel, focusable, keyFor }: { m: GModel
     const dim = L.dimmed.has(e.source) || L.dimmed.has(e.target);
     edges.push(
       <path key={i} className={`gedge t ${e.kind} ${hot ? 'hot' : ''} ${dim ? 'dim' : ''} ${e.label === 'reused' ? 'reused' : ''}`} d={d} markerEnd={`url(#ga-${hot ? 'hot' : e.kind === 'retry' ? 'retry' : e.kind === 'depends' ? 'dep' : 'link'})`}>
-        <title>{e.kind === 'retry' ? `Retried: ${e.label ?? ''}` : e.kind === 'depends' ? `Reads the output of this stage${e.rows != null ? `: ${e.rows.toLocaleString()} rows` : ''}${e.bytes ? `, ${(e.bytes / 1024 ** 2).toFixed(1)} MB` : ''}` : ''}</title>
+        <title>{e.kind === 'retry' ? `Retried: ${e.label ?? ''}` : e.kind === 'depends' ? `Reads the output of this stage${e.rows != null ? `: ${e.rows.toLocaleString()} rows` : ''}${e.bytes ? `, ${(e.bytes / 1024 ** 2).toFixed(1)} MiB` : ''}` : ''}</title>
       </path>,
     );
   });

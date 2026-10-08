@@ -134,8 +134,8 @@ def test_count_only_cache_and_ddl_loop():
     evc = [{"spark_context_id": "c", "event_type": "SparkListenerTaskEnd", "count": 5}]
     f = {r["category"]: r for r in workload_findings("x", qs, runs, ex, sig, evc, rules)}
     c = f["dataframe_cache"]
-    assert c["severity"] == "high" and "the largest is 144 GB (query 104), 9.0× the 16.0 GB of storage memory" in c["evidence"]
-    assert "3 blocks did not fit in memory (one reached 2.1 GB)" in c["evidence"] and "never released" in c["evidence"]
+    assert c["severity"] == "high" and "the largest is 144 GiB (query 104), 9.0× the 16.0 GiB of memory a cache can use" in c["evidence"]
+    assert "3 blocks did not fit in memory (one reached 2.1 GiB)" in c["evidence"] and "Nothing was released (no unpersist)" in c["evidence"]
     assert f["count_only"]["evidence"].startswith("1 query only counted rows: 10 m 0 s of its 16 m 40 s (60%)")
     assert f["ddl_loop"]["evidence"].startswith("12 statements of the same shape")
     # the query stayed open 10 minutes but its stages ran 2 seconds: not a costly count

@@ -26,7 +26,7 @@ DIST_COLS = ("min_task_bytes_in", "p10_task_bytes_in", "p50_task_bytes_in", "p90
              "avg_task_bytes_in", "min_task_rows_in", "p10_task_rows_in", "p50_task_rows_in", "p90_task_rows_in",
              "max_task_rows_in", "avg_task_rows_in", "p10_task_ms", "p50_task_ms", "p90_task_ms", "wmed_task_bytes_in")
 # How many successful tasks read how much (storage input + shuffle read), and how much of the data each band read:
-# none, under 10 MB, 10-128 MB (128 MB is Spark's default file split), 128-256 MB, 256 MB or more. A few tasks in
+# none, under 10 MiB, 10-128 MiB (128 MiB is Spark's default file split), 128-256 MiB, 256 MiB or more. A few tasks in
 # the top band holding most of the data is the skew to fix.
 SIZE_EDGES_MB = (10, 128, 256)
 SIZE_BANDS = ("none", "lt10", "10_128", "128_256", "ge256")

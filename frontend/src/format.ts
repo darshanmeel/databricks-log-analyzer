@@ -6,7 +6,8 @@ const DASH = '–';
 export function fmtBytes(n: number | null | undefined, digits = 1): string {
   if (n === null || n === undefined || Number.isNaN(n)) return DASH;
   if (n === 0) return '0 B';
-  const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
+  // binary units, labelled as such (Spark's own UI does the same)
+  const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB'];
   const neg = n < 0;
   let v = Math.abs(n);
   let i = 0;
@@ -167,7 +168,7 @@ export function fmtRows(n: number | null | undefined): string {
  * written once in the heading and the cells are bare numbers: "Duration (s)" then 0.02, 1.75, 606. */
 export type Unit = { u: string; f: (v: number | null | undefined) => string };
 const T_UNITS: [string, number][] = [['ms', 1], ['s', 1000], ['min', 60_000], ['h', 3_600_000]];
-const B_UNITS: [string, number][] = [['B', 1], ['KB', 1024], ['MB', 1024 ** 2], ['GB', 1024 ** 3], ['TB', 1024 ** 4]];
+const B_UNITS: [string, number][] = [['B', 1], ['KiB', 1024], ['MiB', 1024 ** 2], ['GiB', 1024 ** 3], ['TiB', 1024 ** 4]];
 export function bare(x: number, whole = false): string {
   if (x === 0) return '0';
   const a = Math.abs(x);

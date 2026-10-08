@@ -33,10 +33,10 @@ const METRICS: { k: MetricKey; label: string; kind: Kind; peak?: boolean; missin
 ];
 const MB = 1 << 20;
 const BANDS: { label: string; lo: number; hi: number; color: string }[] = [
-  { label: '< 10 MB', lo: 0, hi: 10 * MB, color: 'var(--text-3)' },
-  { label: '10 – 128 MB', lo: 10 * MB, hi: 128 * MB, color: 'var(--series-1)' },
-  { label: '128 – 256 MB', lo: 128 * MB, hi: 256 * MB, color: 'var(--st-warn)' },
-  { label: '256 MB or more', lo: 256 * MB, hi: Infinity, color: 'var(--st-crit)' },
+  { label: '< 10 MiB', lo: 0, hi: 10 * MB, color: 'var(--text-3)' },
+  { label: '10 – 128 MiB', lo: 10 * MB, hi: 128 * MB, color: 'var(--series-1)' },
+  { label: '128 – 256 MiB', lo: 128 * MB, hi: 256 * MB, color: 'var(--st-warn)' },
+  { label: '256 MiB or more', lo: 256 * MB, hi: Infinity, color: 'var(--st-crit)' },
 ];
 const EXEC_COLORS = ['var(--series-1)', 'var(--series-3)', 'var(--series-4)', 'var(--series-6)', 'var(--series-2)', 'var(--series-7)', 'var(--series-5)'];
 
@@ -336,7 +336,7 @@ function Histogram({ c }: { c: TaskColumns }) {
   );
 }
 
-/** One line when tasks read more than the ~128 MB a task is sized for. */
+/** One line when tasks read more than the ~128 MiB a task is sized for. */
 function BigReads({ c }: { c: TaskColumns }) {
   const n = c.cols.task_ms?.length ?? 0;
   let big = 0, bigD = 0, all = 0;
@@ -347,8 +347,8 @@ function BigReads({ c }: { c: TaskColumns }) {
   }
   if (!big || !all) return null;
   return (
-    <p className="small" style={{ margin: '8px 0 0' }} title="More than the ~128 MB a task is sized for: files that could not be split, or too few shuffle partitions.">
-      <span className="why warn">{big === n ? 'every task ≥ 128 MB' : `${fmtPct(big / n, 0)} of tasks ≥ 128 MB · ${fmtPct(bigD / all, 0)} of the data`}</span>
+    <p className="small" style={{ margin: '8px 0 0' }} title="More than the ~128 MiB a task is sized for: files that could not be split, or too few shuffle partitions.">
+      <span className="why warn">{big === n ? 'every task ≥ 128 MiB' : `${fmtPct(big / n, 0)} of tasks ≥ 128 MiB · ${fmtPct(bigD / all, 0)} of the data`}</span>
       <span className="muted"> too big per task <span aria-hidden>ⓘ</span></span>
     </p>
   );

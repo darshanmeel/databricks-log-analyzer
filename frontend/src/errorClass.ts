@@ -21,6 +21,9 @@ const CLASSES: [RegExp, ErrorClass][] = [
     { key: 'memory', label: 'out of memory', effect: 2, hint: 'A JVM or Python worker ran out of memory: tasks too big, a large broadcast or collect, or too little memory per core.' }],
   [/No space left/i,
     { key: 'disk', label: 'disk full', effect: 2, hint: 'A worker ran out of local disk, usually from spill or shuffle files.' }],
+  // before "network": a JDBC driver's timeout is the source database, not a lost executor
+  [/(com\.sap\.db|oracle\.jdbc|sqlserver|postgresql|com\.mysql|mariadb|db2|snowflake|teradata|jdbc)[\s\S]*(timed out|SocketTimeout|Data receive failed|Connection reset|cannot open socket|Communications link failure)|(timed out|SocketTimeout|Data receive failed|Connection reset|Communications link failure)[\s\S]*(com\.sap\.db|oracle\.jdbc|sqlserver|postgresql|com\.mysql|mariadb|db2|snowflake|teradata|jdbc)/i,
+    { key: 'source-db', label: 'source database connection', effect: 1, hint: 'The connection to the source database dropped or timed out. Spark retries the task; check the database, the network and the number of parallel JDBC connections.' }],
   [/FetchFailed|Lost executor|ExecutorLostFailure|Connection (refused|reset)|ConnectException|SocketTimeout|UnknownHost|Broken pipe/i,
     { key: 'network', label: 'network or lost executor', effect: 2, hint: 'Shuffle data or an executor could not be reached: a lost or decommissioned node, or the network.' }],
   [/Timeout|timed out/i,

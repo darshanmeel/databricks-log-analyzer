@@ -224,7 +224,7 @@ def wrote_text(f: Mapping[str, Any]) -> str:
 
 
 def files_text(f: Mapping[str, Any]) -> str | None:
-    """"200 of 200 files touched, 2.2 GB per file"."""
+    """"200 of 200 files touched, 2.2 GiB per file"."""
     n, t = f.get("files_touched"), f.get("files_total")
     if not n:
         return None
@@ -257,5 +257,5 @@ def merge_fix(f: Mapping[str, Any], numbers: bool = True) -> list[str]:
     if f.get("spill", 0) >= 1 << 30:
         out.append("The join and the write spilled"
                    + (f" {fmt_bytes(f['spill'])}" if numbers else "")
-                   + ": give them more shuffle partitions (spark.sql.shuffle.partitions, about 128 MB of shuffle each).")
+                   + ": give them more shuffle partitions (spark.sql.shuffle.partitions, about 128 MiB of shuffle each).")
     return out

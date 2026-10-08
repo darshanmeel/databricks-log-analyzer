@@ -88,12 +88,12 @@ def fmt_bytes(b) -> str:
     if is_null(b):
         return "?"
     b = float(b)
-    for unit in ("B", "KB", "MB", "GB", "TB"):
-        if abs(b) < 1024 or unit == "TB":
+    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
+        if abs(b) < 1024 or unit == "TiB":
             # one rule on every screen (the UI's fmtBytes): whole numbers from 100 up, one decimal below
             return f"{b:.0f} {unit}" if unit == "B" or abs(b) >= 100 else f"{b:.1f} {unit}"
         b /= 1024
-    return f"{b:.1f} TB"
+    return f"{b:.1f} TiB"
 
 
 def lower_median(values) -> int | None:

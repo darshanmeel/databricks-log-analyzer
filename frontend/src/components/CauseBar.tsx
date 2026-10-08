@@ -36,7 +36,7 @@ export function causeOf(c: Causes | null | undefined, waiting: number, k: CauseK
   return k === 'cpu' ? c.cpu_ms : k === 'gc' ? c.gc_ms : k === 'fetch' ? c.fetch_wait_ms : k === 'write' ? c.shuffle_write_ms ?? 0 : k === 'other' ? c.other_ms : k === 'failed' ? c.failed_ms : 0;
 }
 
-/** "57% waiting for a core · 24% CPU · spilled 108 GB to disk": the two biggest causes. */
+/** "57% waiting for a core · 24% CPU · spilled 108 GiB to disk": the two biggest causes. */
 export function CauseHeadline({ parts, total, spill }: { parts: CausePart[]; total: number; spill?: number | null }) {
   const big = [...parts].filter((p) => p.ms > 0).sort((x, y) => y.ms - x.ms).slice(0, 2);
   return (

@@ -95,7 +95,7 @@ function levelCards(stages: Stage[], what: string, why: Map<string, StageWhy>): 
     cards.push({
       tone: 'warn', title: 'Tasks too big', big: fmtBytes(b.wmed_task_bytes_in ?? 0), unit: `per task · ${stageName(b)}`,
       chart: <Bars rows={[['biggest stage', b.wmed_task_bytes_in ?? 0, true], ['target', 128 * MB, false]]} fmt={fmtBytes} />,
-      note: `${big.length} of ${stages.length} stages above 256 MB a task.${b.shuffle_read ? ` ~${fmtNum(want)} partitions instead of ${fmtNum(b.tasks)} for ${stageName(b)}.` : ' Files that cannot be split.'}`,
+      note: `${big.length} of ${stages.length} stages above 256 MiB a task.${b.shuffle_read ? ` ~${fmtNum(want)} partitions instead of ${fmtNum(b.tasks)} for ${stageName(b)}.` : ' Files that cannot be split.'}`,
     });
   }
   // waiting for cores: stages whose first task started long after they were submitted

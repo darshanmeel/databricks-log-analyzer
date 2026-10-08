@@ -31,7 +31,7 @@ const METRICS: Metric[] = [
   { key: 'failed_tasks', label: 'Failed tasks', value: (r) => r.failed_tasks ?? 0, display: (r) => `${fmtNum(r.failed_tasks)} of ${fmtNum(r.tasks)}`, flag: (r) => (r.failed_tasks ?? 0) > 0, explain: 'Stages whose tasks failed at least once. Failed tasks are retried; the retries panel says why they failed.' },
   { key: 'skew', label: 'Time skew', value: (r) => r.skew ?? 0, display: (r) => fmtSkew(r.skew), flag: (r) => skewBreach(r.skew, r.max_task_ms), explain: `Slowest task divided by the median task. Red at ${TH.skewRatio}× or more when the slowest task takes at least ${fmtDuration(TH.skewMinTaskMs)}: one partition is much bigger than the rest.` },
   { key: 'data_skew', label: 'Data skew', value: (r) => r.data_skew ?? 0, display: (r) => fmtSkew(r.data_skew), flag: (r) => (r.data_skew ?? 0) >= TH.skewRatio, explain: `Biggest task's input (storage + shuffle) divided by the median task's. Red at ${TH.skewRatio}× or more: one key or partition holds far more data than the rest.` },
-  { key: 'disk_spill', label: 'Disk spill', value: (r) => r.disk_spill ?? 0, display: (r) => fmtBytes(r.disk_spill), flag: (r) => spillBreach(r.disk_spill), explain: 'Data written to disk because it did not fit in memory. Red at 1 GB or more.' },
+  { key: 'disk_spill', label: 'Disk spill', value: (r) => r.disk_spill ?? 0, display: (r) => fmtBytes(r.disk_spill), flag: (r) => spillBreach(r.disk_spill), explain: 'Data written to disk because it did not fit in memory. Red at 1 GiB or more.' },
   { key: 'gc_share', label: 'GC share', value: (r) => r.gc_share ?? 0, display: (r) => fmtPct(r.gc_share), flag: (r) => gcBreach(r.gc_share), explain: 'Share of task time spent in JVM garbage collection. Red at 20% or more.' },
   { key: 'mem_spill', label: 'Memory spill', value: (r) => r.mem_spill ?? 0, display: (r) => fmtBytes(r.mem_spill), flag: () => false, explain: 'Data Spark had to move out of execution memory (serialized, before it went to disk). Large values mean tasks needed more memory than they had.' },
   { key: 'shuffle_read', label: 'Shuffle read', value: (r) => r.shuffle_read ?? 0, display: (r) => fmtBytes(r.shuffle_read), flag: (r) => (r.shuffle_read ?? 0) >= TH.shuffleHeavyBytes, explain: 'Data read from other executors. Large shuffles are slow and fragile.' },
@@ -600,7 +600,7 @@ function StageVerdict({ s, d, execs }: { s: StageRow; d: StageDetail; execs: Exe
         (top && execs.length > 1 && (top.share_of_stage_ms ?? 0) > 0.5 ? `, mostly on exec ${top.executor_id}` : '') + (why ? `. Likely ${why}.` : '.'),
     });
   }
-  // tasks too big for Spark's ~128 MB target
+  // tasks too big for Spark's ~128 MiB target
   const wm = s.wmed_task_bytes_in ?? 0;
   if (wm >= 256 * MB) {
     const read = (s.input_bytes ?? 0) + (s.shuffle_read ?? 0);
@@ -611,12 +611,12 @@ function StageVerdict({ s, d, execs }: { s: StageRow; d: StageDetail; execs: Exe
       note: s.shuffle_read ? `${(wm / (128 * MB)).toFixed(1)}× the target. Use ~${fmtNum(want)} shuffle partitions instead of ${fmtNum(s.tasks)}.` : `${(wm / (128 * MB)).toFixed(1)}× the split size: the files cannot be split.`,
     });
   }
-  // many tasks over the ~128 MB target, even when the median task is under it
+  // many tasks over the ~128 MiB target, even when the median task is under it
   const bigTasks = (s.tasks_128_256 ?? 0) + (s.tasks_ge256 ?? 0);
   if (wm < 256 * MB && s.tasks && bigTasks >= 0.25 * s.tasks)
     cards.push({
-      tone: 'warn', title: 'Many big tasks', big: fmtPct(bigTasks / s.tasks, 0), unit: 'of tasks read 128 MB or more',
-      note: `${fmtNum(bigTasks)} of ${fmtNum(s.tasks)} tasks read more than a task is sized for (~128 MB): more partitions, or smaller files.`,
+      tone: 'warn', title: 'Many big tasks', big: fmtPct(bigTasks / s.tasks, 0), unit: 'of tasks read 128 MiB or more',
+      note: `${fmtNum(bigTasks)} of ${fmtNum(s.tasks)} tasks read more than a task is sized for (~128 MiB): more partitions, or smaller files.`,
     });
   // a big read from storage: often the whole table, the query's findings say whether it could have skipped files
   if ((s.input_bytes ?? 0) >= 10 * 1024 * MB)

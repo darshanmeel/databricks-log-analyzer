@@ -39,7 +39,7 @@ KINDS = {
     "cache": ("DataFrame cache larger than memory", 1), "autoscale": ("autoscaling removed executors mid-work", 4),
     "gc": ("GC pressure", 2), "oom": ("out of memory", 3), "killed": ("executor killed by the OS", 3),
     "disk_full": ("disk full", 3), "lost": ("executor lost", 4), "fetch": ("shuffle fetch failure", 5),
-    "task_error": ("error in task code", 5), "driver_error": ("error in driver code", 5), "other_error": ("error", 5),
+    "task_error": ("error in task code", 5), "source_db": ("source database connection", 5), "driver_error": ("error in driver code", 5), "other_error": ("error", 5),
     "retries": ("task retries", 6), "stage_failed": ("stage failed", 6), "job_aborted": ("job aborted", 7),
     "query_failed": ("query failed", 8), "reported": ("error reported to the notebook / job", 9),
 }
@@ -58,8 +58,8 @@ NOT_IN_INCIDENTS = {"capacity_bound", "autoscale_lag", "cores_full", "waited_for
                     "ddl_loop", "disk_cache", "init_script"}
 AUTOSCALED_RE = re.compile(r"removed \d+ executors? \(([\w, ]+)\)")
 PERF_KINDS = {"skew", "tiny", "large", "big_read", "idle", "spill", "gc"}
-ERROR_KINDS = {"task_error", "driver_error", "other_error", "reported"}
-FAILURE_KINDS = {"oom", "killed", "disk_full", "lost", "fetch", "task_error", "driver_error", "stage_failed",
+ERROR_KINDS = {"task_error", "driver_error", "other_error", "reported", "source_db"}
+FAILURE_KINDS = {"oom", "killed", "disk_full", "lost", "fetch", "task_error", "source_db", "driver_error", "stage_failed",
                  "job_aborted", "query_failed", "reported"}
 
 # which kinds can cause which: Spark's usual failure paths. An error in user code is a root: nothing above causes it.
@@ -69,9 +69,9 @@ CAUSES = {
     "killed": {"skew", "spill", "gc", "oom", "cache"}, "disk_full": {"spill"}, "lost": {"oom", "killed", "disk_full"},
     "fetch": {"oom", "killed", "lost", "disk_full", "autoscale"},
     "other_error": {"oom", "killed", "lost", "fetch", "disk_full", "autoscale"},
-    "task_error": set(), "driver_error": set(),
-    "retries": {"oom", "killed", "lost", "fetch", "task_error", "other_error", "disk_full", "autoscale"},
-    "stage_failed": {"oom", "killed", "lost", "fetch", "task_error", "other_error", "disk_full", "autoscale"},
+    "task_error": set(), "driver_error": set(), "source_db": set(),
+    "retries": {"oom", "killed", "lost", "fetch", "task_error", "other_error", "disk_full", "autoscale", "source_db"},
+    "stage_failed": {"oom", "killed", "lost", "fetch", "task_error", "other_error", "disk_full", "autoscale", "source_db"},
     "job_aborted": {"stage_failed", "task_error", "other_error"},
     "query_failed": {"stage_failed", "job_aborted", "task_error", "driver_error", "other_error"},
     "reported": {"query_failed", "job_aborted", "stage_failed", "driver_error"},
@@ -91,7 +91,7 @@ BECAUSE = {
     ("skew", "spill"): "one partition is much bigger than the rest, so its task holds far more data than memory fits",
     ("skew", "oom"): "one partition is much bigger than the rest, so its task needed far more memory",
     ("skew", "gc"): "the oversized partition fills the heap, so the JVM keeps collecting",
-    ("large", "spill"): "each task was given far more data than the ~128 MB a task is sized for, more than its memory holds",
+    ("large", "spill"): "each task was given far more data than the ~128 MiB a task is sized for, more than its memory holds",
     ("large", "gc"): "each task holds far more data than it is sized for, so the heap keeps filling",
     ("large", "oom"): "each task was given far more data than it is sized for, more than its memory holds",
     ("spill", "gc"): "memory was already full enough to spill; the same pressure shows up as GC time",
@@ -118,6 +118,8 @@ BECAUSE = {
     ("fetch", "stage_failed"): "a stage fails as soon as its shuffle input cannot be read; Spark then re-runs the stage before it",
     ("task_error", "stage_failed"): "the same task kept failing (spark.task.maxFailures, 4 by default), so Spark gave up on the stage",
     ("task_error", "retries"): "the failing tasks were retried",
+    ("source_db", "retries"): "the tasks that lost their connection to the source database were retried",
+    ("source_db", "stage_failed"): "the tasks kept losing their connection to the source database until Spark gave up",
     ("oom", "stage_failed"): "tasks of this stage were running on the executor that ran out of memory",
     ("lost", "stage_failed"): "tasks of this stage were running on the executor that was lost",
     ("stage_failed", "job_aborted"): "a stage that fails for good aborts its job",
@@ -130,6 +132,12 @@ BECAUSE = {
 }
 
 
+_SOURCE_DB_RE = re.compile(r"connection timed out|connect timed out|sockettimeoutexception|read timed out|"
+                           r"data receive failed|connection reset|cannot open socket|communications link failure")
+_JDBC_VENDOR_RE = re.compile(r"com\.sap\.db|oracle\.jdbc|com\.microsoft\.sqlserver|org\.postgresql|com\.mysql|"
+                             r"org\.mariadb|com\.ibm\.db2|net\.snowflake|com\.teradata")
+
+
 def _exception_kind(f: Mapping, err_rows: list[dict]) -> str:
     cls = (f.get("entity") or "").lower()
     msg = " ".join(str(e.get("message") or "") for e in err_rows).lower()
@@ -139,6 +147,10 @@ def _exception_kind(f: Mapping, err_rows: list[dict]) -> str:
     # an IOException is a shuffle fetch only when its stack says so (a JDBC or storage connection is not)
     if "fetchfailed" in cls or ("ioexception" in cls and ("shuffleblockfetcher" in msg or "fetchfailed" in msg)):
         return "fetch"
+    # a read from a source database that timed out (SAP HANA, Oracle, SQL Server, Postgres ... over JDBC): the
+    # database or the network, not the task's code
+    if _SOURCE_DB_RE.search(msg) and ("jdbc" in msg or _JDBC_VENDOR_RE.search(msg) or "jdbc" in cls):
+        return "source_db"
     if "job aborted" in msg or "job aborted" in (f.get("evidence") or "").lower():
         return "job_aborted"
     if "py4jjavaerror" in cls:

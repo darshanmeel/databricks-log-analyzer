@@ -1,15 +1,15 @@
 // Revision 14: how many tasks read how much. Two stacked bars over the same five size bands: the share of tasks and
-// the share of the data. "12 tasks of 256 MB or more read 70% of the data while 9,800 read under 10 MB" is the skew
+// the share of the data. "12 tasks of 256 MiB or more read 70% of the data while 9,800 read under 10 MiB" is the skew
 // a median hides, and it is what decides whether more shuffle partitions or a skew fix helps.
 import type { PlacementRow, SizeBands } from '../api';
 import { fmtBytes, fmtDuration, fmtNum, fmtPct } from '../format';
 
 export const BANDS = [
   { k: 'none', label: 'no data', color: 'var(--line)' },
-  { k: 'lt10', label: '< 10 MB', color: 'color-mix(in srgb, var(--series-1) 35%, transparent)' },
-  { k: '10_128', label: '10–128 MB', color: 'var(--series-1)' },
-  { k: '128_256', label: '128–256 MB', color: 'var(--st-warn)' },
-  { k: 'ge256', label: '≥ 256 MB', color: 'var(--st-crit)' },
+  { k: 'lt10', label: '< 10 MiB', color: 'color-mix(in srgb, var(--series-1) 35%, transparent)' },
+  { k: '10_128', label: '10–128 MiB', color: 'var(--series-1)' },
+  { k: '128_256', label: '128–256 MiB', color: 'var(--st-warn)' },
+  { k: 'ge256', label: '≥ 256 MiB', color: 'var(--st-crit)' },
 ] as const;
 
 const n = (v: number | null | undefined) => (typeof v === 'number' ? v : 0);
@@ -32,7 +32,7 @@ function Bar({ parts, height = 10, title }: { parts: { v: number; color: string;
   );
 }
 
-/** One line for the skew: "12 tasks ≥ 256 MB read 70% of the data". */
+/** One line for the skew: "12 tasks ≥ 256 MiB read 70% of the data". */
 export function bandsLine(b: SizeBands): string | null {
   const tot = BANDS.reduce((a, x) => a + byteCount(b, x.k), 0);
   const tasks = BANDS.reduce((a, x) => a + taskCount(b, x.k), 0);
@@ -101,8 +101,8 @@ export function TaskPlacement({ rows }: { rows: PlacementRow[] }) {
   const say = [
     big
       ? bigOn.length === 1
-        ? `All ${fmtNum(big)} tasks of 128 MB or more ran on executor ${bigOn[0].executor_id}.`
-        : `The ${fmtNum(big)} tasks of 128 MB or more ran on ${bigOn.length} of ${rows.length} executors.`
+        ? `All ${fmtNum(big)} tasks of 128 MiB or more ran on executor ${bigOn[0].executor_id}.`
+        : `The ${fmtNum(big)} tasks of 128 MiB or more ran on ${bigOn.length} of ${rows.length} executors.`
       : null,
     allBytes && rows.length > 1 && n(top.bytes_in) / allBytes >= Math.max(0.4, 2 / rows.length)
       ? `Executor ${top.executor_id} read ${fmtPct(n(top.bytes_in) / allBytes, 0)} of the stage's data.`
@@ -130,7 +130,7 @@ export function TaskPlacement({ rows }: { rows: PlacementRow[] }) {
                 <td>exec {r.executor_id}{r.host ? <div className="muted small mono">{r.host}</div> : null}</td>
                 <td className="num">
                   {fmtNum(r.tasks)}
-                  {n(r.tasks_ge256) ? <div className="small st-crit">{fmtNum(r.tasks_ge256)} ≥ 256 MB</div> : null}
+                  {n(r.tasks_ge256) ? <div className="small st-crit">{fmtNum(r.tasks_ge256)} ≥ 256 MiB</div> : null}
                 </td>
                 <td style={{ minWidth: 130 }}><TaskSizes b={r} compact /></td>
                 <td className="num">{fmtBytes(r.bytes_in)}{allBytes ? <div className="muted small">{fmtPct(n(r.bytes_in) / allBytes, 0)}</div> : null}</td>

@@ -74,19 +74,19 @@ def _idle_findings(cid: str, profile: list[dict], rules: Rules) -> list[dict]:
 
 
 def _spill_ratio(s) -> str:
-    """" (119.8 GB in memory first, 2.03 GB spilled per GB of shuffle read)": how hard memory was squeezed."""
+    """" (119.8 GiB in memory first, 2.03 GiB spilled per GB of shuffle read)": how hard memory was squeezed."""
     GB = 1 << 30
     mem, sr = s.get("mem_spill") or 0, s.get("shuffle_read") or 0
     bits = []
     if mem:
-        bits.append(f"{mem / GB:,.1f} GB in memory first")
+        bits.append(f"{mem / GB:,.1f} GiB in memory first")
     if mem and sr >= GB:
-        bits.append(f"{mem / sr:.2f} GB spilled per GB of shuffle read")
+        bits.append(f"{mem / sr:.2f} GiB spilled per GB of shuffle read")
     return f" ({', '.join(bits)})" if bits else ""
 
 
 def _large_task_findings(cid: str, stages: list[dict], rules: Rules) -> list[dict]:
-    """Revision 13: stages whose typical task read far more than the ~128 MB a Spark task is sized for."""
+    """Revision 13: stages whose typical task read far more than the ~128 MiB a Spark task is sized for."""
     MB = 1 << 20
     out = []
     for s in stages:
@@ -95,18 +95,19 @@ def _large_task_findings(cid: str, stages: list[dict], rules: Rules) -> list[dic
             continue
         spill = s.get("disk_spill") or 0
         n = s.get("tasks") or 0
-        ev = (f"The median task read {med / MB:,.0f} MB, {med / (128 * MB):.1f}x the 128 MB Spark sizes a task for"
-              + (f" (p90 {s['p90_task_bytes_in'] / MB:,.0f} MB)" if s.get("p90_task_bytes_in") else "")
+        ev = (f"The median task read {med / MB:,.0f} MiB, {med / (128 * MB):.1f}x the 128 MiB Spark sizes a task for"
+              + (f" (p90 {s['p90_task_bytes_in'] / MB:,.0f} MiB)" if s.get("p90_task_bytes_in") else "")
               + f", over {n} tasks in {fmt_words(s.get('duration_ms'))}")
         if n == 200:
-            ev += ("; 200 tasks is the default spark.sql.shuffle.partitions, so the partition count did not grow "
+            # the default, or set to 200 in the code or the cluster: the settings page says which
+            ev += ("; 200 tasks is spark.sql.shuffle.partitions (200 unless set), so the partition count did not grow "
                    "with the data")
         if s.get("shuffle_read") and s["shuffle_read"] >= 128 * MB:
             need = -(-s["shuffle_read"] // (128 * MB))
             if need > n:
-                ev += f"; {s['shuffle_read'] / (1 << 30):,.1f} GB of shuffle needs ~{need:,} partitions of 128 MB, not {n:,}"
+                ev += f"; {s['shuffle_read'] / (1 << 30):,.1f} GiB of shuffle needs ~{need:,} partitions of 128 MiB, not {n:,}"
         if spill:
-            ev += f"; it spilled {spill / (1 << 30):,.1f} GB to disk" + _spill_ratio(s)
+            ev += f"; it spilled {spill / (1 << 30):,.1f} GiB to disk" + _spill_ratio(s)
         sev = "high" if spill >= (1 << 30) else "medium"
         out.append(_f(cid, s["spark_context_id"], sev, "large_tasks", f"Stage {s['stage_id']}.{s['stage_attempt']}",
                       ev, FIX["large_tasks"], s.get("start_time"), stage_id=s["stage_id"],
@@ -198,12 +199,12 @@ def _big_read_findings(cid: str, stages: list[dict], queries: list[dict], rules:
         q_read = sum(storage_bytes(x) for x in stages if x.get("sql_execution_id") is not None
                      and x.get("sql_execution_id") == s.get("sql_execution_id")
                      and x.get("spark_context_id") == s.get("spark_context_id"))
-        ev = (f"read {b / GB:,.0f} GB from storage" + (f" scanning {what}" if what else "")
+        ev = (f"read {b / GB:,.0f} GiB from storage" + (f" scanning {what}" if what else "")
               + f" over {s.get('tasks') or 0:,} tasks in {fmt_words(s.get('duration_ms'))}")
         if q_read > b:
             ev += f"; {b / q_read:.0%} of what its query read"
         if (s.get("df_cache_bytes") or 0) >= GB:
-            ev += f"; another {s['df_cache_bytes'] / GB:,.0f} GB came from a DataFrame cache"
+            ev += f"; another {s['df_cache_bytes'] / GB:,.0f} GiB came from a DataFrame cache"
         sev = "high" if b >= rules.big_read_high_bytes else "medium"
         entity = f"Stage {s['stage_id']}.{s['stage_attempt']}" + (f": {what}" if what else "")
         out.append(_f(cid, s["spark_context_id"], sev, "big_read", entity, ev, FIX["big_read"], s.get("start_time"),
@@ -325,7 +326,7 @@ def _event_findings(cid: str, stages, executors, queries, rules: Rules, retries=
                           f"{spark_double_str(s['skew'])}x the median"))
     stage_rows(lambda s: s["disk_spill"] is not None and s["disk_spill"] >= rules.spill_bytes,
                lambda s: "high" if s["disk_spill"] >= rules.spill_high_bytes else "medium", "disk_spill",
-               lambda s: f"{s['disk_spill'] / GB:,.1f} GB spilled to disk" + _spill_ratio(s))
+               lambda s: f"{s['disk_spill'] / GB:,.1f} GiB spilled to disk" + _spill_ratio(s))
     stage_rows(lambda s: s["gc_share"] is not None and s["gc_share"] >= rules.gc_share and (s["tasks"] or 0) > 0,
                # a share alone is noise on a short stage: medium only when GC cost the stage a minute or more of its time
                lambda s: "medium" if s["gc_share"] * (s.get("duration_ms") or 0) >= 60_000 else "low", "gc_pressure",
@@ -386,9 +387,9 @@ def _event_findings(cid: str, stages, executors, queries, rules: Rules, retries=
             if g.get("heap_after_p50") is not None:
                 ev += f"; after a Full GC the heap stayed {g['heap_after_p50']:.0%} full (median)"
             if g.get("max_heap_after_mb") is not None:
-                ev += f"; max heap after GC {g['max_heap_after_mb']:,.0f} MB"
+                ev += f"; max heap after GC {g['max_heap_after_mb']:,.0f} MiB"
                 if g.get("heap_total_mb"):
-                    ev += f" of {g['heap_total_mb']:,.0f} MB"
+                    ev += f" of {g['heap_total_mb']:,.0f} MiB"
             # many Full GCs alone are normal for a busy JVM: medium only when the pauses cost time or freed little
             heavy = (share is not None and share >= rules.gc_pause_share_min) or (g.get("heap_after_p50") or 0) >= 0.8
             out.append(_f(cid, g.get("spark_context_id"), "medium" if heavy else "low", "jvm_full_gc", who, ev, FIX["jvm_full_gc"],

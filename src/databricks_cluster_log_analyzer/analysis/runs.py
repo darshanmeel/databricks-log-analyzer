@@ -33,6 +33,19 @@ _ACTION = re.compile(r"[-_]action-[\w-]+$")
 _SEV = {"high": 0, "medium": 1, "low": 2}
 
 
+def _ms(v) -> int | None:
+    """Epoch milliseconds from an int, a float, or a (pandas) datetime; None when missing."""
+    if is_null(v):
+        return None
+    if isinstance(v, (int, float)):
+        return int(v)
+    if hasattr(v, "timestamp"):
+        if getattr(v, "tzinfo", None) is None:
+            return int(pd.Timestamp(v).tz_localize("UTC").timestamp() * 1000)
+        return int(v.timestamp() * 1000)
+    return None
+
+
 def _s(v):
     return None if is_null(v) or str(v).strip() == "" else str(v)
 
@@ -110,14 +123,42 @@ def attach_run_keys(cid: str, d: dict) -> list[dict]:
             q["run_key"] = query_key.get((q["spark_context_id"], int(root)))
             if q["run_key"]:
                 query_key[(q["spark_context_id"], q["sql_execution_id"])] = q["run_key"]
-    for r in d["query_profile"]:
-        r["run_key"] = query_key.get((r["spark_context_id"], r["sql_execution_id"]))
+    # a streaming micro-batch's root query runs no job itself: it belongs to the run of the queries inside it
+    for q in queries:
+        root = q.get("root_execution_id")
+        if q["run_key"] and not is_null(root) and int(root) != q["sql_execution_id"]:
+            query_key.setdefault((q["spark_context_id"], int(root)), q["run_key"])
+    for q in queries:
+        if q["run_key"] is None:
+            q["run_key"] = query_key.get((q["spark_context_id"], q["sql_execution_id"]))
     op_key = {(j["spark_context_id"], j.get("connect_operation_id")): j["run_key"] for j in jobs
               if j.get("connect_operation_id")}
     for o in d["connect_operations"]:
         o["run_key"] = op_key.get((o["spark_context_id"], o["operation_id"]))
         if o["run_key"] is None and o.get("session_id"):
             o["run_key"] = f"connect:{o['session_id']}"
+    # driver-only SQL of a Spark Connect run (DDL, ALTER, metadata): no job, so no run from the jobs; it ran during one
+    # of the run's Connect operations, and that session's other operations name the run
+    sess_run: dict[tuple, str] = {}
+    for o in d["connect_operations"]:
+        if o.get("session_id") and o["run_key"] in meta:
+            sess_run.setdefault((o["spark_context_id"], o["session_id"]), o["run_key"])
+    windows: dict[str, list[tuple]] = defaultdict(list)
+    for o in d["connect_operations"]:
+        rk = sess_run.get((o["spark_context_id"], o.get("session_id")))
+        a, z = _ms(o.get("start_time")), _ms(o.get("finish_time") or o.get("closed_time"))
+        if rk and a is not None:
+            windows[o["spark_context_id"]].append((a, z if z is not None else a, rk))
+    for q in queries:
+        if q["run_key"] is not None or not windows.get(q["spark_context_id"]):
+            continue
+        t0 = _ms(q.get("start_time"))
+        hit = {rk for a, z, rk in windows[q["spark_context_id"]] if t0 is not None and a <= t0 <= z}
+        if len(hit) == 1:
+            q["run_key"] = hit.pop()
+            query_key[(q["spark_context_id"], q["sql_execution_id"])] = q["run_key"]
+    for r in d["query_profile"]:
+        r["run_key"] = query_key.get((r["spark_context_id"], r["sql_execution_id"]))
 
     def row_key(r):
         ctx = r.get("spark_context_id")

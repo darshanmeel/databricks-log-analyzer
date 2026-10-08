@@ -668,7 +668,7 @@ export function RunsTable({ runs, goTo, atText, onAtText }: { runs: RunRow[]; go
             <th className="num">p10</th>
             <th className="num">Median</th>
             <th className="num">p90</th>
-            {th('data', 'Biggest', 'The biggest task, and how many tasks read 256 MB or more (hover for the spread)')}
+            {th('data', 'Biggest', 'The biggest task, and how many tasks read 256 MiB or more (hover for the spread)')}
             <th className="num">Median</th>
             <th className="num">p90</th>
             {th('shuffle', 'Read')}
@@ -718,7 +718,7 @@ export function RunsTable({ runs, goTo, atText, onAtText }: { runs: RunRow[]; go
                     <span title={`Per task: median ${fmtBytes(r.p50_task_bytes_in)}, p90 ${fmtBytes(r.p90_task_bytes_in)}, biggest ${fmtBytes(r.max_task_bytes_in)}` + (bandsLine(r) ? `
 ${bandsLine(r)}` : '')}>
                       {fmtBytes(r.max_task_bytes_in)}
-                      {r.tasks_ge256 ? <div className="small st-crit">{fmtNum(r.tasks_ge256)} ≥ 256 MB</div> : null}
+                      {r.tasks_ge256 ? <div className="small st-crit">{fmtNum(r.tasks_ge256)} ≥ 256 MiB</div> : null}
                     </span>
                   ) : '–'}
                 </td>
