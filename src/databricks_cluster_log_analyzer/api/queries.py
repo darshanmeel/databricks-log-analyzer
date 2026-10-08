@@ -2629,8 +2629,8 @@ def settings_view(store: Store, cid: str) -> dict[str, Any]:
             spill = sum(x.get("disk_spill") or 0 for x in big)
             dflt = merged.get("spark.sql.shuffle.partitions", {}).get("source") in (None, "default")
             add("high" if spill >= GB else "medium", "spark.sql.shuffle.partitions",
-                f"{len(big)} big shuffle stages were cut into only {n} tasks",
-                [f"{len(at_n)} stages ran exactly {n} tasks, {'the default' if dflt else 'the setting'}",
+                f"{len(big)} big shuffle {'stage was' if len(big) == 1 else 'stages were'} cut into only {n} tasks",
+                [f"{len(at_n)} {'stage' if len(at_n) == 1 else 'stages'} ran exactly {n} tasks, {'the default' if dflt else 'the setting'}",
                  f"In {len(big)} of them half the data was in tasks of 128 MB or more",
                  f"The biggest read {_fmt_bytes(need)} of shuffle",
                  f"They spilled {_fmt_bytes(spill)} to disk" if spill else None],
@@ -2657,7 +2657,7 @@ def settings_view(store: Store, cid: str) -> dict[str, Any]:
                and (x.get("wmed_task_bytes_in") or 0) >= 2 * mpb]
     if unsplit:
         add("medium", "spark.sql.files.maxPartitionBytes",
-            f"{len(unsplit)} file-reading stages had tasks far above the split size",
+            f"{len(unsplit)} file-reading {'stage' if len(unsplit) == 1 else 'stages'} had tasks far above the split size",
             [f"Half their data was read by tasks of up to {_fmt_bytes(max(x['wmed_task_bytes_in'] for x in unsplit))}",
              f"The split size is {_fmt_bytes(mpb)}"],
             "The files cannot be split: gzip, one huge file, or one huge row group.",

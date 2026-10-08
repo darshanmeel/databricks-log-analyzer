@@ -1,5 +1,6 @@
 // Interactive SVG for the Hierarchy graph: Flow (layered DAG per job) and Time (shared time axis).
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { fmtGrow, stageRows } from '../rows';
 import { fmtBytes, fmtDuration, fmtNum, fmtPct, fmtRows, fmtSkew, fmtTs, tickLabel, timeTicks, truncate } from '../format';
 import { FLOW, flowLayout, QBOX_HEAD, TIME, timeLayout, type FlowAround, type FlowCtx, type FlowLayout, type FoldSide, type Rect, type TimeLayout } from './layout';
 import { METRIC_META, STATUS_META, typeLabel, type FilterKey, type GModel, type GNode } from './model';
@@ -83,6 +84,11 @@ function StageCard({ n, r, max, selected, dim, focusable, onKey }: { n: GNode; r
   const gw = (innerW - 14) / 2;
   const spillMax = Math.max(max.disk_spill, max.mem_spill);
   const shufMax = Math.max(max.shuffle_read, max.shuffle_write);
+  const rf = stageRows(n.metrics);
+  const rowsTitle = rf.in === null && rf.out === null ? 'Spark recorded no row counts for this stage' : [
+    rf.read ? `${fmtRows(rf.read)} rows read from storage` : null, rf.fromShuffle ? `${fmtRows(rf.fromShuffle)} rows from the shuffle of earlier stages` : null,
+    rf.out !== null ? `${fmtRows(rf.out)} rows out${rf.outTo === 'shuffle' ? ' to the shuffle' : rf.outTo === 'table' ? ' written' : ''}` : null,
+    rf.grew ? `${fmtGrow(rf.grew)} more rows out than in: a join matched many rows per key, or a cross join` : null].filter(Boolean).join(' · ');
   return (
     <g
       className={`gnode stage ${selected ? 'sel' : ''} ${dim ? 'dim' : ''}`}
@@ -122,8 +128,14 @@ function StageCard({ n, r, max, selected, dim, focusable, onKey }: { n: GNode; r
           {flags}
         </text>
       )}
-      <MeterGroup x={14} y={73} w={gw} label="Spill" a={['disk_spill', n.metrics?.disk_spill ?? 0]} b={['mem_spill', n.metrics?.mem_spill ?? 0]} max={spillMax} />
-      <MeterGroup x={14 + gw + 14} y={73} w={gw} label="Shuffle" a={['shuffle_read', n.metrics?.shuffle_read ?? 0]} b={['shuffle_write', n.metrics?.shuffle_write ?? 0]} max={shufMax} />
+      <text x={14} y={73} className="g-meta">
+        {rf.in === null && rf.out === null ? <tspan className="g-faint">rows not recorded</tspan> : <>
+          rows {rf.in !== null ? fmtRows(rf.in) : '?'} in → {rf.out !== null ? fmtRows(rf.out) : '?'} out
+          {rf.grew ? <tspan className="g-grew">{` ${fmtGrow(rf.grew)}`}</tspan> : null}</>}
+        <title>{rowsTitle}</title>
+      </text>
+      <MeterGroup x={14} y={89} w={gw} label="Spill" a={['disk_spill', n.metrics?.disk_spill ?? 0]} b={['mem_spill', n.metrics?.mem_spill ?? 0]} max={spillMax} />
+      <MeterGroup x={14 + gw + 14} y={89} w={gw} label="Shuffle" a={['shuffle_read', n.metrics?.shuffle_read ?? 0]} b={['shuffle_write', n.metrics?.shuffle_write ?? 0]} max={shufMax} />
     </g>
   );
 }

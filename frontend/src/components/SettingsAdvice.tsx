@@ -19,7 +19,12 @@ export function SettingsAdvice({ cid }: { cid: string }) {
 }
 
 /** One piece of advice as points: what we saw, the likely cause, the fix, and links to what it is about. */
-export function AdviceItem({ cid, a, children }: { cid: string; a: Advice; children?: ReactNode }) {
+/** Long tables show this many rows first; the rest on demand. */
+export const TOP_ROWS = 10;
+
+export function AdviceItem({ cid, a, children, open: open0 = false }: { cid: string; a: Advice; children?: ReactNode; open?: boolean }) {
+  // folded to its title and headline fact: the reader picks which to open
+  const [open, setOpen] = useState(open0);
   const [allRuns, setAllRuns] = useState(false);
   const [why, setWhy] = useState(false);
   const facts = a.facts?.length ? a.facts : [a.evidence];
@@ -27,12 +32,15 @@ export function AdviceItem({ cid, a, children }: { cid: string; a: Advice; child
   const runs = a.runs ?? [];
   const shownRuns = allRuns ? runs : runs.slice(0, 6);
   return (
-    <div className={`advice adv-${a.severity}`}>
-      <div className="advice-head">
+    <div className={`advice adv-${a.severity} ${open ? 'open' : 'folded'}`}>
+      <button type="button" className="advice-head advice-toggle" onClick={() => setOpen(!open)} aria-expanded={open}>
+        <span className="fold-arrow" aria-hidden>{open ? '▾' : '▸'}</span>
         <span className={`adv-sev ${a.severity}`}>{SEV_LABEL[a.severity]}</span>
         <b>{a.title}</b>
         {a.key ? <code className="adv-key">{a.key.replace('spark.databricks.clusterUsageTags.', 'cluster: ')}</code> : null}
-      </div>
+      </button>
+      {!open && <div className="advice-peek small muted">{facts[0]}</div>}
+      {open && <>
       <dl className="advice-grid small">
         {/* the headline fact and the fix; the rest of what we saw and the likely cause on demand */}
         <dt>What we saw</dt>
@@ -72,16 +80,19 @@ export function AdviceItem({ cid, a, children }: { cid: string; a: Advice; child
         ) : null}
       </dl>
       {children}
+      </>}
     </div>
   );
 }
 
 /** The stages a piece of advice is about, biggest first; each opens in its run. */
-function AdviceStages({ cid, stages, count }: { cid: string; stages: AdviceStage[]; count: number }) {
+function AdviceStages({ cid, stages: every, count }: { cid: string; stages: AdviceStage[]; count: number }) {
   const b = (v: number | null | undefined) => (v ? fmtBytes(v) : '–');
+  const [all, setAll] = useState(false);
+  const stages = all ? every : every.slice(0, TOP_ROWS);
   return (
     <details className="small">
-      <summary>Open {count === 1 ? 'the stage' : `the ${fmtNum(count)} stages`}{count > stages.length ? ` (the ${stages.length} biggest)` : ''}</summary>
+      <summary>Open {count === 1 ? 'the stage' : `the ${fmtNum(count)} stages`}{count > every.length ? ` (the ${every.length} biggest)` : ''}</summary>
       <div className="table-wrap" style={{ overflowX: 'auto', marginTop: 6 }}>
         <table className="table compact level-table">
           <thead><tr><th>Stage</th><th>Run</th><th className="num">Took</th><th className="num">Tasks</th><th className="num">Read</th><th className="num">Shuffle read</th><th className="num">Biggest task read</th><th className="num">Disk spill</th></tr></thead>
@@ -104,6 +115,7 @@ function AdviceStages({ cid, stages, count }: { cid: string; stages: AdviceStage
           </tbody>
         </table>
       </div>
+      {every.length > TOP_ROWS && <button className="linkish small" onClick={() => setAll(!all)}>{all ? `Only the top ${TOP_ROWS} ↑` : `All ${fmtNum(every.length)} ↓`}</button>}
     </details>
   );
 }

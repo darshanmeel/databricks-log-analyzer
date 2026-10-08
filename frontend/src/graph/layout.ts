@@ -12,7 +12,7 @@ export interface Rect {
 
 export const FLOW = {
   stageW: 236,
-  stageH: 100,
+  stageH: 116,
   gapX: 64,
   gapY: 18,
   retryGap: 30,

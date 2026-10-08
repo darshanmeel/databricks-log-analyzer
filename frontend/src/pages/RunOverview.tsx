@@ -4,6 +4,7 @@
 // with no run picked.
 import { Fragment, useMemo, useState, type ReactNode } from 'react';
 import { TablesRead } from '../components/TableStats';
+import { ChangeList } from '../components/ClusterTop';
 import { Link, useNavigate } from 'react-router-dom';
 import { api, type EngineCount, type FindingRow, type RunEnd, type RunRow, type RunStepGroup, type RunSteps } from '../api';
 import { useAsync } from '../hooks';
@@ -105,6 +106,8 @@ export function RunOverview({ run }: { run: RunRow }) {
 
         {a && d && <TimeWent cid={cid} d={d} a={a} allSteps={allSteps} setAllSteps={setAllSteps} />}
         {allSteps && <RunStepsPanel cid={cid} run={run.run_key} />}
+
+        <ChangeList cid={cid} rows={findings} loading={fs.loading} runs={scope.runs} run={run.run_key} />
 
         <TablesRead cid={cid} scope={{ run: run.run_key }} />
 

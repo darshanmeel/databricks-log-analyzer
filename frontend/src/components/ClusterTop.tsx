@@ -394,7 +394,7 @@ function backs(a: Advice, f: Finding, qid: number | null): boolean {
 
 /** One list of what to change, highest impact first; under each, the problems found that back it. The problems no
  * change covers come after, by kind. Then the settings themselves. */
-function ChangeList({ cid, rows, loading, runs }: { cid: string; rows: Finding[]; loading: boolean; runs: RunRow[] }) {
+export function ChangeList({ cid, rows, loading, runs, run }: { cid: string; rows: Finding[]; loading: boolean; runs: RunRow[]; run?: string }) {
   const sv = useAsync((s) => api.settings(cid, s), [cid]);
   const byRun = new Map(runs.map((r) => [r.run_key, r]));
   const need = rows.some((f) => f.sql_execution_id !== null || f.stage_id !== null);
@@ -405,7 +405,9 @@ function ChangeList({ cid, rows, loading, runs }: { cid: string; rows: Finding[]
   const qmap = useMemo(() => new Map((qs.data?.rows ?? []).map((q) => [`${q.spark_context_id}|${q.sql_execution_id}`, q])), [qs.data]);
   const smap = useMemo(() => new Map((sts.data?.rows ?? []).map((x) => [`${x.spark_context_id}|${x.stage_id}`, x.sql_execution_id])), [sts.data]);
   const qidOf = (f: Finding) => f.sql_execution_id ?? (f.stage_id !== null ? smap.get(`${f.spark_context_id}|${f.stage_id}`) ?? null : null);
-  const advice = sv.data?.advice ?? [];
+  // in one run: only the changes its runs, queries or stages are part of
+  const advice = useMemo(() => (sv.data?.advice ?? []).filter((a) => !run || a.runs?.some((r) => r.run_key === run)
+    || a.queries?.some((q) => q.run_key === run) || a.stages?.some((x) => x.run_key === run)), [sv.data, run]);
   const { groups, other } = useMemo(() => {
     const groups = advice.map((a) => ({ a, fs: [] as Finding[] }));
     const other: Finding[] = [];
@@ -434,25 +436,25 @@ function ChangeList({ cid, rows, loading, runs }: { cid: string; rows: Finding[]
     return [...m].map(([k, fs]) => ({ k, fs, deep: depthOf(fs[0].category) > 0 }));
   }, [other]);
   return (
-    <section className="panel" id="cv-change">
+    <section className="panel" id={run ? 'ro-change' : 'cv-change'}>
       <div className="panel-head">
         <div>
           <h2>What to change <span className="ro-count">{advice.length}</span></h2>
-          <div className="note">Highest impact first. Each: what the data shows across all runs, the likely cause and the fix; open it for the problems behind it.</div>
+          <div className="note">Highest impact first{run ? ', for what this run is part of' : ''}. Click one to open what the data shows{run ? '' : ' across all runs'}, the likely cause, the fix and the problems behind it.</div>
         </div>
-        <Link className="btn small" to={to.findings(cid)}>All {fmtNum(rows.length)} problems</Link>
+        {run ? <a className="btn small" href="#ro-problems">All {fmtNum(rows.length)} problems ↓</a> : <Link className="btn small" to={to.findings(cid)}>All {fmtNum(rows.length)} problems</Link>}
       </div>
       <div className="panel-body stack" style={{ gap: 10 }}>
-        {sv.loading ? <p className="muted small">Loading…</p> : !advice.length ? <p className="muted small" style={{ margin: 0 }}>Nothing stood out: tasks were sized well, little spill, executors were busy.</p> : null}
+        {sv.loading ? <p className="muted small">Loading…</p> : !advice.length ? <p className="muted small" style={{ margin: 0 }}>{run && rows.length ? 'No cluster-wide change covers this run; its problems are listed below.' : 'Nothing stood out: tasks were sized well, little spill, executors were busy.'}</p> : null}
         {(all ? groups : groups.slice(0, TOP_CHANGES)).map(({ a, fs }, i) => (
           <AdviceItem key={i} cid={cid} a={a}>
             {fs.length > 0 && <Evidence label={`The ${fmtNum(fs.length)} ${fs.length === 1 ? 'problem' : 'problems'} found behind it`} items={fs} card={card} />}
           </AdviceItem>
         ))}
-        {!all && (groups.length > TOP_CHANGES || kinds.length > 0 || sv.data) && (
+        {!all && (groups.length > TOP_CHANGES || kinds.length > 0 || (sv.data && !run)) && (
           <button className="linkish small" style={{ alignSelf: 'flex-start' }} onClick={() => setAll(true)}>
             {[groups.length > TOP_CHANGES ? `${groups.length - TOP_CHANGES} more ${groups.length - TOP_CHANGES === 1 ? 'change' : 'changes'}` : '',
-              other.length ? `${fmtNum(other.length)} other problems` : '', 'the settings'].filter(Boolean).join(', ')} ↓
+              other.length ? `${fmtNum(other.length)} other problems` : '', run ? '' : 'the settings'].filter(Boolean).join(', ')} ↓
           </button>
         )}
         {all && !loading && kinds.length > 0 && (
@@ -469,7 +471,7 @@ function ChangeList({ cid, rows, loading, runs }: { cid: string; rows: Finding[]
             )}
           </div>
         )}
-        {all && sv.data && <SettingsTable v={sv.data} />}
+        {all && sv.data && !run && <SettingsTable v={sv.data} />}
         {all && <button className="linkish small" style={{ alignSelf: 'flex-start' }} onClick={() => setAll(false)}>Only the top {TOP_CHANGES} ↑</button>}
       </div>
     </section>

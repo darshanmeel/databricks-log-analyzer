@@ -1,7 +1,9 @@
 // Revision 20: how big a table is and what reading it cost. The size and file count come from a scan that skipped
 // nothing (files read + files skipped); a MERGE rewrites every file it touches, so files over 1 GB are flagged.
 import { api, type TableStats as TS } from '../api';
+import { useState } from 'react';
 import { useAsync } from '../hooks';
+import { TOP_ROWS } from './SettingsAdvice';
 import { fmtBytes, fmtDuration, fmtNum, fmtRows } from '../format';
 
 export const BIG_FILE = 1024 ** 3;
@@ -38,6 +40,7 @@ function flagsOf(t: TS, scope: Scope): { text: string; bad?: boolean }[] {
  * top that says in a second which read cost the most and what is wrong with it. */
 export function TablesRead({ cid, scope = {}, embedded = false }: { cid: string; scope?: Scope; embedded?: boolean }) {
   const st = useAsync((s) => api.tables(cid, s, scope), [cid, scope.run, scope.ctx, scope.query]);
+  const [all, setAll] = useState(false);
   const rows = (st.data?.tables ?? []).filter((t) => t.size_bytes || t.scan_task_ms);
   if (!rows.length) return null;
   const where = scope.query !== undefined ? 'this query' : scope.run ? 'this run' : 'this cluster';
@@ -78,7 +81,7 @@ export function TablesRead({ cid, scope = {}, embedded = false }: { cid: string;
           </tr>
         </thead>
         <tbody>
-          {rows.slice(0, 25).map((t) => {
+          {(all ? rows : rows.slice(0, TOP_ROWS)).map((t) => {
             const big = (t.avg_file_bytes ?? 0) >= BIG_FILE;
             return (
               <tr key={t.table}>
@@ -98,7 +101,7 @@ export function TablesRead({ cid, scope = {}, embedded = false }: { cid: string;
           })}
         </tbody>
       </table>
-      {rows.length > 25 && <p className="muted small" style={{ margin: '6px 0 0' }}>{rows.length - 25} smaller tables not shown.</p>}
+      {rows.length > TOP_ROWS && <button className="linkish small" style={{ marginTop: 6 }} onClick={() => setAll(!all)}>{all ? `Only the top ${TOP_ROWS} ↑` : `All ${fmtNum(rows.length)} tables ↓`}</button>}
     </div>
   );
   const note = 'Costliest reads first. Size and files from a scan that skipped nothing; pulled from the files is what the tasks actually read (only the columns they need: Parquet is columnar).';

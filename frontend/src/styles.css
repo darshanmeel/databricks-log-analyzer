@@ -1718,3 +1718,21 @@ details.err-then > summary { cursor: pointer; }
 /* rows passed along a link (stage to stage, job to job, query to query) */
 .g-pass { font-size: 11px; font-weight: 600; fill: var(--text-2); paint-order: stroke; stroke: var(--surface); stroke-width: 3px; font-variant-numeric: tabular-nums; pointer-events: auto; }
 .g-pass.dim { opacity: .35; }
+
+/* a change folds to its title and headline fact */
+.advice-toggle { all: unset; box-sizing: border-box; display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; width: 100%; cursor: pointer; }
+.advice-toggle:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 4px; }
+.advice.folded .advice-head { margin-bottom: 2px; }
+.advice-peek { padding-left: 20px; }
+
+.g-grew { fill: var(--st-crit-ink); font-weight: 700; }
+
+/* a stage's rows in and out */
+.rows-strip { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 10px 18px; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--surface-2); border-left: 4px solid var(--shuf, var(--border)); }
+.rows-strip.grew { border-left-color: var(--st-crit); }
+.rows-strip .rs-col { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.rows-strip .rs-label { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--text-3); }
+.rows-strip .rs-col > b { font-size: 18px; font-variant-numeric: tabular-nums; }
+.rows-strip .rs-arrow { font-size: 22px; color: var(--text-3); align-self: center; }
+.rows-strip .rs-note { flex-basis: 100%; }
+.rows-strip.grew .rs-note b { color: var(--st-crit-ink); }

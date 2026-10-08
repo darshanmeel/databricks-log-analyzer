@@ -8,7 +8,8 @@ import { StageTaskSections } from '../components/TaskSections';
 import { Bars, SIGN, Split, VCards, type VCard } from '../components/VCards';
 import { useCluster } from '../components/Shell';
 import { Async, DataLink, Empty, ErrorState, Loading, Panel, SeverityBadge, StatusBadge } from '../components/ui';
-import { fmtBytes, fmtDuration, fmtNum, fmtPct, fmtSkew, fmtTs, truncate } from '../format';
+import { fmtBytes, fmtDuration, fmtNum, fmtPct, fmtRows, fmtSkew, fmtTs, truncate } from '../format';
+import { fmtGrow, stageRows } from '../rows';
 import { useAsync, useDebounced, useQueryState } from '../hooks';
 import { to } from '../links';
 import { RETRY_CATS, RETRY_META, retriesByStage, retrySentence, retryCat } from '../retries';
@@ -346,6 +347,7 @@ function StageDetailView({ cid, d, retries, onClose }: { cid: string; d: StageDe
         )}
 
         <StageTime s={s} d={d} />
+        <StageRowsStrip cid={cid} s={s} />
 
         {/* 2. the stage in six numbers */}
         <div className="kpis stage-kpis">
@@ -658,3 +660,45 @@ function StageVerdict({ s, d, execs }: { s: StageRow; d: StageDetail; execs: Exe
   return <VCards cards={cards} />;
 }
 
+
+/** What came into the stage and what went out, in rows: read from each table, from each parent stage's shuffle (what
+ * that stage wrote; a parent skipped under AQE wrote nothing itself, so only the total read from the shuffle is
+ * known), and out to the shuffle or a table. Says so when Spark recorded no rows. */
+function StageRowsStrip({ cid, s }: { cid: string; s: StageRow }) {
+  const parents = s.parent_ids ?? [];
+  const ps = useAsync((sig) => (parents.length ? api.datasetOpt<StageRow>(cid, 'stages', { spark_context_id: s.spark_context_id, stage_id: parents, limit: 50 }, sig)
+    : Promise.resolve(null)), [cid, s.spark_context_id, parents.join(',')]);
+  const rf = stageRows(s);
+  const tables = [...new Set((s.rdd_scopes ?? []).map((x) => /^Scan \w+ (\S+)/.exec(x)?.[1]).filter((x): x is string => !!x))];
+  // the last attempt of each parent that ran
+  const byId = new Map<number, StageRow>();
+  for (const p of ps.data?.rows ?? []) if ((byId.get(p.stage_id)?.stage_attempt ?? -1) < p.stage_attempt) byId.set(p.stage_id, p);
+  if (rf.in === null && rf.out === null)
+    return <div className="rows-strip muted small">Rows: Spark recorded no row counts for this stage, so what came in and went out cannot be told.</div>;
+  return (
+    <div className={`rows-strip small ${rf.grew ? 'grew' : ''}`}>
+      <div className="rs-col">
+        <span className="rs-label">Rows in</span>
+        <b>{rf.in !== null ? fmtRows(rf.in) : 'not recorded'}</b>
+        {rf.read > 0 && <div>{fmtRows(rf.read)} read from {tables.length ? tables.map((t, i) => <span key={t}>{i ? ', ' : ''}<code>{t}</code></span>) : 'storage'}</div>}
+        {parents.map((pid) => {
+          const p = byId.get(pid);
+          const r = p?.shuffle_write_records;
+          return <div key={pid}>{r ? fmtRows(r) : <span className="muted">rows not recorded</span>} from stage {pid}{p ? '' : <span className="muted"> (skipped: its output was reused)</span>}</div>;
+        })}
+        {rf.fromShuffle > 0 && parents.length !== 1 && <div className="muted">{fmtRows(rf.fromShuffle)} read from the shuffle in all</div>}
+      </div>
+      <span className="rs-arrow" aria-hidden>→</span>
+      <div className="rs-col">
+        <span className="rs-label">Rows out</span>
+        <b>{rf.out !== null ? fmtRows(rf.out) : 'not recorded'}</b>
+        {rf.outTo && <div>{rf.outTo === 'shuffle' ? 'to the shuffle, for the next stage' : 'written to the table'}</div>}
+      </div>
+      {rf.grew ? (
+        <div className="rs-note"><b>{fmtGrow(rf.grew)} more rows out than in.</b> A join here matched many rows per key (duplicate keys on both sides) or it is a cross join: check the join keys.</div>
+      ) : rf.in && rf.out !== null && rf.out < rf.in / 10 ? (
+        <div className="rs-note muted">{fmtRows(rf.in - rf.out)} fewer rows out than in: filtered or aggregated here.</div>
+      ) : null}
+    </div>
+  );
+}
