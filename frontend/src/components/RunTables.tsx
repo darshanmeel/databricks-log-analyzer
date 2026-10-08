@@ -2,7 +2,7 @@
 // how much the read skipped (partitions, data skipping, dynamic pruning) and who wrote it (MERGE, write...). A query's
 // joins, filters, jobs and stages are on its own page.
 import { Link } from 'react-router-dom';
-import { api, type RunTableRead, type RunTables as RT } from '../api';
+import { api, type RunTableRead, type RunTables as RT, type WriteRows } from '../api';
 import { useAsync } from '../hooks';
 import { fmtBytes, fmtDuration, fmtNum, fmtRows, fmtTime, truncate } from '../format';
 import { to } from '../links';
@@ -77,7 +77,7 @@ export function RunTables({ cid, run }: { cid: string; run: string }) {
                     </div>
                   </td>
                   <td className="small" style={{ whiteSpace: 'normal' }}>
-                    {t.reads.length ? t.reads.map((r, i) => <div key={i}>{qname(r)} <span className="muted">· {r.op} · {r.how}</span></div>) : <span className="muted">–</span>}
+                    {t.reads.length ? t.reads.map((r, i) => <div key={i}>{qname(r)} <span className="muted">· {r.op} · {r.how}{r.rows != null ? <> · {fmtRows(r.rows)} rows</> : null}</span></div>) : <span className="muted">–</span>}
                   </td>
                   <td className="small" style={{ whiteSpace: 'normal', maxWidth: 380 }}>
                     {t.merge && (
@@ -92,7 +92,7 @@ export function RunTables({ cid, run }: { cid: string; run: string }) {
                     {t.reads.map((r, i) => { const p = pruning(r); return p ? <div key={i} className={p.tone === 'warn' ? 'st-warn' : p.tone === 'ok' ? '' : 'muted'}>Query {r.id}: {p.text}{pulled(r)}</div> : null; })}
                   </td>
                   <td className="small" style={{ whiteSpace: 'normal' }}>
-                    {t.writes.length ? t.writes.map((w, i) => <div key={i}>{qname(w)} <span className="muted">· {w.op}{w.bytes ? <> · wrote {fmtBytes(w.bytes)}</> : null}</span>{writeNote(w)}</div>) : <span className="muted">–</span>}
+                    {t.writes.length ? t.writes.map((w, i) => <div key={i}>{qname(w)} <span className="muted">· {w.op}{w.bytes ? <> · wrote {fmtBytes(w.bytes)}</> : null}{rowsText(w.rows)}</span>{writeNote(w)}</div>) : <span className="muted">–</span>}
                   </td>
                 </tr>
               ))}
@@ -102,6 +102,16 @@ export function RunTables({ cid, run }: { cid: string; run: string }) {
       </div>
     </section>
   );
+}
+
+/** The rows a write reported: what a MERGE / UPDATE / DELETE did to the target, else the rows it wrote. */
+function rowsText(r?: WriteRows | null) {
+  if (!r) return null;
+  const did = ([...(r.inserted == null ? [['rows written', r.rows]] : []), ['inserted', r.inserted], ['updated', r.updated], ['deleted', r.deleted], ['copied unchanged', r.copied]] as [string, number | undefined][])
+    .filter(([, v]) => v);
+  const src = r.source_rows != null ? ` from ${fmtRows(r.source_rows)} source rows` : '';
+  if (did.length) return <> · {did.map(([k, v]) => `${fmtRows(v!)} ${k}`).join(', ')}{src}</>;
+  return null;
 }
 
 /** What a read pulled from the files against the files it scanned: a MERGE's search for matches reads only the key

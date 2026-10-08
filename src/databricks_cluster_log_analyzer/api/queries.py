@@ -28,6 +28,7 @@ import pyarrow as pa
 import pyarrow.compute as pc
 
 from ..parsing.plans import jdbc_source, name_paths_in_text, name_tables, table_names
+from ..util import is_null
 
 # ---------------------------------------------------------------------------------------------------------------------
 # Constants
@@ -3551,6 +3552,15 @@ _SCAN_METRICS = {
     "number of partition columns": "partition_cols", "dynamic pruning - num filters (DPP)": "dpp_filters",
     "dynamic pruning - num filters (DFP)": "dfp_filters",
 }
+# rows a write reported, by metric name (appends and overwrites: output rows; Delta MERGE, UPDATE and DELETE: what
+# each did to the target; "copied" = rows of rewritten files that did not change)
+_WRITE_METRICS = {
+    "number of output rows": "rows", "number of source rows": "source_rows",
+    "number of inserted rows": "inserted", "number of updated rows": "updated", "number of rows updated": "updated",
+    "number of deleted rows": "deleted", "number of rows deleted": "deleted", "number of rows deleted.": "deleted",
+    "number of target rows rewritten unmodified": "copied", "number of rows copied": "copied",
+}
+_WRITE_NODE = ("Append", "Overwrite", "Replace", "Execute", "Merge", "Write", "Update", "Delete", "TableAsSelect")
 
 
 def _scan_table(name: str) -> tuple[str | None, str, str | None]:
@@ -3610,6 +3620,25 @@ def run_tables(store: Store, cid: str, run: str) -> dict[str, Any]:
             nodes = store.select(con, cid, "sql_plan_nodes",
                                  f"(spark_context_id, sql_execution_id) IN ({ph}) AND (name LIKE 'Scan%' OR name LIKE '%Scan %')",
                                  [x for k in keys for x in k])
+            like = " OR ".join("name LIKE ?" for _ in _WRITE_NODE)
+            wnodes = store.select(con, cid, "sql_plan_nodes",
+                                  f"(spark_context_id, sql_execution_id) IN ({ph}) AND ({like}) AND name NOT LIKE 'Scan%'",
+                                  [x for k in keys for x in k] + [f"%{w}%" for w in _WRITE_NODE])
+        else:
+            wnodes = []
+    # rows each query wrote: the largest of each metric over its write nodes (a command and the node it wraps can
+    # both report them)
+    wrote: dict[tuple, dict[str, int]] = {}
+    for nd in wnodes:
+        try:
+            ms = json.loads(nd.get("metrics_json") or "[]")
+        except (ValueError, TypeError):
+            continue
+        d = wrote.setdefault((nd["spark_context_id"], nd["sql_execution_id"]), {})
+        for x in ms:
+            k = _WRITE_METRICS.get(x.get("name"))
+            if k and x.get("total") is not None:
+                d[k] = max(d.get(k, 0), int(x["total"]))
     # Delta paths -> the table name: a MERGE that reads one table by name and writes one path rewrote that table
     alias: dict[str, str] = {}
     for q in qs:
@@ -3638,6 +3667,8 @@ def run_tables(store: Store, cid: str, run: str) -> dict[str, Any]:
         if not how:
             continue
         mt: dict[str, Any] = {"how": how, "filter": filt}
+        if nd.get("rows_out") is not None and not is_null(nd.get("rows_out")):
+            mt["rows"] = int(nd["rows_out"])
         try:
             for x in json.loads(nd.get("metrics_json") or "[]"):
                 k = _SCAN_METRICS.get(x.get("name"))
@@ -3671,7 +3702,7 @@ def run_tables(store: Store, cid: str, run: str) -> dict[str, Any]:
             name, _ = norm(sc["table"])
             r = reads.setdefault(name, {"table": name})
             r["how"] = sc["how"]
-            for f in ("files_read", "files_pruned", "bytes_read", "bytes_pruned", "partitions_read", "partition_cols", "dpp_filters", "dfp_filters"):
+            for f in ("rows", "files_read", "files_pruned", "bytes_read", "bytes_pruned", "partitions_read", "partition_cols", "dpp_filters", "dfp_filters"):
                 if sc.get(f) is not None:
                     r[f] = (r.get(f) or 0) + sc[f] if f not in ("partition_cols",) else max(r.get(f) or 0, sc[f])
             if sc.get("filter"):
@@ -3681,6 +3712,8 @@ def run_tables(store: Store, cid: str, run: str) -> dict[str, Any]:
             name, _ = norm(t)
             if name not in [w["table"] for w in writes]:
                 writes.append({"table": name, "how": op if op.startswith("MERGE") else op if op not in ("read", "compute") else "writes"})
+        if len(writes) == 1 and wrote.get(k):  # the rows go to the one table it wrote
+            writes[0]["rows"] = wrote[k]
         # its jobs and stages, with the tables each stage scanned (from the stage's operator names)
         stages = []
         for st in by_q.get(k, []):
@@ -3695,7 +3728,7 @@ def run_tables(store: Store, cid: str, run: str) -> dict[str, Any]:
             stages.append({
                 "stage_id": st["stage_id"], "stage_attempt": st["stage_attempt"], "spark_job_id": st.get("spark_job_id"),
                 "reads": list(dict.fromkeys(sr)), "writes": [w["table"] for w in writes] if any("WriteFiles" in x for x in scopes) else [],
-                "input_bytes": st.get("input_bytes"), "shuffle_read": st.get("shuffle_read"), "shuffle_write": st.get("shuffle_write"),
+                "input_bytes": st.get("input_bytes"), "input_records": st.get("input_records"), "shuffle_read": st.get("shuffle_read"), "shuffle_write": st.get("shuffle_write"),
                 "output_bytes": st.get("output_bytes"), "tasks": st.get("num_tasks") or st.get("tasks"),
                 "max_task_bytes_in": st.get("max_task_bytes_in"),
             })
@@ -3709,6 +3742,12 @@ def run_tables(store: Store, cid: str, run: str) -> dict[str, Any]:
             for t in x["reads"]:
                 if t in reads and x.get("input_bytes"):
                     reads[t]["from_files"] = (reads[t].get("from_files") or 0) + x["input_bytes"]
+        # rows read, when the plan's scan did not count them: the input records of the stages that read only that table
+        for t in reads:
+            if reads[t].get("rows") is None:
+                n = [x["input_records"] for x in stages if x["reads"] == [t] and x.get("input_records") is not None]
+                if n:
+                    reads[t]["rows"] = int(sum(n))
         # who fed it: an earlier query of this run wrote a table it reads; a MERGE's materialized source
         fed = []
         for name in reads:
@@ -3728,7 +3767,8 @@ def run_tables(store: Store, cid: str, run: str) -> dict[str, Any]:
             tables.setdefault(name, {"table": name, "reads": [], "writes": []})["reads"].append({"ctx": k[0], "id": k[1], "op": op, "start": t0, "end": t1, **r})
         for w in writes:
             tables.setdefault(w["table"], {"table": w["table"], "reads": [], "writes": []})["writes"].append({"ctx": k[0], "id": k[1], "op": w["how"], "start": t0, "end": t1,
-                                                                                                         "step": op, "bytes": q.get("output_bytes"), "read_bytes": q.get("input_bytes")})
+                                                                                                         "step": op, "bytes": q.get("output_bytes"), "read_bytes": q.get("input_bytes"),
+                                                                                                         "rows": w.get("rows")})
         logic = query_logic(q)
         queries.append({
             "logic": logic,

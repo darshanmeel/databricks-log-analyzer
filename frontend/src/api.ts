@@ -918,8 +918,13 @@ export interface QueryStep {
 }
 
 /** Revision 20: what one run read and wrote */
+/** Rows a write reported: output rows (appends, overwrites); a Delta MERGE, UPDATE or DELETE also what it did to the
+ * target, and copied = unchanged rows of the files it rewrote. */
+export interface WriteRows { rows?: number; source_rows?: number; inserted?: number; updated?: number; deleted?: number; copied?: number }
 export interface RunTableRead {
   ctx: string; id: number; op: string; table: string; how: string; filter?: string | null; from_files?: number | null;
+  /** rows read from it: the plan's scan, or the input records of the stages that read only it */
+  rows?: number | null;
   files_read?: number | null; files_pruned?: number | null; bytes_read?: number | null; bytes_pruned?: number | null;
   partitions_read?: number | null; partition_cols?: number | null; dpp_filters?: number | null; dfp_filters?: number | null;
 }
@@ -933,7 +938,7 @@ export interface RunTablesQuery {
 }
 export interface RunTables {
   run_key: string;
-  tables: { table: string; path: string | null; role: string; reads: RunTableRead[]; writes: { ctx: string; id: number; op: string; start?: number | null; step?: string; bytes?: number | null; read_bytes?: number | null }[];
+  tables: { table: string; path: string | null; role: string; reads: RunTableRead[]; writes: { ctx: string; id: number; op: string; start?: number | null; step?: string; bytes?: number | null; read_bytes?: number | null; rows?: WriteRows | null }[];
     first_read: number | null; first_write: number | null; last: number | null;
     merge?: { keys: string[]; null_safe: boolean; join: string | null; how: string; query: number; ctx: string; target_filters: string[] };
     stats?: TableStats | null }[];
