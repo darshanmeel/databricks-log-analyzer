@@ -1,9 +1,10 @@
 # Databricks Cluster Log Analyzer
 
-> **Not a perfect tool, but a fast one.** Most of the time (about 95% of cases) it finds the real problem, or more
-> than 95% of the issues, without much effort from you. For the rest it gives you more than enough data to find the
-> issue yourself, and many of its findings help you **rule things out** or show you **where to dive in**. For a
-> developer it answers the 2 a.m. questions: what to fix, and where to look.
+> **Not a perfect tool, but a fast one, and it helps every time.** In most cases (somewhere between 90% and 99%,
+> depending on the problem) it names the real issue on its own, in minutes and without much effort from you. When it
+> can't name it, it still gives you more than enough data to work it out yourself: its findings help you **rule things
+> out** and show you **where to dive in**. So it helps with the analysis 100% of the time. As a developer you know where
+> to look and what to fix, in minutes rather than hours, and you can trust what you find.
 
 Point it at the logs Databricks delivers for a cluster (driver and executor logs, Spark event logs). It turns them into
 Parquet datasets and opens a **local web UI** that answers:
