@@ -676,7 +676,7 @@ function StageRowsStrip({ cid, s }: { cid: string; s: StageRow }) {
   if (rf.in === null && rf.out === null)
     return <div className="rows-strip muted small">Rows: Spark recorded no row counts for this stage, so what came in and went out cannot be told.</div>;
   return (
-    <div className={`rows-strip small ${rf.grew ? 'grew' : ''}`}>
+    <div className={`rows-strip small ${rf.grew && rf.grewBy !== 'explode' ? 'grew' : ''}`}>
       <div className="rs-col">
         <span className="rs-label">Rows in</span>
         <b>{rf.in !== null ? fmtRows(rf.in) : 'not recorded'}</b>
@@ -695,7 +695,9 @@ function StageRowsStrip({ cid, s }: { cid: string; s: StageRow }) {
         {rf.outTo && <div>{rf.outTo === 'shuffle' ? 'to the shuffle, for the next stage' : 'written to the table'}</div>}
       </div>
       {rf.grew ? (
-        <div className="rs-note"><b>{fmtGrow(rf.grew)} more rows out than in.</b> A join here matched many rows per key (duplicate keys on both sides) or it is a cross join: check the join keys.</div>
+        rf.grewBy === 'explode'
+          ? <div className="rs-note muted"><b>{fmtGrow(rf.grew)} more rows out than in:</b> this stage explodes rows (Generate). In a MERGE with Change Data Feed these are the change rows written next to the data, not a join problem.</div>
+          : <div className="rs-note"><b>{fmtGrow(rf.grew)} more rows out than in.</b> A join here matched many rows per key (duplicate keys on both sides) or it is a cross join: check the join keys.</div>
       ) : rf.in && rf.out !== null && rf.out < rf.in / 10 ? (
         <div className="rs-note muted">{fmtRows(rf.in - rf.out)} fewer rows out than in: filtered or aggregated here.</div>
       ) : null}

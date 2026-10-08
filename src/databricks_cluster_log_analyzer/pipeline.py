@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import gc
+import datetime
 import json
 import os
 import time
@@ -18,10 +19,11 @@ from .analysis.diagnosis import EMPTY_REASON, build_summary
 from .analysis.hotspots import build_hotspots
 from .analysis.runs import attach_run_keys, default_run, runs_note
 from .analysis.capacity import capacity_findings, core_use
-from .analysis.contention import add_findings, contention_findings, first_tasks
+from .analysis.contention import add_findings, contention_findings, first_tasks, recount_queries
 from .analysis.initscripts import init_scripts, reader
 from .analysis.workload import read_split, workload_findings
 from .analysis.findings import build_findings_rows, build_timeline, gc_stuck, summarize_errors, task_oom_rows
+from .analysis.coverage import coverage
 from .analysis.incidents import build_incidents
 from .config import Rules, load_rules
 from .parsing.eventlog import EventTables, parse_eventlog_dir
@@ -66,6 +68,17 @@ def _signal_row(r: dict) -> dict:
             "executor_id": r["executor_id"], "file_path": r["file_path"], "file_name": r["file_name"],
             "seq": r["seq"], "ts": r["ts"], "level": r["level"], "signal": r["signal"], "severity": r["severity"],
             "fix": r["fix"], "line": r["line"][:SIGNAL_LINE_MAX]}
+
+
+def _ms_of(v):
+    """Epoch milliseconds of a log timestamp (a naive datetime is UTC)."""
+    if v is None:
+        return None
+    if isinstance(v, (int, float)):
+        return int(v)
+    if isinstance(v, datetime.datetime):
+        return int((v if v.tzinfo else v.replace(tzinfo=datetime.timezone.utc)).timestamp() * 1000)
+    return None
 
 
 def build(cluster_dir: str | os.PathLike, output_root: str | os.PathLike, *, cluster_id: str | None = None,
@@ -214,8 +227,18 @@ def build(cluster_dir: str | os.PathLike, output_root: str | os.PathLike, *, clu
     # Revision 17: findings that need the runs (waiting for cores, cores full) and MERGE that reads too much
     # the queue on a full cluster (every wave of tasks), autoscaling, caches, counts, DDL loops, reads by source
     read_split(queries, stages, ds["sql_plan_nodes"])
+    # what these logs do not hold, before anything is claimed from them
+    cov = coverage(classified, cluster_dir, apps, executors,
+                   set(zip(tdf["spark_context_id"], tdf["executor_id"].astype(str))) if not tdf.empty else set(),
+                   len(ds["settings"]), log_stats, len(gc_events), _ms_of(max_ts))
+    gaps = [(c["from"], c["to"]) for c in cov if c["kind"] == "event_log_gap"]
     later = (capacity_findings(cid, tdf, stages, executors, runs, ds["cluster_info"], log_signals, rules)
              + workload_findings(cid, queries, runs, executors, log_signals, ds["event_counts"], rules, stages))
+    # an autoscaling delay measured across missing event-log files is not a delay: the executors came in the gap
+    # nor when executors ran tasks whose start is not in the event log: "no executor", "0 cores" would be false
+    no_start = any(c["kind"] == "executors_no_start" for c in cov)
+    later = [f for f in later if not (f["category"] == "autoscale_lag" and (no_start or (
+        f.get("ts") is not None and any(a >= f["ts"] - 60_000 and a <= f["ts"] + 3_600_000 for a, _b in gaps))))]
     init_summary, init_found = init_scripts(cid, files, reader(cluster_dir, open_text_lines), executors)
     later += init_found
     bound = {f["run_key"] for f in later if f["category"] == "capacity_bound"}
@@ -223,6 +246,7 @@ def build(cluster_dir: str | os.PathLike, output_root: str | os.PathLike, *, clu
                                              ds["cluster_info"], rules, ds["sql_plan_nodes"])
               if not (f["category"] == "waited_for_cores" and f.get("run_key") in bound)]
     findings = add_findings(findings, runs, later)
+    recount_queries(qp, findings)
     # incidents after the later findings: a cache bigger than memory and autoscaling that removed executors mid-work
     # are often the cause of the out of memory and fetch failures
     incidents = build_incidents(cid, findings, stages, executors, jobs, queries, log_signals, log_errors, tdf, retries, apps)
@@ -271,7 +295,7 @@ def build(cluster_dir: str | os.PathLike, output_root: str | os.PathLike, *, clu
         "stage_retries": sum(1 for s in stages if s["stage_attempt"]),
     }
     totals = {"mem_spill": tsum("mem_spill"), "disk_spill": tsum("disk_spill"),
-              "gc_share": round(tsum("gc_ms") / run_sum, 3) if run_sum else 0.0,
+              "gc_share": round(tsum("gc_ms") / run_sum, 3) if run_sum else None,  # unknown without tasks
               "input_bytes": tsum("input_bytes"), "shuffle_read": tsum("shuffle_read"),
               "shuffle_write": tsum("shuffle_write"), "output_bytes": tsum("output_bytes"), "task_ms": tsum("task_ms")}
     summary = build_summary({
@@ -282,7 +306,10 @@ def build(cluster_dir: str | os.PathLike, output_root: str | os.PathLike, *, clu
         "log_max_ts": max_ts, "warnings": warnings, "task_retries": retries,
         "cluster_info": ds["cluster_info"], "hotspots": hotspots, "incidents": incidents, "has_runs": bool(runs),
     }, rules)
-    summary["core_use"] = core_use(tdf, executors, apps)
+    cu = core_use(tdf, executors, apps)
+    # fewer core-seconds paid for than used is impossible: executors are missing (the start of the event log)
+    summary["core_use"] = None if cu and (cu.get("core_s_per_useful") or 1) < 1 else cu
+    summary["coverage"] = cov
     summary["init_scripts"] = init_summary
     summary["timeline_bucket_seconds"] = rules.timeline_bucket_seconds  # bucket of spill_shuffle_timeline
     summary["runs"] = {"count": len(runs), "default_run": default_run(runs), "note": runs_note(runs),

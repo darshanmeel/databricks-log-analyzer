@@ -206,8 +206,18 @@ def _big_read_findings(cid: str, stages: list[dict], queries: list[dict], rules:
         if (s.get("df_cache_bytes") or 0) >= GB:
             ev += f"; another {s['df_cache_bytes'] / GB:,.0f} GiB came from a DataFrame cache"
         sev = "high" if b >= rules.big_read_high_bytes else "medium"
+        fix = FIX["big_read"]
+        spill = s.get("disk_spill") or 0
+        if spill > b:
+            # a stage that spilled more than it read was slow in its sort or join, not in the read: say so, and leave
+            # the high to the spill finding of the same stage
+            ev += f"; it spilled {spill / GB:,.0f} GiB to disk, more than it read: the spill, not the read, made it slow"
+            sev = "medium"
+            fix = ("The read is not the problem here: the stage spilled more than it read. Fix the spill first (more "
+                   "shuffle partitions for its sort or window, or memory-optimised workers); a table the job must "
+                   "read in full, such as a first load, cannot be read less.")
         entity = f"Stage {s['stage_id']}.{s['stage_attempt']}" + (f": {what}" if what else "")
-        out.append(_f(cid, s["spark_context_id"], sev, "big_read", entity, ev, FIX["big_read"], s.get("start_time"),
+        out.append(_f(cid, s["spark_context_id"], sev, "big_read", entity, ev, fix, s.get("start_time"),
                       stage_id=s["stage_id"], stage_attempt=s["stage_attempt"], spark_job_id=s.get("spark_job_id"),
                       sql_execution_id=s.get("sql_execution_id")))
     return out
@@ -300,6 +310,16 @@ def _f(cluster_id, ctx, severity, category, entity, evidence, fix, ts, **links) 
     return row
 
 
+JDBC_SKEW_FIX = ("A JDBC read is split by its partitionColumn between lowerBound and upperBound: rows bunched in one "
+                 "range land in one task. Partition on an evenly spread column (or a hash of the key), or give one "
+                 "predicate per partition; salting keys and AQE skew join do not apply to a read.")
+
+
+def _jdbc_stage(s: dict) -> bool:
+    """A stage that read rows but no bytes from storage: a JDBC source (Spark records rows, not bytes, for it)."""
+    return not s.get("input_bytes") and (s.get("input_records") or 0) > 0 and not s.get("shuffle_read")
+
+
 def _event_findings(cid: str, stages, executors, queries, rules: Rules, retries=None, gc_profile=None,
                     oom_sites=None) -> list[dict]:
     """Notebook A2, in the notebook's union order."""
@@ -323,7 +343,14 @@ def _event_findings(cid: str, stages, executors, queries, rules: Rules, retries=
                and s["skew"] >= rules.skew_ratio and s["max_task_ms"] >= rules.skew_min_task_ms,
                "high", "task_skew",
                lambda s: (f"slowest task {spark_double_str(round_half_up(s['max_task_ms'] / 1000))}s = "
-                          f"{spark_double_str(s['skew'])}x the median"))
+                          f"{spark_double_str(s['skew'])}x the median"
+                          + (f"; the biggest task read {spark_double_str(s['data_skew'])}x the median task's rows"
+                             if _jdbc_stage(s) and s.get("data_skew") else "")))
+    # a JDBC read is skewed by how it was split, not by a hot join key: its own fix
+    by_key = {(s["spark_context_id"], s["stage_id"], s["stage_attempt"]): s for s in stages}
+    for f in out:
+        if f["category"] == "task_skew" and _jdbc_stage(by_key.get((f["spark_context_id"], f["stage_id"], f["stage_attempt"])) or {}):
+            f["fix"] = JDBC_SKEW_FIX
     stage_rows(lambda s: s["disk_spill"] is not None and s["disk_spill"] >= rules.spill_bytes,
                lambda s: "high" if s["disk_spill"] >= rules.spill_high_bytes else "medium", "disk_spill",
                lambda s: f"{s['disk_spill'] / GB:,.1f} GiB spilled to disk" + _spill_ratio(s))

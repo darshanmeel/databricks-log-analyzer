@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { ErrClassChip } from '../components/ClusterTop';
 import { Link } from 'react-router-dom';
-import { api, type ErrorGroup, type FindingRow, type IncidentRow, type Ms } from '../api';
+import { api, noLogs, type ErrorGroup, type FindingRow, type IncidentRow, type Ms } from '../api';
 import { useCluster, useRunScopeCtx } from '../components/Shell';
 import { runName } from '../runName';
 import { HBars } from '../components/charts';
@@ -21,7 +21,7 @@ const ROLE_ORDER: Record<string, number> = { root: 0, contributing: 1, effect: 2
 
 /** Exceptions grouped into the problems they are evidence of (same root cause, same incident), or one card per exception group. */
 export default function Errors() {
-  const { cid } = useCluster();
+  const { cid, summary } = useCluster();
   const [sp, setQ] = useQueryState();
   const focus = sp.get('fingerprint');
   const scopedRun = useRunScopeCtx().run;
@@ -74,7 +74,9 @@ export default function Errors() {
         {(d) =>
           d.exs.length === 0 ? (
             <div className="panel">
-              <Empty title="No exceptions">No stack traces were found in the driver or executor logs.</Empty>
+              {noLogs(summary)
+                ? <Empty title="No logs to read">These logs hold no driver or executor logs, so exceptions are not known (not zero).</Empty>
+                : <Empty title="No exceptions">No stack traces were found in the driver or executor logs.</Empty>}
             </div>
           ) : showProblems ? (
             <Problems cid={cid} d={d} focus={focus} />

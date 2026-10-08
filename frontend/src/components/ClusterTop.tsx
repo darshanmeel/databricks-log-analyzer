@@ -3,7 +3,7 @@
 // and its problems as points. The runs themselves are ranked in Find and listed in full below.
 import { Fragment, useMemo, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { api, waitOf, type Advice, type Causes, type ComputeUse, type ErrorGroup, type FindingRow, type RunRow } from '../api';
+import { api, noLogs, waitOf, type Advice, type Causes, type ComputeUse, type ErrorGroup, type FindingRow, type RunRow } from '../api';
 import { useAsync } from '../hooks';
 import { fmtBytes, fmtDuration, fmtNum, fmtPct, fmtRows, fmtTime, truncate } from '../format';
 import { to } from '../links';
@@ -350,13 +350,14 @@ function Programs({ cid, progs }: { cid: string; progs: Program[] }) {
 const errorEffect = (e: ErrorGroup) => errorClass(e).effect;
 
 function Errors({ cid, rows, runs }: { cid: string; rows: ErrorGroup[] | null; runs: RunRow[] }) {
+  const none = noLogs(useCluster().summary);
   const names = new Map(runs.map((r) => [r.run_key, r]));
   const top = [...(rows ?? [])].sort((a, b) => errorEffect(b) - errorEffect(a) || b.occurrences - a.occurrences).slice(0, 6);
   return (
     <section className="panel">
       <div className="panel-head" id="cv-errors"><h2>Errors in the logs <span className="ro-count">{rows?.length ?? '…'}</span></h2><Link className="small" to={to.errors(cid)}>All errors</Link></div>
       <div className="table-wrap" style={{ overflowX: 'auto' }}>
-        {rows === null ? <p className="muted small panel-body">Loading…</p> : !top.length ? <p className="muted small panel-body">No exceptions in the logs.</p> : (
+        {rows === null ? <p className="muted small panel-body">Loading…</p> : !top.length ? <p className="muted small panel-body">{none ? 'No driver or executor logs here, so exceptions are not known.' : 'No exceptions in the logs.'}</p> : (
           <table className="ro-find">
             <thead><tr><th>Error</th><th className="num">Lines</th><th className="num" title="Runs going when its lines were logged">Runs then</th><th>Last</th></tr></thead>
             <tbody>

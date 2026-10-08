@@ -323,4 +323,23 @@ def add_findings(findings: list[dict], runs: list[dict], new: list[dict], replac
     return allf
 
 
+def recount_queries(profile: list[dict], findings: list[dict]) -> None:
+    """Each query_profile row's finding count and worst severity from every finding, the later ones included (the
+    profile is built before the findings that need runs)."""
+    cnt: dict[tuple, int] = {}
+    worst: dict[tuple, str] = {}
+    for f in findings:
+        q = f.get("sql_execution_id")
+        if q is None or q != q:
+            continue
+        k = (f.get("spark_context_id"), int(q))
+        cnt[k] = cnt.get(k, 0) + 1
+        if k not in worst or SEVERITY_RANK.get(f["severity"], 9) < SEVERITY_RANK.get(worst[k], 9):
+            worst[k] = f["severity"]
+    for r in profile:
+        k = (r.get("spark_context_id"), r.get("sql_execution_id"))
+        r["findings"] = cnt.get(k, 0)
+        r["max_severity"] = worst.get(k)
+
+
 CATEGORIES = ("cores_full", "waited_for_cores", "merge_rewrite")

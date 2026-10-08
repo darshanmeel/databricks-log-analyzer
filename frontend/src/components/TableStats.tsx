@@ -32,11 +32,14 @@ type Scope = { run?: string; ctx?: string; query?: number };
  * most of the columns pulled. Worst first. */
 function flagsOf(t: TS, scope: Scope): { text: string; bad?: boolean }[] {
   const f: { text: string; bad?: boolean }[] = [];
-  if ((t.avg_file_bytes ?? 0) >= BIG_FILE) f.push({ text: `${fmtBytes(t.avg_file_bytes)} per file: a MERGE rewrites whole files`, bad: true });
+  // only a MERGE target rewrites whole files; a big file elsewhere just needs compacting (or came skewed from a JDBC load)
+  if ((t.avg_file_bytes ?? 0) >= BIG_FILE && t.merged !== false) f.push({ text: `${fmtBytes(t.avg_file_bytes)} per file: a MERGE rewrites whole files`, bad: true });
+  else if ((t.avg_file_bytes ?? 0) >= BIG_FILE) f.push({ text: `${fmtBytes(t.avg_file_bytes)} per file: large files, so a filter can skip little` });
   else if ((t.max_file_bytes ?? 0) >= BIG_FILE) f.push({ text: `largest file ${fmtBytes(t.max_file_bytes)} (average ${fmtBytes(t.avg_file_bytes)}): some files need compacting`, bad: true });
-  if ((t.size_bytes ?? 0) >= BIG_TABLE && !t.files_pruned) f.push({ text: `read whole: no file skipped${t.partition_cols ? '' : ', not partitioned'}` });
+  if ((t.size_bytes ?? 0) >= BIG_TABLE && !t.files_pruned && !t.batches) f.push({ text: `read whole: no file skipped${t.partition_cols ? '' : ', not partitioned'}` });
   const again = scope.query !== undefined ? t.scans : t.runs ? t.scans / t.runs : t.scans;
-  if (again >= 2) f.push({ text: scope.query !== undefined ? `scanned ${fmtNum(t.scans)}× in this query` : t.runs > 1 ? `scanned ${fmtNum(t.scans)}× over ${fmtNum(t.runs)} runs` : `scanned ${fmtNum(t.scans)}× in one run` });
+  if (t.batches) f.push({ text: `read in ${fmtNum(t.batches)} micro-batches (each new files), sizes added up` });
+  else if (again >= 2) f.push({ text: scope.query !== undefined ? `scanned ${fmtNum(t.scans)}× in this query` : t.runs > 1 ? `scanned ${fmtNum(t.scans)}× over ${fmtNum(t.runs)} runs` : `scanned ${fmtNum(t.scans)}× in one run` });
   return f;
 }
 

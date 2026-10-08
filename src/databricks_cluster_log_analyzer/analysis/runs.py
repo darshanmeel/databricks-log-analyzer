@@ -301,10 +301,22 @@ def _runs_rows(cid: str, meta: dict, d: dict, tdf: pd.DataFrame) -> list[dict]:
         r.update({c: got.get(c) for c in (*DIST_COLS, "input_bytes", "input_records", "output_bytes",
                                           "output_records")})
     # the same job's other runs: is this one unusually slow?
+    # the same code over different tables (one notebook loading 30 tables) is not the same work: within a family,
+    # runs are compared only with runs on the same subject; with fewer than 3 of those there is no usual yet
     fam: dict = {}
     for r in rows:
         fam.setdefault(run_family(r), []).append(r)
+    groups: list[list[dict]] = []
     for rs in fam.values():
+        subj = {x.get("subject") for x in rs}
+        if len(subj) > 1:
+            by: dict = {}
+            for x in rs:
+                by.setdefault(x.get("subject"), []).append(x)
+            groups += list(by.values())
+        else:
+            groups.append(rs)
+    for rs in groups:
         durs = sorted(x["duration_ms"] for x in rs if x["duration_ms"] is not None)
         typ = durs[(len(durs) - 1) // 2] if len(durs) >= 3 else None
         for r in rs:

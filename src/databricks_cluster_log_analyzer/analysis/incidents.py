@@ -55,7 +55,7 @@ CATEGORY_KIND = {
 # findings about the whole run or cluster (queueing, MERGE, counts, DDL loops, init scripts): no cause -> effect with
 # a failure, so they stay outside incidents (the cache and autoscaling findings above do take part)
 NOT_IN_INCIDENTS = {"capacity_bound", "autoscale_lag", "cores_full", "waited_for_cores", "merge_rewrite", "count_only",
-                    "ddl_loop", "disk_cache", "init_script"}
+                    "ddl_loop", "disk_cache", "init_script", "dedup_noop"}
 AUTOSCALED_RE = re.compile(r"removed \d+ executors? \(([\w, ]+)\)")
 PERF_KINDS = {"skew", "tiny", "large", "big_read", "idle", "spill", "gc"}
 ERROR_KINDS = {"task_error", "driver_error", "other_error", "reported", "source_db"}

@@ -54,3 +54,13 @@ def test_autoscaling_that_removed_executors_is_the_cause_of_their_errors():
         _f("F2", "exception", T0 + M + 1_000, entity="java.lang.IllegalStateException", executor_id="7")],
         [], execs, [], [], [], [], None, [])}
     assert rows["F2"]["caused_by"] == "F1"
+
+
+def test_missing_rolled_event_log_files_are_a_gap():
+    from pathlib import Path
+
+    from databricks_cluster_log_analyzer.analysis.coverage import event_log_gaps
+    names = ["eventlog-2026-10-06--17-50.gz", "eventlog-2026-10-06--18-00.gz", "eventlog-2026-10-06--18-30.gz",
+             "eventlog-2026-10-06--18-40.gz", "eventlog"]
+    gaps = event_log_gaps(Path(n) for n in names)
+    assert len(gaps) == 1 and gaps[0][1] - gaps[0][0] == 30 * M

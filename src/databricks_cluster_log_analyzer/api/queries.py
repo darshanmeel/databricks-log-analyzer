@@ -1951,6 +1951,13 @@ def flow(store: Store, cid: str, run: str | None = None) -> dict[str, Any]:
                                 exclude=("final_plan", "initial_plan", "details"))
 
         queries = rows("sql_queries", "spark_context_id, sql_execution_id", {"description": 300, "error": 500})
+        # MERGE writes with Change Data Feed: their rows written hold the change rows too
+        cdc: set = set()
+        qp_ = store.dataset_path(cid, "sql_queries", required=False)
+        if qp_ is not None and "final_plan" in store.schema(con, qp_):
+            cdc = {(r["spark_context_id"], r["sql_execution_id"]) for r in store.rows(
+                con, f"SELECT spark_context_id, sql_execution_id FROM {store.src(qp_)} WHERE description LIKE '%MERGE%' "
+                     "AND (final_plan LIKE '%packedCdc%' OR final_plan LIKE '%__is_cdc%')")}
         jobs = rows("spark_jobs", "spark_context_id, spark_job_id", {"description": 300, "call_site": 300, "error": 500})
         stages = rows("stages", "spark_context_id, stage_id, stage_attempt", {"stage_name": 200, "job_description": 1,
                                                                             "failure_reason": 1})
@@ -2012,12 +2019,14 @@ def flow(store: Store, cid: str, run: str | None = None) -> dict[str, Any]:
     present = {n["key"] for n in nodes}
 
     edges: dict[tuple, dict] = {}
+    cdf_nodes = {f"q:{c}:{q}" for c, q in cdc}
 
     def link(a: str | None, b: str | None, kind: str, label: str | None = None, rows: int | None = None,
              size: int | None = None):
         if not a or not b or a == b or a not in present or b not in present:
             return
-        e = edges.setdefault((a, b, kind), {"from": a, "to": b, "kind": kind, "labels": [], "rows": None, "bytes": None})
+        e = edges.setdefault((a, b, kind), {"from": a, "to": b, "kind": kind, "labels": [], "rows": None, "bytes": None,
+                                            "cdf": a in cdf_nodes})
         if label and label not in e["labels"] and len(e["labels"]) < 5:
             e["labels"].append(label)
             # what passed along it: a table: the rows its writer wrote; a reused shuffle: the rows that stage wrote
@@ -2193,7 +2202,8 @@ def cluster_view(store: Store, cid: str) -> dict[str, Any]:
         m["cpu_share"] = round(min(1.0, (m["run_ms"] or 0) / (m["cores"] * 60_000)), 3) if m["cores"] else None
     s = read_summary(store, cid)
     return {"job": job, "apps": apps, "busy": busy, "runs": runs_, "executors": executors, "minutes": minutes, "start": s.get("start_time"),
-            "end": s.get("end_time"), "compute": compute_use(executors, minutes, s.get("start_time"), s.get("end_time")),
+            "end": s.get("end_time"), "compute": compute_use(executors, minutes, s.get("start_time"), s.get("end_time"),
+                                                        [(c["from"], c["to"]) for c in s.get("coverage") or [] if c.get("kind") == "event_log_gap"]),
             "memory": memory, "causes": causes, "run_causes": run_causes}
 
 
@@ -2201,9 +2211,11 @@ IDLE_SHARE = 0.10          # a minute in which tasks used under 10% of the cores
 IDLE_MIN_MINUTES = 3       # idle stretches shorter than this are left out
 
 
-def compute_use(executors: list[dict], minutes: list[dict], start: int | None, end: int | None) -> dict | None:
+def compute_use(executors: list[dict], minutes: list[dict], start: int | None, end: int | None,
+                gaps: Sequence[tuple[int, int]] = ()) -> dict | None:
     """Revision 14: what the executors' cores were paid for against what tasks used, and the stretches in which the
-    executors were up but ran (next to) nothing. `minutes`: per minute run_ms (task time) from the timeline."""
+    executors were up but ran (next to) nothing. `minutes`: per minute run_ms (task time) from the timeline. `gaps`:
+    stretches whose event-log files are missing (analysis.coverage): their minutes are left out, not counted idle."""
     up = [(e["added_time"] if e["added_time"] is not None else start,
            e["removed_time"] if e["removed_time"] is not None else end, e["cores"] or 0) for e in executors]
     up = [(a, b, c) for a, b, c in up if a is not None and b is not None and b > a]
@@ -2215,6 +2227,8 @@ def compute_use(executors: list[dict], minutes: list[dict], start: int | None, e
     core_up = core_used = 0
     rows = []
     for m in range(t0, t1, 60_000):
+        if any(a < m + 60_000 and b > m for a, b in gaps):
+            continue
         cu = sum(c * max(0, min(b, m + 60_000) - max(a, m)) for a, b, c in up)
         n = sum(1 for a, b, _ in up if a < m + 60_000 and b > m)
         u = min(used.get(m, 0), cu)
@@ -2224,6 +2238,9 @@ def compute_use(executors: list[dict], minutes: list[dict], start: int | None, e
     stretches: list[dict] = []
     cur = None
     for m, cu, u, n in rows:
+        if cur is not None and m > cur["end"]:  # minutes left out (a gap in the logs) end a stretch
+            stretches.append(cur)
+            cur = None
         if cu > 0 and u < IDLE_SHARE * cu:
             if cur is None:
                 cur = {"start": m, "end": m + 60_000, "idle_core_ms": 0, "executors": 0, "cores_max": 0}
@@ -4317,10 +4334,44 @@ def table_stats(store: Store, con, cid: str, run: str | None = None, query: tupl
                     if sc is not None and (st.get("status") or "succeeded") == "succeeded":
                         sc["rows"] += st.get("input_records") or 0
                     break
+    # a stream reads a table in micro-batches, each a different set of new files: the table is (at least) all of them
+    # added up, not its biggest batch, and its scans are not re-reads
+    if out and per_scan:
+        from ..parsing.eventlog import readable_description
+        keys = sorted({(c, q) for c, q, _t in per_scan})
+        desc = {}
+        for c, q in keys:
+            desc[(c, q)] = None
+        for r in store.rows(con, f"SELECT spark_context_id, sql_execution_id, description FROM {store.src(qpath)} "
+                                 "WHERE description LIKE '%batch%'"):
+            if (r["spark_context_id"], r["sql_execution_id"]) in desc:
+                desc[(r["spark_context_id"], r["sql_execution_id"])] = readable_description(r["description"])
+        streams: dict[str, dict] = {}
+        for (c, q, tbl), sc in per_scan.items():
+            m = re.match(r"Streaming batch (\d+) · stream (\w+)", desc.get((c, q)) or "")
+            s = streams.setdefault(tbl, {"batches": {}, "other": False})
+            if m:
+                b = s["batches"].setdefault((m.group(2), m.group(1)), {"files": 0, "size": 0})
+                b["files"] = max(b["files"], sc["files"])
+                b["size"] = max(b["size"], sc["size"])
+            else:
+                s["other"] = True
+        for tbl, s in streams.items():
+            if tbl in out and len(s["batches"]) > 1 and not s["other"] and len({k[0] for k in s["batches"]}) == 1:
+                o = out[tbl]
+                o["size_bytes"] = sum(b["size"] for b in s["batches"].values()) or o["size_bytes"]
+                o["files"] = sum(b["files"] for b in s["batches"].values()) or o["files"]
+                o["batches"] = len(s["batches"])
+    # tables some query MERGEs into: only there do big files mean a MERGE rewrites whole files
+    merged: set = set()
+    if out and "tables_written" in qsch:
+        for r in store.rows(con, f"SELECT tables_written FROM {store.src(qpath)} WHERE description LIKE '%MERGE%'"):
+            merged |= set(r.get("tables_written") or [])
     for t in out.values():
         t["runs"] = len(t["runs"])
         t["avg_file_bytes"] = round(t["size_bytes"] / t["files"]) if t["size_bytes"] and t["files"] else None
         t["rows_per_file"] = None
+        t["merged"] = t["table"] in merged
     # rows per file: only an average (the logs count rows per scan, not per file), from one scan: its stage's rows over
     # its files. Only scans whose stage ran and read rows (adaptive execution cancels a replanned scan: it lists files
     # but reads none); of those, the one that saw the most of the table (the scan that sizes it)

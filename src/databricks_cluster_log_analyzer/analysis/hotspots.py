@@ -116,6 +116,14 @@ def _retry_text(g, r) -> str:
     return f", and its retry took {fmt_words(b['task_ms'])} on executor {b['executor_id']}"
 
 
+def _rows_in(r) -> float:
+    return sum(0 if is_null(r.get(c)) else float(r.get(c)) for c in ("input_records", "shuffle_read_records"))
+
+
+def _row_ratio(r, med_rows) -> float:
+    return _rows_in(r) / max(med_rows, 1)
+
+
 def _skew_tasks(tdf, stage_info, query_info, rules: Rules, cid: str, stuck=frozenset()) -> list[dict]:
     out: list[dict] = []
     t = tdf[tdf["task_ms"].notna()]
@@ -133,6 +141,11 @@ def _skew_tasks(tdf, stage_info, query_info, rules: Rules, cid: str, stuck=froze
             continue
         nbytes = g["shuffle_read"].fillna(0) + g["input_bytes"].fillna(0)
         med_bytes = lower_median(nbytes.tolist()) or 0
+        # rows, for a read with no bytes recorded (a JDBC source reports rows only)
+        nrows = (g["input_records"].fillna(0) if "input_records" in g else 0) + (
+            g["shuffle_read_records"].fillna(0) if "shuffle_read_records" in g else 0)
+        med_rows = lower_median(nrows.tolist()) if hasattr(nrows, "tolist") else None
+        jdbc = not nbytes.any() and hasattr(nrows, "any") and bool(nrows.any())
         st = stage_info.get((ctx, int(sid), att))
         job, qid, desc, op = _query_bits("skew_task", st, query_info)
         for _, r in hot.iterrows():
@@ -153,6 +166,12 @@ def _skew_tasks(tdf, stage_info, query_info, rules: Rules, cid: str, stuck=froze
                 cause = "data_skew"
                 why = (f"it read {fmt_bytes(b)} vs a {fmt_bytes(med_bytes)} median"
                        + (f" ({bratio:.0f}×)" if bratio != float("inf") else "") + ", so this is data skew (a hot key or partition)")
+            elif not b and med_rows is not None and _row_ratio(r, med_rows) >= rules.hotspot_data_skew_ratio:
+                rr = _rows_in(r)
+                cause = "data_skew"
+                why = (f"it read {rr:,.0f} rows vs a {med_rows:,.0f} median ({_row_ratio(r, med_rows):.0f}×)"
+                       + (": the JDBC read's partition column is skewed (rows bunched in one range)" if jdbc
+                          else ", so this is data skew (a hot key or partition)"))
             elif gc_share >= rules.gc_share:
                 cause = "gc"
                 why = f"it spent {gc_share:.0%} of its run time in garbage collection, so memory pressure slowed it"

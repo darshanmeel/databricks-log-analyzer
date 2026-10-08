@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { api, getRunScope, optional, type ClusterInfoRow, type ErrorGroup, type Hotspot, type IncidentRow, type RunRow, type Summary, type TaskRetryRow, type TimelineRow } from '../api';
+import { api, getRunScope, noLogs, optional, type ClusterInfoRow, type ErrorGroup, type Hotspot, type IncidentRow, type RunRow, type Summary, type TaskRetryRow, type TimelineRow } from '../api';
 import { useCluster, useRunScopeCtx } from '../components/Shell';
 import { ClusterView } from './ClusterView';
 import { RunOverview } from './RunOverview';
@@ -180,6 +180,7 @@ function SignalsChart() {
 }
 
 function SignalsBars({ rows }: { rows: TimelineRow[] }) {
+  const { summary } = useCluster();
   const { data, keys, colors } = useMemo(() => {
     const totals = new Map<string, number>();
     rows.forEach((r) => totals.set(r.signal, (totals.get(r.signal) ?? 0) + r.count));
@@ -217,7 +218,7 @@ function SignalsBars({ rows }: { rows: TimelineRow[] }) {
     return { data, keys, colors };
   }, [rows]);
 
-  if (!rows.length) return <p className="muted">No log signals matched. Logs contained no OOM, GC, spill or failure patterns.</p>;
+  if (!rows.length) return <p className="muted">{noLogs(summary) ? 'No driver or executor logs here, so OOM, GC, spill and failure lines are not known.' : 'No log signals matched. Logs contained no OOM, GC, spill or failure patterns.'}</p>;
   return (
     <div className="chart-box" style={{ height: 260 }}>
       <ResponsiveContainer>
@@ -608,7 +609,7 @@ function ProblemsAtGlance() {
             )}
           </ol>
         ) : (
-          <p className="muted small">No exceptions in the logs.</p>
+          <p className="muted small">{noLogs(s) ? 'No driver or executor logs here, so exceptions are not known.' : 'No exceptions in the logs.'}</p>
         )}
       </Panel>
     </div>
@@ -633,7 +634,10 @@ export default function Overview() {
         <div className="panel panel-body stack" style={{ gap: 10, maxWidth: '72ch' }}>
           <p style={{ margin: 0 }}>The folder for this cluster has no driver, executor or event logs, so there is nothing to show on the other pages.</p>
           <ul className="ink2" style={{ margin: 0, paddingLeft: 18 }}>
-            <li>Serverless compute writes no cluster logs: this tool covers classic clusters.</li>
+            {/* init-script logs prove a classic cluster: then the logs were not delivered, it is not serverless */}
+            {((s as typeof s & { init_scripts?: { node_starts?: number } }).init_scripts?.node_starts ?? 0) > 0
+              ? <li>Init scripts ran on {fmtNum((s as typeof s & { init_scripts?: { node_starts?: number } }).init_scripts!.node_starts!)} nodes, so this was a classic cluster: its driver, executor and event logs were not delivered here (or were removed).</li>
+              : <li>Serverless compute writes no cluster logs: this tool covers classic clusters.</li>}
             <li>For a classic cluster, check that cluster log delivery is turned on and points at this folder.</li>
             <li>Check the cluster id and the log root you picked.</li>
           </ul>

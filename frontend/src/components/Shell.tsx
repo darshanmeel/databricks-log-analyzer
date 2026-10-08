@@ -193,7 +193,7 @@ export const useRunScopeCtx = () => useContext(RunScopeContext);
 const usualOf = (r: RunRow) => usualX(r);
 /** What "usual" is the median of: earlier runs of the same task on the same table, or this batch's runs of the code. */
 const usualWord = (r: RunRow) =>
-  r.usual_from === 'history' ? `median of ${r.usual_runs ?? 'its'} earlier runs` : `median of the ${r.same_job_runs ?? ''} runs of this notebook`.replace('  ', ' ');
+  r.usual_from === 'history' ? `median of ${r.usual_runs ?? 'its'} earlier runs` : `median of the ${r.same_job_runs ?? ''} runs of this notebook${r.subject ? ` on ${r.subject}` : ''}`.replace('  ', ' ');
 
 /** Time lost against its usual: 43 s at 79× a 0.5 s usual matters less than 1h 47m at 3.9× 27 minutes. */
 const extraOf = (r: RunRow) => (usualOf(r) !== null && r.typical_duration_ms ? Math.max(0, (r.duration_ms ?? 0) - r.typical_duration_ms) : 0);
@@ -457,13 +457,14 @@ export function ClusterLayout() {
             <div className="run-title">
               <div className="run-title-row"><h1 className="mono">{cid}</h1><ClusterEnd summary={summary} runs={scope.runs} end={summary.end_time} /></div>
               <div className="run-meta mono">{fmtTime(summary.start_time)} → {fmtTime(summary.end_time)}  ·  {fmtDuration(summary.duration_ms)}  ·  {fmtNum(scope.runs.length)} runs</div>
+              <Coverage summary={summary} />
             </div>
             <ClusterTabs base={base} section={EITHER_PAGES.has(section) || CLUSTER_PAGES.has(section) ? section : ''} />
           </div>
         )}
         {!clusterScope && !summary.empty_reason && (
           <div className="run-head">
-            {cur ? <RunTitle r={cur} /> : (
+            {cur ? <div><RunTitle r={cur} /><Coverage summary={summary} /></div> : (
               <div className="run-title">
                 <div className="run-title-row"><h1 className="mono">{cid}</h1>{summary.status !== 'succeeded' && <StatusBadge status={summary.status} />}</div>
                 <div className="run-meta mono">{fmtTime(summary.start_time)} → {fmtTime(summary.end_time)}  ·  {fmtDuration(summary.duration_ms)}</div>
@@ -526,6 +527,19 @@ export function EmptyCluster({ reason }: { reason: string }) {
 
 /** How the cluster's work ended: from its runs when it has them (a job cluster stops after its last run; that is not a
  * failure), else from Spark's jobs. */
+/** What these logs do not hold (missing files, executors without logs, no GC lines), and what that leaves partial:
+ * one line, the list on click. Shown above every page of the cluster, so no number is read as complete when it is not. */
+function Coverage({ summary }: { summary: Summary }) {
+  const c = summary.coverage ?? [];
+  if (!c.length) return null;
+  return (
+    <details className="coverage">
+      <summary><b>Not everything is in these logs:</b> {c[0].text}{c.length > 1 ? ` (and ${c.length - 1} more)` : ''}</summary>
+      <ul>{c.map((x) => <li key={x.kind + x.text}><b>{x.text}</b> <span className="muted">{x.affects}</span></li>)}</ul>
+    </details>
+  );
+}
+
 function ClusterEnd({ summary, runs, end }: { summary: Summary; runs: RunRow[]; end: number | null }) {
   const v = clusterVerdict(summary.status, summary.counts, runs);
   const last = runs.length ? Math.max(...runs.map((r) => r.end_time ?? 0)) : 0;

@@ -304,7 +304,8 @@ export function RunFlow({ cid, onPick }: { cid: string; onPick: (n: FlowNode) =>
             const on = !chain || (chain.has(e.from) && chain.has(e.to));
             const mid = Math.max(x1, x2) + 18;
             const v = EDGE[e.kind];
-            const passed = e.rows != null ? `${fmtRows(e.rows)} rows${e.bytes ? ` (${fmtBytes(e.bytes)})` : ''}` : e.bytes ? fmtBytes(e.bytes) : '';
+            const passed = (e.rows != null ? `${fmtRows(e.rows)} rows${e.bytes ? ` (${fmtBytes(e.bytes)})` : ''}` : e.bytes ? fmtBytes(e.bytes) : '')
+              + (e.cdf && (e.rows != null || e.bytes) ? ' incl. CDF change rows' : '');
             return (
               <g key={i}>
               <path d={x2 > x1 + 12 ? `M${x1},${y1} C${(x1 + x2) / 2},${y1} ${(x1 + x2) / 2},${y2} ${x2 - 2},${y2}` : `M${x1},${y1} C${mid},${y1} ${mid},${y2} ${x2 - 2},${y2}`}

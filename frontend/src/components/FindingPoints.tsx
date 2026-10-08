@@ -33,6 +33,7 @@ const CAUSE: Record<string, string> = {
   count_only: 'count() calls run the whole query again just to return one number.',
   ddl_loop: 'One ALTER statement per column: each is its own Delta commit.',
   disk_cache: 'The Databricks disk cache copies files to local disk for later reads that never came.',
+  dedup_noop: 'A window dedup (row_number per key) shuffled and sorted every row but removed none: the keys were already unique.',
   init_script: 'A cluster init script wrote errors when a node started.',
 };
 const KIND: Record<string, string> = {

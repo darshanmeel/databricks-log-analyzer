@@ -27,7 +27,7 @@ from .analysis.aggregate import mark_replanned, restage
 from .analysis.capacity import CATEGORIES as CAPACITY_CATEGORIES, capacity_findings
 from .analysis.combined import spill_shuffle_timeline
 from .analysis.incidents import build_incidents
-from .analysis.contention import CATEGORIES, add_findings, contention_findings, first_tasks, to_ms
+from .analysis.contention import CATEGORIES, add_findings, contention_findings, first_tasks, recount_queries, to_ms
 from .analysis.diagnosis import build_summary
 from .analysis.findings import summarize_errors
 from .analysis.workload import CATEGORIES as WORKLOAD_CATEGORIES, read_split, workload_findings
@@ -117,6 +117,10 @@ def refresh_findings(out_dir: str | os.PathLike, rules: Rules) -> dict:
     new += workload_findings(cid, queries, runs, executors, signals, _rows(d / "event_counts.parquet"), rules, stages)
     allf = add_findings(findings, runs, new, replace=(*CATEGORIES, *WORKLOAD_CATEGORIES, *CAPACITY_CATEGORIES))
     write_parquet(allf, d / "findings.parquet", "findings")
+    if (d / "query_profile.parquet").exists():
+        qp = _rows(d / "query_profile.parquet")
+        recount_queries(qp, allf)
+        write_parquet(qp, d / "query_profile.parquet", "query_profile")
 
     # ---- incidents with the later findings in them, and the per-minute task numbers spread over each task's run --
     log_errors = _rows(d / "log_errors.parquet")

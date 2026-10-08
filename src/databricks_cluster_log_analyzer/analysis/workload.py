@@ -24,6 +24,9 @@ from .contention import _run_name, to_ms
 GB = 1 << 30
 
 FIX = {
+    "dedup_noop": (
+        "The window dedup (row_number() per key, keep the first) removed no rows: the keys were already unique. Drop "
+        "it for this load, or dedup only the new rows (a MERGE or an anti-join against the keys already loaded)."),
     "dataframe_cache": (
         "Do not cache a table that is many times the storage memory: cache only the narrow columns that are reused, "
         "or write an intermediate Delta table and read it back. Unpersist when done, and drop count() calls that "
@@ -260,6 +263,21 @@ def workload_findings(cid: str, queries: list[dict], runs: list[dict], executors
                           f"run {_run_name(r) if r else rk}: {len(ds)} ALTER statements", ev, to_ms(ds[0].get("start_time")),
                           run_key=rk, sql_execution_id=ds[0]["sql_execution_id"]))
 
+    # ---- a window dedup that kept every row -------------------------------------------------------------------------
+    # row_number() over a key, keep the first: when as many rows come out as went in, the shuffle and sort bought nothing
+    for q in queries:
+        p = _plan(q)
+        n_in, n_out = q.get("input_records") or 0, q.get("output_records") or 0
+        if n_in < 10_000_000 or n_out != n_in or "Window" not in p or "row_number" not in p.lower():
+            continue
+        sh = q.get("shuffle_read") or 0
+        ev = (f"query {q['sql_execution_id']} deduplicated {n_in:,} rows with a window (row_number) and wrote all "
+              f"{n_out:,} of them" + (f", after shuffling {fmt_bytes(sh)}" if sh else "")
+              + (f" and spilling {fmt_bytes(q['disk_spill'])}" if q.get("disk_spill") else ""))
+        out.append(_f(cid, q["spark_context_id"], "medium" if sh >= 100 * GB else "low", "dedup_noop",
+                      f"query {q['sql_execution_id']}: dedup that removed nothing", ev, to_ms(q.get("start_time")),
+                      run_key=q.get("run_key"), sql_execution_id=q["sql_execution_id"]))
+
     # ---- Databricks disk cache ---------------------------------------------------------------------------------
     dc: dict = {}
     for q in queries:
@@ -290,4 +308,4 @@ def _max_alive(ex: list[dict]) -> int:
     return best or len(ex)
 
 
-CATEGORIES = ("dataframe_cache", "count_only", "ddl_loop", "disk_cache")
+CATEGORIES = ("dataframe_cache", "count_only", "ddl_loop", "disk_cache", "dedup_noop")

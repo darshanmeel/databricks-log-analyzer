@@ -35,14 +35,22 @@ def init_scripts(cid: str, files: list[dict], read: Callable[[str], Iterable[str
     if not runs:
         return None, []
     nodes = {k[0] for k in runs}
-    adds = sorted(t for t in (to_ms(e.get("added_time")) for e in executors if e.get("executor_id") not in (None, "driver"))
-                  if t is not None)
+    # the node's own executor: the one on the same host (the folder is named after the node's address); the driver's
+    # node runs the scripts too but starts no executor, so it has no join time
+    adds: dict[str, list[int]] = {}
+    for e in executors:
+        t_ = to_ms(e.get("added_time"))
+        if e.get("executor_id") in (None, "driver") or t_ is None or not e.get("host"):
+            continue
+        adds.setdefault(re.sub(r"[^0-9a-z]", "", str(e["host"]).lower()), []).append(t_)
     errors: dict[str, list] = {}
     outputs: dict[str, set] = {}
     joins = []
     for (node, script), r in runs.items():
         start = int(_dt.datetime.strptime(r["start"], "%Y%m%d_%H%M%S").replace(tzinfo=_dt.timezone.utc).timestamp() * 1000)
-        nxt = next((t for t in adds if t >= start), None)
+        key = re.sub(r"[^0-9a-z]", "", node.lower())
+        mine = sorted(t_ for h, ts_ in adds.items() if h and h in key for t_ in ts_)
+        nxt = next((t_ for t_ in mine if t_ >= start), None)
         if nxt is not None and nxt - start <= 900_000:
             joins.append(nxt - start)
         text = []

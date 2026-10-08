@@ -128,8 +128,12 @@ export interface DiagnosisStep {
 
 export type RunStatus = 'failed' | 'succeeded' | 'unknown';
 
+/** A piece of the logs that is not there, and the numbers it makes partial or unknown (analysis.coverage). */
+export interface CoverageItem { kind: string; text: string; affects: string; from?: Ms; to?: Ms }
+
 export interface Summary {
   cluster_id: string;
+  coverage?: CoverageItem[];
   built_at: string;
   input_dir: string;
   tool_version: string;
@@ -765,7 +769,11 @@ export interface FlowNode extends DataDist, DataIO {
   waits?: [number, number][];
 }
 /** rows / bytes: what passed along it (a table: the rows its writer wrote; a reused shuffle: the rows that stage wrote) */
-export interface FlowEdge { from: string; to: string; kind: 'inside' | 'table' | 'shuffle'; labels: string[]; rows?: number | null; bytes?: number | null }
+export interface FlowEdge {
+  from: string; to: string; kind: 'inside' | 'table' | 'shuffle'; labels: string[]; rows?: number | null; bytes?: number | null;
+  /** written by a MERGE with Change Data Feed: the rows include the change rows written next to the data */
+  cdf?: boolean;
+}
 export interface Flow { nodes: FlowNode[]; edges: FlowEdge[]; truncated: boolean; start: Ms; end: Ms; run: string | null }
 
 
@@ -983,6 +991,8 @@ export interface TableStats {
   scan_stages: number; bytes_from_files: number; rows_from_files?: number; scan_wall_ms: number; scan_task_ms: number;
   /** Databricks scans only: the smallest and the largest file read; rows per file is an average (no per-file counts) */
   min_file_bytes?: number | null; max_file_bytes?: number | null; rows_per_file?: number | null;
+  /** some query MERGEs into it; batches: read by one stream in this many micro-batches (sizes added up) */
+  merged?: boolean; batches?: number;
 }
 export interface MergeCycle {
   batch: string | null; start: number | null; end: number | null; kind: 'upserts' | 'deletes' | null; target: string | null;
@@ -999,3 +1009,6 @@ export interface JdbcStep {
  * wave (behind other runs or its own tasks), whichever is longer. Older analyses have only the first. */
 export const waitOf = (r: { waiting_ms?: number | null; queued_full_ms?: number | null }) =>
   Math.max(r.waiting_ms ?? 0, r.queued_full_ms ?? 0);
+
+/** No driver or executor logs at all: "no errors" would be a claim the logs cannot make. */
+export const noLogs = (s: { coverage?: CoverageItem[] }) => (s.coverage ?? []).some((c) => c.kind === 'no_logs');

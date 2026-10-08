@@ -88,7 +88,7 @@ function StageCard({ n, r, max, selected, dim, focusable, onKey }: { n: GNode; r
   const rowsTitle = rf.in === null && rf.out === null ? 'Spark recorded no row counts for this stage' : [
     rf.read ? `${fmtRows(rf.read)} rows read from storage` : null, rf.fromShuffle ? `${fmtRows(rf.fromShuffle)} rows from the shuffle of earlier stages` : null,
     rf.out !== null ? `${fmtRows(rf.out)} rows out${rf.outTo === 'shuffle' ? ' to the shuffle' : rf.outTo === 'table' ? ' written' : ''}` : null,
-    rf.grew ? `${fmtGrow(rf.grew)} more rows out than in: a join matched many rows per key, or a cross join` : null].filter(Boolean).join(' · ');
+    rf.grew ? `${fmtGrow(rf.grew)} more rows out than in: a join that matched many rows per key, or an explode (a MERGE with Change Data Feed writes change rows)` : null].filter(Boolean).join(' · ');
   return (
     <g
       className={`gnode stage ${selected ? 'sel' : ''} ${dim ? 'dim' : ''}`}

@@ -3,9 +3,15 @@
 
 export interface StageRowsIn {
   input_records?: number | null; shuffle_read_records?: number | null; shuffle_write_records?: number | null; output_records?: number | null;
+  rdd_scopes?: string[] | null;
 }
 
-export interface StageRowsFlow { read: number; fromShuffle: number; in: number | null; out: number | null; outTo: 'shuffle' | 'table' | null; grew: number | null }
+export interface StageRowsFlow {
+  read: number; fromShuffle: number; in: number | null; out: number | null; outTo: 'shuffle' | 'table' | null; grew: number | null;
+  /** why it grew: an explode (Generate: explode(), or a MERGE with Change Data Feed writing change rows next to the
+   * data), else a join; unknown when the stage's operators are not at hand */
+  grewBy: 'explode' | 'join' | null;
+}
 
 const n = (v: number | null | undefined) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 
@@ -20,7 +26,9 @@ export function stageRows(s: StageRowsIn | null | undefined): StageRowsFlow {
   const inn = anyIn ? read + fromShuffle : null;
   // a join that matched many rows per key (or a cross join) puts out far more rows than came in
   const grew = inn && out && out >= 1.5 * inn ? out / inn : null;
-  return { read, fromShuffle, in: inn, out, outTo, grew };
+  const scopes = s?.rdd_scopes;
+  const grewBy = !grew ? null : scopes ? (scopes.some((x) => /^Generate/.test(x)) ? 'explode' : 'join') : null;
+  return { read, fromShuffle, in: inn, out, outTo, grew, grewBy };
 }
 
 /** "×2.2" */
