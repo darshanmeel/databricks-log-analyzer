@@ -27,6 +27,7 @@ import duckdb
 import pyarrow as pa
 import pyarrow.compute as pc
 
+from ..analysis.merge import SCAN_FILES, cycle_of, files_text, merge_facts, merge_fix, wrote_text
 from ..parsing.plans import jdbc_source, name_paths_in_text, name_tables, table_names
 from ..util import is_null
 
@@ -523,7 +524,7 @@ def stage_what(scopes, s: Mapping[str, Any]) -> str | None:
     sc = list(scopes or [])
     bits: list[str] = []
     for x in sc:
-        m = re.match(r"Scan (?:parquet|delta|orc|csv|json|text) (.+)", x)
+        m = re.match(r"(?:Photon)?Scan (?:parquet|delta|orc|csv|json|text) (.+)", x)
         if m:
             bits.append(f"scan {m.group(1)}")
         elif "mergeMaterializedSource" in x:
@@ -2745,33 +2746,47 @@ def settings_view(store: Store, cid: str) -> dict[str, Any]:
              "Job compute bills per core-hour used: more cores for the same work costs about the same and finishes sooner"],
             runs=run_refs(x.get("run_key") for x in waited))
     merges = [x for x in newer if x["category"] == "merge_rewrite"]
+    merge_info: dict[tuple, dict] = {}  # (ctx, query) -> merge_facts: one number per MERGE on every page
     if merges:
-        facts = []
+        with store.connect() as con:
+            for x in merges[:ADVICE_STAGES]:
+                if x.get("sql_execution_id") is not None:
+                    mf = merge_facts_of(store, con, cid, x.get("spark_context_id"), x["sql_execution_id"])
+                    if mf:
+                        merge_info[(x.get("spark_context_id"), x["sql_execution_id"])] = mf
+        facts: list[str] = []
+        fixes: list[str] = []
         for x in merges[:5]:
             e = x["evidence"]
             q = next((y for y in qs if y.get("sql_execution_id") == x.get("sql_execution_id")
                       and y.get("spark_context_id") == x.get("spark_context_id")), {})
-            files = re.search(r"rewrote (\d+) files", e)
+            mf = merge_info.get((x.get("spark_context_id"), x.get("sql_execution_id")))
+            if mf is None:  # the query is not in the datasets: what the finding said
+                facts.append(f"Query {x['sql_execution_id']}: " + e.split(". ")[0])
+                continue
             src = re.search(r"source of ([\d.,]+ \w+) \(([\d,]+)x less\)", e)
-            facts.append(f"Query {x['sql_execution_id']}: read {_fmt_bytes(q.get('input_bytes'))} of the target"
+            ft = files_text(mf)
+            facts.append(f"Query {x['sql_execution_id']}" + (f" (MERGE into {mf['target']})" if mf["target"] else "")
+                         + f": read {_fmt_bytes(mf['target_bytes'])} of the target"
                          + (f" to merge {src.group(1)} ({src.group(2)}× less)" if src else "")
+                         + (f"; {ft}" if ft else "")
                          # Spark labels the last step "rewriting N files"; with deletion vectors it writes only the
-                         # changed rows, so say what it wrote when that is far below what it read
-                         + (f", wrote only {_fmt_bytes(q.get('output_bytes'))} (changed rows: deletion vectors)"
-                            if q.get("output_bytes") and q.get("input_bytes") and q["output_bytes"] < 0.3 * q["input_bytes"]
-                            else f", rewrote {int(files.group(1)):,} files" if files else "")
+                         # changed rows
+                         + (f"; {wrote_text(mf)}" if mf["dv_on"] else f", wrote {_fmt_bytes(q.get('output_bytes'))}")
                          + (f", spilled {_fmt_bytes(q.get('disk_spill'))}" if q.get("disk_spill") else ""))
+            fixes += [f.rstrip(".") for f in merge_fix(mf, numbers=False) if f.rstrip(".") not in fixes]
         if len(merges) > 5:
             facts.append(f"and {len(merges) - 5} more")
+        dv = bool(merge_info) and all(m["dv_on"] for m in merge_info.values())
         add("high" if any(x["severity"] == "high" for x in merges) else "medium", None,
             f"{_plural(len(merges), 'MERGE')} read far more of the target than they merged",
             facts,
-            "Delta could not skip files: the ON condition does not narrow the target, so every file that might match is read and rewritten.",
-            ["Add the target's partition or clustering column to the MERGE ON condition (e.g. t.load_date >= the oldest date in the source)",
-             "Cluster the target on the merge key (Liquid Clustering, or ZORDER BY)",
-             "If deletion vectors are off, turn them on so a matched row does not rewrite its whole file (already on when a MERGE wrote far less than it read)"],
+            "Delta could not skip files: the ON condition does not narrow the target, so every file that might match is "
+            + ("read (deletion vectors mark the matched rows deleted: no file is rewritten)." if dv else "read and rewritten."),
+            fixes or [x.rstrip(".") for x in merge_fix({}, numbers=False)],
             queries=[{"spark_context_id": x.get("spark_context_id"), "sql_execution_id": x.get("sql_execution_id"),
-                      "run_key": x.get("run_key"), "label": labels.get(x.get("run_key"))} for x in merges])
+                      "run_key": x.get("run_key"), "label": labels.get(x.get("run_key")),
+                      "merge": merge_info.get((x.get("spark_context_id"), x.get("sql_execution_id")))} for x in merges])
     # 6. Photon
     eng = (info.get("runtime_engine") or val(TAGS + "runtimeEngine") or "").upper()
     ph = [q.get("photon_share") for q in qs if q.get("photon_share") is not None]
@@ -2862,7 +2877,18 @@ def settings_view(store: Store, cid: str) -> dict[str, Any]:
     for a in advice:
         mine = [x for x in a["stages"] if (x.get("spark_context_id"), x.get("sql_execution_id")) in merge_q]
         if merge_q and mine and a["key"] in ("spark.executor.memory", "spark.sql.shuffle.partitions"):
-            a["facts"].append(f"{len(mine)} of these stages are inside the MERGEs above: fixing the MERGE removes most of it")
+            mfs = [merge_info[k] for k in dict.fromkeys((x.get("spark_context_id"), x.get("sql_execution_id")) for x in mine)
+                   if k in merge_info]
+            # with deletion vectors the target scan keeps only the matched rows: the spill is in the join and write of
+            # source plus matched rows, which skipping files does not shrink
+            if mfs and all(m["dv_on"] for m in mfs):
+                a["facts"].append(f"{len(mine)} of these stages are the join and write inside the MERGEs above")
+            else:
+                a["facts"].append(f"{len(mine)} of these stages are inside the MERGEs above: fixing the MERGE removes most of it")
+            for m in mfs:
+                if m["cdf_on"] and m.get("change_rows"):
+                    a["facts"].append(f"CDF on the target adds {m['change_rows']:,} change rows to the write shuffle; turn it "
+                                      "off only if nothing reads the table's change feed")
             a["evidence"] = " ".join(f if f.endswith(".") else f + "." for f in a["facts"])
     first = lambda a: 0 if a["title"].endswith("than they merged") else 1 if a is cores else 2  # noqa: E731
     advice.sort(key=lambda a: (sev_rank(a["severity"]), first(a)))
@@ -3613,7 +3639,7 @@ def _scan_table(name: str) -> tuple[str | None, str, str | None]:
                else "samples the source database (LIMIT)" if re.search(r"\bLIMIT\s+\d+", n, re.I)
                else "reads the source database over JDBC")
         return (m.group(1) if m else None), how, (where.group(1)[:120] if where else None)
-    m = re.match(r"Scan (?:parquet|delta|json|csv|orc|text)\s+(\S+)", n)
+    m = SCAN_FILES.match(n)  # Spark's "Scan parquet t" and Photon's "PhotonScan parquet t"
     if m:
         return m.group(1), "reads files", None
     if "mergeMaterializedSource" in n:
@@ -3725,6 +3751,7 @@ def run_tables(store: Store, cid: str, run: str) -> dict[str, Any]:
     queries: list[dict[str, Any]] = []
     written_by: dict[str, list[tuple]] = {}  # table -> queries that wrote it so far (in start order)
     materialized: list[tuple] = []
+    mqs = [q for q in qs if "MERGE" in (q.get("description") or "")]
     for q in qs:
         k = (q["spark_context_id"], q["sql_execution_id"])
         ops = list(q.get("operators") or [])
@@ -3757,6 +3784,8 @@ def run_tables(store: Store, cid: str, run: str) -> dict[str, Any]:
                 writes.append({"table": name, "how": op if op.startswith("MERGE") else op if op not in ("read", "compute") else "writes"})
         if len(writes) == 1 and wrote.get(k):  # the rows go to the one table it wrote
             writes[0]["rows"] = wrote[k]
+        # a MERGE write step: the same numbers as its finding and the Overview (target read, files, DV, CDF, rows)
+        mf = merge_facts(q, mqs, sts, nodes=nodes) if re.match(r"MERGE: rewriting", op) else None
         # its jobs and stages, with the tables each stage scanned (from the stage's operator names)
         stages = []
         for st in by_q.get(k, []):
@@ -3773,7 +3802,7 @@ def run_tables(store: Store, cid: str, run: str) -> dict[str, Any]:
                 "reads": list(dict.fromkeys(sr)), "writes": [w["table"] for w in writes] if any("WriteFiles" in x for x in scopes) else [],
                 "input_bytes": st.get("input_bytes"), "input_records": st.get("input_records"), "shuffle_read": st.get("shuffle_read"), "shuffle_write": st.get("shuffle_write"),
                 "output_bytes": st.get("output_bytes"), "tasks": st.get("num_tasks") or st.get("tasks"),
-                "max_task_bytes_in": st.get("max_task_bytes_in"),
+                "max_task_bytes_in": st.get("max_task_bytes_in"), "status": st.get("status"),
             })
         # a table only a stage names (its plan was not recorded) is still read by the query
         for x in stages:
@@ -3811,14 +3840,14 @@ def run_tables(store: Store, cid: str, run: str) -> dict[str, Any]:
         for w in writes:
             tables.setdefault(w["table"], {"table": w["table"], "reads": [], "writes": []})["writes"].append({"ctx": k[0], "id": k[1], "op": w["how"], "start": t0, "end": t1,
                                                                                                          "step": op, "bytes": q.get("output_bytes"), "read_bytes": q.get("input_bytes"),
-                                                                                                         "rows": w.get("rows")})
+                                                                                                         "rows": w.get("rows"), "merge": mf})
         logic = query_logic(q)
         queries.append({
             "logic": logic,
             "ctx": k[0], "id": k[1], "start": _as_ms(q.get("start_time")), "end": _as_ms(q.get("end_time")), "status": q.get("status"),
             "description": (q.get("description") or "")[:200], "op": op, "reads": list(reads.values()), "writes": writes, "fed_by": fed,
             "jobs": sorted({s["spark_job_id"] for s in stages if s["spark_job_id"] is not None}), "stages": stages,
-            "input_bytes": q.get("input_bytes"), "output_bytes": q.get("output_bytes"),
+            "input_bytes": q.get("input_bytes"), "output_bytes": q.get("output_bytes"), "merge": mf,
         })
     for t in tables.values():
         # reading only its Delta log (the commits and checkpoint, e.g. a write loading the table's version) is not
@@ -4116,8 +4145,11 @@ def table_stats(store: Store, con, cid: str, run: str | None = None, query: tupl
         qw, qp = " AND q.spark_context_id = ? AND q.sql_execution_id = ?", [query[0], int(query[1])]
     elif by_run:
         qw, qp = " AND q.run_key = ?", [run]
-    rows = store.rows(con, f"SELECT n.name, n.metrics_json, {rk} AS run_key FROM {store.src(npath)} n JOIN {store.src(qpath)} q "
-                           f"USING (spark_context_id, sql_execution_id) WHERE n.name LIKE 'Scan %'{qw}", qp)
+    rows = store.rows(con, f"SELECT n.spark_context_id, n.sql_execution_id, n.name, n.metrics_json, {rk} AS run_key "
+                           f"FROM {store.src(npath)} n JOIN {store.src(qpath)} q USING (spark_context_id, sql_execution_id) "
+                           f"WHERE (n.name LIKE 'Scan %' OR n.name LIKE 'PhotonScan %'){qw}", qp)
+    # per scan (a query's scans of one table): files read and the table's size, for rows per file
+    per_scan: dict[tuple, dict[str, int]] = {}
     for r in rows:
         tbl, how, _ = _scan_table(r["name"] or "")
         if not tbl or how != "reads files":
@@ -4136,6 +4168,9 @@ def table_stats(store: Store, con, cid: str, run: str | None = None, query: tupl
             t["runs"].add(r["run_key"])
         fr, fp = mt.get("number of files read", 0), mt.get("number of files pruned", 0)
         br, bp = mt.get("size of files read", 0), mt.get("number of bytes pruned") or mt.get("size of files pruned", 0)
+        sc = per_scan.setdefault((r["spark_context_id"], r["sql_execution_id"], tbl), {"files": 0, "size": 0, "rows": 0})
+        sc["files"] += fr
+        sc["size"] = max(sc["size"], br + bp)
         t["files_read"] += fr
         t["files_pruned"] += fp
         t["bytes_read"] += br
@@ -4156,8 +4191,10 @@ def table_stats(store: Store, con, cid: str, run: str | None = None, query: tupl
         elif run is not None and "run_key" in ssch:
             where, wp = "run_key = ?", [run]
         rec = "input_records" if "input_records" in ssch else "NULL AS input_records"
-        sts = store.rows(con, f"SELECT spark_context_id, stage_id, stage_attempt, rdd_scopes, input_bytes, {rec}, duration_ms FROM "
-                              f"{store.src(spath)} WHERE {where}", wp)
+        qid = "sql_execution_id" if "sql_execution_id" in ssch else "NULL AS sql_execution_id"
+        status = "status" if "status" in ssch else "NULL AS status"
+        sts = store.rows(con, f"SELECT spark_context_id, stage_id, stage_attempt, {qid}, {status}, rdd_scopes, input_bytes, {rec}, "
+                              f"duration_ms FROM {store.src(spath)} WHERE {where}", wp)
         tm: dict[tuple, float] = {}
         if tpath is not None:
             tsch = store.schema(con, tpath)
@@ -4177,19 +4214,62 @@ def table_stats(store: Store, con, cid: str, run: str | None = None, query: tupl
                     t["rows_from_files"] += st.get("input_records") or 0
                     t["scan_wall_ms"] += st.get("duration_ms") or 0
                     t["scan_task_ms"] += tm.get((st["spark_context_id"], st["stage_id"], st["stage_attempt"]), 0)
+                    sc = per_scan.get((st["spark_context_id"], st.get("sql_execution_id"), tbl))
+                    if sc is not None and (st.get("status") or "succeeded") == "succeeded":
+                        sc["rows"] += st.get("input_records") or 0
                     break
     for t in out.values():
         t["runs"] = len(t["runs"])
         t["avg_file_bytes"] = round(t["size_bytes"] / t["files"]) if t["size_bytes"] and t["files"] else None
-        # rows per file: only an average (the logs count rows per scan, not per file)
-        t["rows_per_file"] = round(t["rows_from_files"] / t["files_read"]) if t["rows_from_files"] and t["files_read"] else None
+        t["rows_per_file"] = None
+    # rows per file: only an average (the logs count rows per scan, not per file), from one scan: its stage's rows over
+    # its files. Only scans whose stage ran and read rows (adaptive execution cancels a replanned scan: it lists files
+    # but reads none); of those, the one that saw the most of the table (the scan that sizes it)
+    best: dict[str, tuple[int, int]] = {}
+    for (_c, _q, tbl), sc in per_scan.items():
+        if tbl in out and sc["files"] and sc["rows"] > 0 and (tbl not in best or sc["size"] > best[tbl][0]):
+            best[tbl] = (sc["size"], round(sc["rows"] / sc["files"]))
+    for tbl, (_s, rpf) in best.items():
+        out[tbl]["rows_per_file"] = rpf
     return out
+
+
+def merge_facts_of(store: Store, con, cid: str, ctx: str, exec_id: int) -> dict[str, Any] | None:
+    """analysis.merge.merge_facts for one MERGE write step, loaded from the datasets: the earlier queries of its run
+    (or batch), the stages and plan scan nodes of its MERGE, and their final plans. None when the query is missing."""
+    q = store.select(con, cid, "sql_queries", "spark_context_id = ? AND sql_execution_id = ?", [ctx, int(exec_id)],
+                     exclude=("initial_plan", "details"), limit=1)
+    if not q:
+        return None
+    q = q[0]
+    where, params = "spark_context_id = ? AND sql_execution_id < ? AND description LIKE '%MERGE%'", [ctx, int(exec_id)]
+    if q.get("run_key") is not None and store.has_columns(con, cid, "sql_queries", "run_key"):
+        where += " AND run_key = ?"
+        params.append(q["run_key"])
+    sib = store.select(con, cid, "sql_queries", where, params, exclude=("final_plan", "initial_plan", "details"))
+    cyc = cycle_of(q, sib)
+    if cyc and store.has_columns(con, cid, "sql_queries", "final_plan"):
+        plans = {r["sql_execution_id"]: r["final_plan"] for r in store.rows(
+            con, f"SELECT sql_execution_id, final_plan FROM {store.src(store.dataset_path(cid, 'sql_queries'))} "
+                 f"WHERE spark_context_id = ? AND sql_execution_id IN ({', '.join('?' for _ in cyc)})",
+            [ctx, *[x["sql_execution_id"] for x in cyc]])}
+        for x in cyc:
+            x["final_plan"] = plans.get(x["sql_execution_id"])
+    ids = [int(exec_id), *[x["sql_execution_id"] for x in cyc]]
+    ph = ", ".join("?" for _ in ids)
+    sts = store.select(con, cid, "stages", f"spark_context_id = ? AND sql_execution_id IN ({ph})", [ctx, *ids],
+                       exclude=("details", "stage_name", "rdd_names", "parent_ids"))
+    nodes = (store.select(con, cid, "sql_plan_nodes", f"spark_context_id = ? AND sql_execution_id IN ({ph}) AND name LIKE '%Scan%'",
+                          [ctx, *ids]) if store.dataset_path(cid, "sql_plan_nodes", required=False) is not None else [])
+    return merge_facts(q, cyc, sts, nodes=nodes)
 
 
 def merge_cycles(queries: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """The MERGEs of a run, in order: each starts where its source is materialized (or at its first MERGE step) and
     has its steps, the batch it belongs to, whether it upserts or deletes (from the source filter), its target and how
-    many times it scanned the target."""
+    many times it scanned the target: a scan counts only when its stage read something (adaptive execution cancels a
+    scan it replanned, which then reads 0 bytes). source_copy_bytes: what its "materialize source" step read (the copy
+    of the source it makes); merge: its write step's merge_facts (analysis.merge); ms: from its first to its last step."""
     merges: list[dict[str, Any]] = []
     cur: dict[str, Any] | None = None
     for q in queries:
@@ -4199,10 +4279,16 @@ def merge_cycles(queries: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if cur is None or op.startswith("MERGE: materialize"):
             b = _BATCH.search(q.get("description") or "")
             cur = {"batch": b.group(1) if b else None, "start": q.get("start"), "end": q.get("end"), "steps": [], "kind": None,
-                   "target": None, "target_scans": 0}
+                   "target": None, "target_scans": 0, "source_copy_bytes": None, "merge": None, "ms": None}
             merges.append(cur)
         cur["steps"].append({"ctx": q["ctx"], "id": q["id"], "op": op})
         cur["end"] = q.get("end") or cur["end"]
+        if cur["start"] is not None and cur["end"] is not None:
+            cur["ms"] = cur["end"] - cur["start"]
+        if op.startswith("MERGE: materialize") and q.get("input_bytes"):
+            cur["source_copy_bytes"] = (cur["source_copy_bytes"] or 0) + q["input_bytes"]
+        if q.get("merge"):
+            cur["merge"] = q["merge"]
         conds = " ".join(f["condition"] for f in (q.get("logic") or {}).get("filters", []))
         if op.startswith("MERGE: materialize") and cur["kind"] is None:
             cur["kind"] = "deletes" if re.search(r"_change_type = delete\b", conds) else "upserts" if "_change_type" in conds else None
@@ -4212,7 +4298,9 @@ def merge_cycles(queries: list[dict[str, Any]]) -> list[dict[str, Any]]:
             for r in q.get("reads") or []:
                 if r.get("how") == "reads files":
                     cur["target"] = cur["target"] or r["table"]
-                    cur["target_scans"] += 1
+                    named = [x for x in q.get("stages") or [] if r["table"] in (x.get("reads") or [])]
+                    if not named or any((x.get("input_bytes") or 0) > 0 for x in named):
+                        cur["target_scans"] += 1
     return merges
 
 

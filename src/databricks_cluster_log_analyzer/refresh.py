@@ -29,6 +29,18 @@ def _rows(path: Path, columns: list[str] | None = None) -> list[dict]:
     return rows
 
 
+def _merge_plans(path: Path) -> dict[tuple, str]:
+    """(spark_context_id, sql_execution_id) -> final plan, for the MERGE queries only, read in batches."""
+    if not path.exists() or "final_plan" not in pq.read_schema(path).names:
+        return {}
+    out: dict[tuple, str] = {}
+    for b in pq.ParquetFile(path).iter_batches(columns=["spark_context_id", "sql_execution_id", "description", "final_plan"]):
+        for r in b.to_pylist():
+            if "MERGE" in (r.get("description") or "") and r.get("final_plan"):
+                out[(r["spark_context_id"], r["sql_execution_id"])] = r["final_plan"]
+    return out
+
+
 def refresh_findings(out_dir: str | os.PathLike, rules: Rules) -> dict:
     """`out_dir` is <output>/<cluster_id>. Returns {"added": n, "by_category": {...}}."""
     d = Path(out_dir)
@@ -41,7 +53,15 @@ def refresh_findings(out_dir: str | os.PathLike, rules: Rules) -> dict:
                                                  if f.name not in ("final_plan", "initial_plan", "details")])
     info = _rows(d / "cluster_info.parquet")
     findings = _rows(d / "findings.parquet")
-    new = contention_findings(cid, stages, first_tasks(tasks), runs, executors, queries, info, rules)
+    # the MERGE finding reads deletion vectors and CDF from the plans, and the files from the scan nodes: load them
+    # for the MERGE queries only (plans are large)
+    merges = {(q["spark_context_id"], q["sql_execution_id"]) for q in queries if "MERGE" in (q.get("description") or "")}
+    plans = {k: p for k, p in _merge_plans(d / "sql_queries.parquet").items() if k in merges}
+    for q in queries:
+        q["final_plan"] = plans.get((q["spark_context_id"], q["sql_execution_id"]))
+    nodes = [n for n in _rows(d / "sql_plan_nodes.parquet", ["spark_context_id", "sql_execution_id", "name", "metrics_json"])
+             if (n["spark_context_id"], n["sql_execution_id"]) in merges and "Scan" in (n.get("name") or "")] if merges else []
+    new = contention_findings(cid, stages, first_tasks(tasks), runs, executors, queries, info, rules, nodes)
     allf = add_findings(findings, runs, new, replace=CATEGORIES)
     write_parquet(allf, d / "findings.parquet", "findings")
     write_parquet(runs, d / "runs.parquet", "runs")
