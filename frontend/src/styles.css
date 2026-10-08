@@ -1789,3 +1789,6 @@ details.sub[open] > summary { margin-bottom: 4px; }
 .query-verdict { margin: 6px 0 2px; font-size: 13.5px; padding: 6px 10px; border-left: 3px solid var(--border); background: var(--surface-2, transparent); border-radius: 0 6px 6px 0; max-width: 100ch; }
 .query-verdict.sev-high { border-left-color: var(--st-crit); }
 .query-verdict.sev-medium { border-left-color: var(--st-warn); }
+
+/* the step table: a step's name stays on one line ("Job 6 · stage 6"); the column heads may wrap */
+.qsteps-table td:first-child { white-space: nowrap; }

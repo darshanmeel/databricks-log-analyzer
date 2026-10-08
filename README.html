@@ -106,7 +106,7 @@
     <li><a href="#findings">Findings</a></li>
     <li><a href="#errors">Errors</a></li>
     <li><a href="#logs">Logs</a></li>
-    <li><a href="#data">Tables (debug)</a></li>
+    <li><a href="#data">Raw data</a></li>
     <li class="group">Reference</li>
     <li><a href="#guide">Which screen answers what</a></li>
     <li><a href="#workflow">A 2 a.m. workflow</a></li>
@@ -147,7 +147,7 @@
     <b>stage</b> → <b>task</b>.</p>
   <ul>
     <li><b>Time:</b> how long the cluster was up, next to the run time added up over all runs (overlapping runs add up
-      to more than the clock), and the time spent waiting for a free core. Each run's and each query's time is split by
+      to more than the clock), and the time a run's tasks sat queued on a full cluster. Each run's and each query's time is split by
       cause: waiting for cores, CPU, storage, GC, writing shuffle, waiting for shuffle data, or no Spark work.</li>
     <li><b>Failures:</b> a cluster shows as <i>failed</i> only when a job or query failed. Task retries that succeeded
       are shown as retries, never as failures. Lost, killed and out-of-memory executors are listed, and errors are
@@ -155,17 +155,20 @@
     <li><b>What to change:</b> fixes grouped by impact, each with what the data shows, the likely cause, the setting or
       code change, and the problems found behind it. For the whole cluster and for each run.</li>
     <li><b>Tables:</b> for the cluster, a run or one query: size, file count, file size (average, smallest and
-      largest), rows per file, files skipped, bytes and rows pulled, scan time and task time. It flags files over 1 GB,
+      largest), rows per file, files skipped, bytes and rows pulled, scan time and task time. It flags files over 1 GiB,
       big tables read whole, and tables scanned again and again.</li>
     <li><b>Rows:</b> rows read and written (inserted, updated, deleted, copied unchanged) per table and query; rows in
       (per parent stage) and out of every stage, with a flag on a join that puts out more rows than came in; and the
       rows passed between Spark jobs and between queries.</li>
   </ul>
-  <p><b>How the screens are laid out.</b> A cluster opens on its overview, with tabs for Executors (all runs), Logs
-    (whole cluster) and Tables (debug). Pick a run and you get the run's tabs: <b>Overview</b>, <b>Findings &amp;
-    errors</b>, <b>Queries &amp; stages</b>, <b>Events &amp; timeline</b>, <b>Executors</b> and <b>Logs &amp;
-    tables</b>. The tour below starts at Home, works down from the cluster to a single task, then covers the other
-    tabs.</p>
+  <p><b>How the screens are laid out.</b> A cluster has its own tabs: <b>Overview</b>, <b>Findings</b>,
+    <b>Errors</b>, <b>Executors</b>, <b>Logs</b> and <b>Raw data</b>, all for the whole cluster. There, Findings and
+    Errors list every run's problems, each with a chip naming its run. Pick a run and you get the run's tabs:
+    <b>Overview</b>, <b>Findings &amp; errors</b> (only that run), <b>Queries &amp; stages</b>, <b>Events &amp;
+    timeline</b>, <b>Executors</b> and <b>Logs &amp; raw data</b>. The tour below starts at Home, works down from the
+    cluster to a single task, then covers the other tabs.</p>
+  <p><b>Sizes</b> are binary everywhere: KiB, MiB, GiB and TiB (1 GiB = 1024 MiB). <b>Colours:</b> red and amber mark
+    status only (failed, worth a look); low severity is grey, and spill has one colour on every chart.</p>
 
   <h2 id="install">Install and run</h2>
   <p>You need only <b>Python 3.11+</b>. The web UI is already built and ships in the package, so you don't need
@@ -197,7 +200,8 @@ PYTHONPATH=src python3 -m databricks_cluster_log_analyzer ui --output ~/dbx/outp
     <code>".[adls]"</code>, <code>".[s3]"</code> or <code>".[all]"</code>.</p>
   <ul>
     <li><b>To update:</b> <code>git pull</code>, then start the UI again. Old analyses still open; <b>Analyze again</b>
-      rebuilds one with the newest findings.</li>
+      rebuilds one with the newest findings. Outputs built before analyzer revision 20 need it (or
+      <code>refresh-findings</code>, which covers most finding changes) to show the numbers described here.</li>
     <li><b>"No module named databricks_cluster_log_analyzer":</b> run <code>python -m pip install -e .</code> in the
       repo folder, or set <code>PYTHONPATH=src</code>.</li>
     <li><b>"Command not found":</b> use <code>python -m databricks_cluster_log_analyzer ui ...</code>.</li>
@@ -219,7 +223,7 @@ dbx-log-analyzer ui --output ./demo_out --cache ./demo_cache</code></pre>
   </ul>
   <p>The runs overlap, so some wait for cores. One join is skewed, grows its rows ×2 and spills. One task fails on a
     Python error in the job's own code (<code>normalise_address</code>, line 42) and is retried.
-    <code>order_line_item</code> has files of 1.5 GB and is read whole. Besides the Spark event log, the demo writes a
+    <code>order_line_item</code> has files of 1.5 GiB and is read whole. Besides the Spark event log, the demo writes a
     driver log4j log and, for each of the 8 executors, a <code>stderr</code> (tasks, spills, the error) and a
     <code>stdout</code> with JVM GC lines, so every screen below has something to show.</p>
 
@@ -238,8 +242,8 @@ dbx-log-analyzer ui --output ./demo_out --cache ./demo_cache</code></pre>
       with an older analyzer says so next to its status.</li>
     <li><b>No raw logs any more?</b> <code>dbx-log-analyzer refresh-findings</code> brings an older analysis up to date
       from its own datasets: the status, the stage numbers taken from the tasks (skew from successful attempts, the
-      storage and DataFrame-cache split), the MERGE, capacity and workload findings, and the diagnosis. Log lines
-      and incidents need the raw logs.</li>
+      storage and DataFrame-cache split), the MERGE, capacity and workload findings, the incidents, the per-minute
+      table and the diagnosis. Log lines and the Coverage line need the raw logs.</li>
   </ul>
 
   <h2 id="cluster">Cluster overview</h2>
@@ -254,19 +258,27 @@ dbx-log-analyzer ui --output ./demo_out --cache ./demo_cache</code></pre>
       <code>IndexError</code> in <code>normalise_address</code>, line 42. Nothing is shown when nothing failed.</li>
     <li><b>The numbers</b> come after the two short answers, and only those that say something: a tile with nothing to
       report (no spill, no waiting, no retries) is left out and kept under Details with the rest (shuffle, idle
-      compute, the most runs at once). The colour sits on the problem ("1 attempt failed"), not on the total; the long
-      explanation is on hover.</li>
+      compute, the most runs at once, and <i>What ran at</i> a given time). The colour sits on the problem ("1
+      attempt failed"), not on the total; the long explanation is on hover.</li>
+    <li><b>Coverage:</b> when the logs are incomplete, a line under the cluster's (and each run's) title says what is
+      missing (event-log files for a stretch of time, executors without logs, no GC lines, a driver log that starts
+      late) and which numbers that leaves partial. Click it for the list. Idle time and autoscaling delays are not
+      claimed across such a gap.</li>
     <li><b>Clock time:</b> how long the cluster was up (1h 16m) next to the run time added up over runs (46m 34s), and
       how many runs were going at once on average. When runs overlap, the sum is bigger than the clock: 8 days of run
       time on a 12-hour cluster is not a bug.</li>
-    <li><b>Waiting for cores:</b> added up over runs and as a share of run time, and on the clock: how long at least one
-      run was waiting.</li>
+    <li><b>Waiting for cores:</b> the time each run's tasks sat queued on a full cluster (every core busy), not only
+      the wait before a stage's first task. Added up over runs and as a share of run time (here 31m 48s, 68%), and on
+      the clock: how long at least one run was waiting.</li>
+    <li><b>Idle compute</b> (under Details) counts worker core-seconds from each executor's start against the
+      core-seconds of successful tasks. The machines are billed from a little before their executor starts, so what
+      you paid is somewhat higher.</li>
     <li><b>Where the time went</b> and <b>How the runs ended:</b> the two short answers in plain words, with links to
       the detail. The first one reads <i>Why runs were slow</i> when runs were slow or waited a lot. A link that opens
       one run says so ("Errors in the worst run (…)"); <i>All errors</i> stays on the cluster.</li>
     <li><b>Where the runs' time went:</b> one bar split by cause, then every run with its wait and run time, its usual
       time, rows and flags (spill, big task reads, retries). The left rail lists the runs grouped by program, worst
-      first.</li>
+      first; on a phone it folds to one line (the run picked) and opens on tap.</li>
   </ul>
 
   <h2 id="change">What to change</h2>
@@ -288,15 +300,16 @@ dbx-log-analyzer ui --output ./demo_out --cache ./demo_cache</code></pre>
   <ul class="look">
     <li><b>The headline:</b> how many tables, the bytes and rows pulled from files, the task time, and the costliest
       table with its share of the time.</li>
-    <li><b>Flags:</b> files over 1 GB on average (a MERGE without deletion vectors rewrites whole files) or a largest file over 1 GB (some
-      files need compacting), a big table read whole with no files skipped, a
-      table that isn't partitioned, and a table scanned several times in one run or query.</li>
+    <li><b>Flags:</b> files over 1 GiB on average (on a MERGE target without deletion vectors, a MERGE rewrites whole
+      files) or a largest file over 1 GiB (some files need compacting), a big table read whole with no files skipped,
+      a table that isn't partitioned, and a table scanned several times in one run or query. A table read by a
+      stream is sized over all its micro-batches.</li>
     <li><b>The list:</b> top 10 first. Columns: size, files, per file, rows per file, scans, runs, files skipped,
       pulled from the files (only the columns needed: Parquet is columnar), rows read, scan time and task time. The same
       panel is on every run and every query. The panel is amber only when a table is flagged; with nothing flagged it
       shows the one headline line and the list opens from <i>Show the N tables</i>. <i>How to read it</i> explains
       the columns on hover.</li>
-    <li><b>Per file:</b> the average file, and under it the smallest and the largest file read (here 245 MB – 3.4 GB
+    <li><b>Per file:</b> the average file, and under it the smallest and the largest file read (here 245 MiB – 3.4 GiB
       for <code>order_line_item</code>). Databricks records both for every scan; on open-source Spark only the
       average is shown. A wide range means a few huge files next to many small ones: compaction
       (<code>OPTIMIZE</code>) evens them out.</li>
@@ -310,8 +323,13 @@ dbx-log-analyzer ui --output ./demo_out --cache ./demo_cache</code></pre>
     <span class="kicker">How the numbers are counted</span>
     <ul>
       <li><b>Read from storage</b> is what came from files and tables. Spark also counts a read from a DataFrame cache
-        as input; that part is shown apart ("+ 120 GB from a DataFrame cache"), so a cached table read ten times does
-        not look like ten big reads.</li>
+        as input; that part is shown apart ("+ 120 GiB from a DataFrame cache"), so a cached table read ten times does
+        not look like ten big reads. A cache is compared with the memory a cache can use; one larger than that is
+        linked to the GC, out-of-memory and spill problems of its run.</li>
+      <li><b>Per-minute numbers</b> (idle compute, the CPU chart, the spill and GC peaks, Spill and shuffle over time)
+        spread each task's bytes and time over the minutes it ran, not all into the minute it finished. The spill
+        peak is disk spill only.</li>
+      <li><b>× usual</b> compares a run only with earlier runs of the same code on the same table.</li>
       <li><b>Skew and task times</b> come from the successful attempts, as in Spark's own stage summary: a failed
         attempt stuck in GC is not a skewed task. The time buckets of the cause bar count failed attempts once, as
         their own part.</li>
@@ -320,7 +338,8 @@ dbx-log-analyzer ui --output ./demo_out --cache ./demo_cache</code></pre>
         deleted" instead of "rewrote the files". With Change Data Feed on, the change rows are counted apart; rows
         updated and inserted are shown only when they can be derived, and then marked derived.</li>
       <li><b>The status</b>, on a cluster with runs, counts a failed query only when it ran a stage or belongs to a run; a platform's own
-        query that failed in a few milliseconds is still listed, outside any run.</li>
+        query that failed in a few milliseconds is still listed, outside any run. A job cluster that stops after its
+        last run finished has ended normally; that run is not shown as cut off.</li>
     </ul>
   </div>
 
@@ -334,8 +353,10 @@ dbx-log-analyzer ui --output ./demo_out --cache ./demo_cache</code></pre>
       a crash or a kill (autoscaling does not count). Shuffle and the rest are under Details.</li>
     <li><b>Cause cards</b> name the query that did most of the work and what it read, spilled and wrote. <b>The
       fixes</b> come in the order to make them, the fix for what broke first.</li>
-    <li><b>On its clock:</b> waited for cores, ran tasks, and no Spark work (driver code). An idle gap of 30 minutes or
-      more is called idle, not driver code. Every query is listed with its wait, run time and rows in.</li>
+    <li><b>On its clock:</b> waited for cores, ran tasks, and no Spark work (driver code). While it ran tasks, the time
+      they sat queued on a full cluster is counted as waiting too (here 22m 5s, with 2 other runs on the same
+      executors). An idle gap of 30 minutes or more is called idle, not driver code. Every query is listed with its
+      wait, run time and rows in.</li>
     <li><b>What to change for this run</b> is under Details, so the first screen has one fix list: the same folded
       cards as the cluster, limited to the changes this run is part of, with this run's problems behind each. The full
       list of problems is under Details too.</li>
@@ -347,6 +368,8 @@ dbx-log-analyzer ui --output ./demo_out --cache ./demo_cache</code></pre>
   <figure><img src="docs/screenshots/query-graph.png" alt="A query: tables it reads, where its time went, step by step with rows in and out" loading="lazy">
     <figcaption>Queries &amp; stages: pick a query on the left. Its tables, its time by cause, and its stages step by step.</figcaption></figure>
   <ul class="look">
+    <li><b>One row of views:</b> Flow, Time, Chain of queries, Trace and SQL plan. Under the title of a query's own
+      page, one line gives the verdict: its worst finding in one sentence.</li>
     <li><b>Reads and writes:</b> every table, with the bytes read and the stages that read it.</li>
     <li><b>Step by step:</b> each stage with its tasks, when it was submitted, when its first task started, the wait
       for cores and the run time. <b>Rows in → out</b> shows, for example, "96.0M read → 96.0M to the shuffle" or
@@ -354,7 +377,8 @@ dbx-log-analyzer ui --output ./demo_out --cache ./demo_cache</code></pre>
     <li><b>Why it took that long:</b> the stages that held it up, with their tail, skew, spill, wait and share of the
       executors.</li>
     <li><b>The graph</b> (Flow or Time) draws the query box with its jobs and stages. Each stage box shows its rows in
-      → out and its spill and shuffle. Each link is labelled with the rows passed over it.</li>
+      → out and its spill and shuffle. Each link is labelled with the rows passed over it. In SQL plan, the operators
+      graph starts folded when Spark recorded numbers for under half of the operators.</li>
   </ul>
 
   <h2 id="stage">One stage: rows in and out</h2>
@@ -366,7 +390,8 @@ dbx-log-analyzer ui --output ./demo_out --cache ./demo_cache</code></pre>
       the total read from the shuffle is shown too.</li>
     <li><b>Rows out:</b> to the shuffle for the next stage, or written to the table.</li>
     <li><b>Flags:</b> ×1.5 or more rows out than in means a join matched many rows per key (duplicate keys on both
-      sides) or is a cross join. Far fewer out than in means the stage filtered or aggregated. When Spark recorded no
+      sides) or is a cross join. Far fewer out than in means the stage filtered or aggregated. A stage that grows rows
+      by an explode, such as the change rows of Change Data Feed, is not flagged as a bad join. When Spark recorded no
       row counts, the strip says so; nothing is guessed.</li>
   </ul>
   <figure><img src="docs/screenshots/stage-panel.png" alt="Stage panel: verdict, time, rows, task spread, executors" loading="lazy">
@@ -377,7 +402,7 @@ dbx-log-analyzer ui --output ./demo_out --cache ./demo_cache</code></pre>
     from each other. Open a stage (click it in the graph, the step list or any link that names it). Below the rows strip
     come the stage's numbers, then its tasks: not as thousands of rows, but as statistics you can read in one look.</p>
   <figure><img src="docs/screenshots/stage-tasks.png" alt="All tasks of a stage: one row per measure with min, p10, median, p90, max, distribution and total" loading="lazy">
-    <figcaption>Section 1, all 200 tasks of stage 8. One task read 2.1 GB of shuffle (×14 the median) and took 472 s
+    <figcaption>Section 1, all 200 tasks of stage 8. One task read 2.1 GiB of shuffle (×14 the median) and took 472 s
       (×13): a hot key, not a slow machine.</figcaption></figure>
   <ul class="look">
     <li><b>One row per measure:</b> each task's wait for a free core (from the stage being submitted to the task
@@ -385,25 +410,24 @@ dbx-log-analyzer ui --output ./demo_out --cache ./demo_cache</code></pre>
       to memory and to disk, peak memory and bytes written.</li>
     <li><b>Columns:</b> min, p10, median, p90 and max, then a small histogram, the total and how many tasks had any.
       The max carries <b>×N</b>, how many times the median it is, when that is 3 or more. Units sit next to each
-      measure (s, MB, GB), chosen for the typical value.</li>
+      measure (s, MiB, GiB), chosen for the typical value.</li>
     <li><b>Per task, or per second of task time:</b> the second view divides each measure by the task's duration
-      (GC as a % of its time, MB of shuffle per second), so a task that is slow <i>because</i> it got more data reads
+      (GC as a % of its time, MiB of shuffle per second), so a task that is slow <i>because</i> it got more data reads
       the same as the others.</li>
     <li><b>The histogram below</b> shows one measure (duration, GC, read, shuffle write) as slices, with dashed lines at
       p10, the median and p90. Colour it by executor to see whether the slow tasks sit on one machine, or by data read
       to see whether they are the ones that read the most.</li>
-    <li><b>Size bands:</b> "78% of tasks ≥ 128 MB · 84% of the data" means the tasks were given more than the ~128 MB
+    <li><b>Size bands:</b> "78% of tasks ≥ 128 MiB · 84% of the data" means the tasks were given more than the ~128 MiB
       Spark sizes a task for: too few shuffle partitions, or files that can't be split.</li>
     <li><b>Export tasks (CSV)</b> saves every task of the stage. <b>All 200 rows</b> opens the same tasks in
-      Tables (debug), already filtered to this stage.</li>
+      Raw data, already filtered to this stage.</li>
   </ul>
   <h3>How to read it</h3>
   <div class="tbl"><table>
     <thead><tr><th>You see</th><th>It usually means</th><th>Look next</th></tr></thead>
     <tbody>
-      <tr><td>Max duration ×10 or more, and max shuffle read or file read about as many times the median</td><td>Data skew: one key or partition holds far more rows</td><td>Skewed tasks block; salt the key or let AQE split it</td></tr>
-      <tr><td>Max duration ×10 or more, but it read about the same as the others</td><td>A slow executor, long GC, or a task that waited on shuffle fetch</td><td>Tasks by executor, the GC and fetch-wait rows, Executors</td></tr>
-      <tr><td>Median and p90 close together, and most tasks ≥ 128 MB</td><td>Every task is too big: too few partitions</td><td>Raise <code>spark.sql.shuffle.partitions</code> or use <code>auto</code></td></tr>
+      <tr><td>Max duration ×10 or more, and max shuffle read or file read about as many times the median</td><td>Data skew: one key or partition holds far more rows</td><td>Skewed tasks block; salt the key or let AQE split it. On a JDBC read, skew is measured in rows: pick a better <code>partitionColumn</code> or bounds</td></tr>      <tr><td>Max duration ×10 or more, but it read about the same as the others</td><td>A slow executor, long GC, or a task that waited on shuffle fetch</td><td>Tasks by executor, the GC and fetch-wait rows, Executors</td></tr>
+      <tr><td>Median and p90 close together, and most tasks ≥ 128 MiB</td><td>Every task is too big: too few partitions</td><td>Raise <code>spark.sql.shuffle.partitions</code> or use <code>auto</code></td></tr>
       <tr><td>Spill (memory or disk) on most tasks</td><td>Partitions are bigger than the memory a task gets</td><td>More partitions, or more memory per core</td></tr>
       <tr><td>"Each task waited" much larger than the stage's first wait</td><td>Tasks ran in waves: more tasks than free cores</td><td>Tasks over time; other runs on the same executors</td></tr>
       <tr><td>GC time over ~10% of duration</td><td>Memory pressure in the JVM</td><td>Executors (GC pauses and heap), cache and broadcast sizes</td></tr>
@@ -463,7 +487,8 @@ dbx-log-analyzer ui --output ./demo_out --cache ./demo_cache</code></pre>
     <li><b>The long tail</b> line says when 90% of the tasks were done and how much of the stage's time went on waiting
       for the last few. A long tail is the clearest sign of skew.</li>
     <li><b>Running</b> on top shows how many tasks ran at once against the cores available.</li>
-    <li><b>Failed, slow and spilled tasks</b> are coloured: red failed, orange 3× the median or slower, brown spilled.
+    <li><b>Failed, slow and spilled tasks</b> are coloured: red failed, amber 3× the median or slower, and spilled
+      tasks in a colour of their own.
       Add panels for duration, GC, spill, shuffle read or peak memory per task; darker means more.</li>
     <li>When other stages shared the executors, a first panel shows <b>who had the cores</b>: this stage's tasks next to
       the others.</li>
@@ -491,9 +516,10 @@ dbx-log-analyzer ui --output ./demo_out --cache ./demo_cache</code></pre>
   <h2 id="chain">Chain of queries</h2>
   <figure><img src="docs/screenshots/query-chain.png" alt="Chain of queries: the query that wrote the table this MERGE reads, with the rows passed" loading="lazy">
     <figcaption>Query 2 wrote the staging table that Query 3's MERGE reads: 214M rows passed along.</figcaption></figure>
-  <p>Switch from <b>Query with its jobs</b> to <b>Chain of queries</b> to see every query linked to this one, upstream
-    and downstream. A query is linked when it wrote a table this one reads, reused its shuffle output, or ran inside it.
-    Arrows carry the rows passed. A "+" on either side unfolds the rest of the chain.</p>
+  <p>Pick <b>Chain of queries</b> in the query's row of views to see every query linked to this one, upstream and
+    downstream. A query is linked when it wrote a table this one reads, reused its shuffle output, or ran inside it.
+    Arrows carry the rows passed; rows written by a MERGE with Change Data Feed on are marked as including the change
+    rows. A "+" on either side unfolds the rest of the chain.</p>
 
   <h2 id="events">Events</h2>
   <p>Use it when you need the order of things: what ran when, what waited on what, and what happened just before a
@@ -518,8 +544,8 @@ dbx-log-analyzer ui --output ./demo_out --cache ./demo_cache</code></pre>
   <figure><img src="docs/screenshots/timeline.png" alt="Timeline: incidents, Spark jobs, stages and one lane per executor" loading="lazy">
     <figcaption>When did things go wrong: incidents on the same clock as jobs, stages and every executor's tasks.</figcaption></figure>
   <ul class="look">
-    <li><b>Where it broke:</b> the incidents of the run (or cluster) on the same clock as the chart. Click one to zoom
-      the chart to it.</li>
+    <li><b>Where it broke:</b> the worst 5 incidents of the run (or cluster) on the same clock as the chart, with time
+      ticks under them; "N more incidents" shows the rest. Click one to zoom the chart to it.</li>
     <li><b>Spark jobs and stages</b> as bars, then <b>one lane per executor</b> with its host and how long it sat idle.
       Each small block is one task; tasks that ran side by side on the cores are stacked.</li>
     <li>Red blocks failed. A lane that ends in a red line lost its executor. Hatched stretches mean the executor was up
@@ -532,20 +558,21 @@ dbx-log-analyzer ui --output ./demo_out --cache ./demo_cache</code></pre>
   </ul>
   <figure><img src="docs/screenshots/spill-shuffle.png" alt="Spill and shuffle over time: a heat map per executor" loading="lazy">
     <figcaption>Spill and shuffle over time, below the timeline: darker cells moved more bytes.</figcaption></figure>
-  <p>Pick disk spill, memory spill, shuffle read, shuffle write or all, by executor, by stage or both. The bar on top
-    adds up all executors and marks the peaks. One dark row means one executor did the spilling (skew); a dark column
+  <p>Pick disk spill, memory spill, shuffle read, shuffle write or all, by executor, by stage or both. Each task's
+    bytes are spread over the minutes it ran. The bar on top adds up all executors and marks the peaks. One dark row means one executor did the spilling (skew); a dark column
     across all of them means the whole stage was short of memory.</p>
 
   <h2 id="executors">Executors</h2>
   <p>Use it when you suspect the machines rather than the data: memory, GC, lost executors, or executors that sat
     idle.</p>
   <figure><img src="docs/screenshots/executors.png" alt="Executors: what each was given, how it ended, tasks, busy, GC, spill and problems" loading="lazy">
-    <figcaption>Executors (all runs): what each executor was given, how long it lived, how it ended, and what went
-      wrong on it.</figcaption></figure>
+    <figcaption>The cluster's Executors tab (all runs): what each executor was given, how long it lived, how it ended,
+      and what went wrong on it.</figcaption></figure>
   <ul class="look">
     <li><b>What happened to the executors:</b> how many ran how many tasks, what each was given (cores, heap, the
       memory Spark could use for tasks and cache, and about how much per core: a task that holds more spills), and
-      whether any was lost, killed or ran out of memory.</li>
+      whether any was lost, killed or ran out of memory. When autoscaling removed executors, errors and fetch
+      failures on them are linked to that removal in Findings.</li>
     <li><b>The table:</b> each executor with its host, cores and heap, when it lived, how it ended (still running,
       decommissioned, lost, out of memory), tasks and failed tasks, how busy it was, GC share, disk spill and problem
       chips such as <i>error in task code</i>, <i>task retries</i> or <i>disk spill</i>. Click one to open it.</li>
@@ -558,12 +585,25 @@ dbx-log-analyzer ui --output ./demo_out --cache ./demo_cache</code></pre>
 
   <h2 id="findings">Findings</h2>
   <figure><img src="docs/screenshots/findings.png" alt="Findings: every problem, worst first, with evidence and fix" loading="lazy">
-    <figcaption>Every problem found, worst first. Each has what we saw, the likely cause, the fix, its tables and links.</figcaption></figure>
+    <figcaption>Findings &amp; errors → Findings for one run: every problem found, worst first. Each has what we saw,
+      the likely cause, the fix, its tables and links.</figcaption></figure>
   <p>Kinds include disk spill, skewed tasks, tasks too big, big table reads, MERGE reading far more of the target than
     it merged, waiting for cores, too few or too many shuffle partitions, file-reading tasks above the split size, GC
-    pressure, errors in task or driver code, task retries, out-of-memory or lost executors, and executors paid for but
-    idle. Related findings are grouped into one incident with its root cause and effects, for example "Query 2 ran
-    slow: task skew, disk spill" where the skew caused the spill.</p>
+    pressure, a DataFrame cache larger than memory, a window dedup that removed no rows, errors in task or driver
+    code, timeouts connecting to a source database over JDBC, task retries, out-of-memory or lost executors, and
+    executors paid for but idle. Related findings are grouped into one incident with its root cause and effects, for
+    example "Query 2 ran slow: task skew, disk spill" where the skew caused the spill. A cache larger than memory is
+    linked to the GC, out of memory and spill of its run, and an autoscaling removal to the errors on the executors it
+    removed.</p>
+  <ul class="look">
+    <li><b>Severity:</b> one problem gets one <i>High</i>; its side effects are Medium (for example big tasks on a
+      stage whose spill is already high). A finding tied to no run and no stage is demoted.</li>
+    <li><b>Advice fits the case:</b> a skewed JDBC read is measured in rows and gets advice on its
+      <code>partitionColumn</code> and bounds, not salting; one long stage holding every core under FIFO gets FAIR
+      pools, its own cluster or fewer JDBC partitions; burst advice comes only when 3 or more runs overlapped.</li>
+    <li><b>On the cluster's Findings tab</b> you see every run's problems, each with a chip naming its run that opens
+      that run's findings. Inside a run, only that run's.</li>
+  </ul>
 
   <h2 id="errors">Errors</h2>
   <figure><img src="docs/screenshots/errors.png" alt="Errors in this run: grouped by problem, with the stack and the line to fix" loading="lazy">
@@ -581,7 +621,8 @@ dbx-log-analyzer ui --output ./demo_out --cache ./demo_cache</code></pre>
     <li><b>Tips</b> in layers: CODE (validate or quarantine bad rows) and CONFIG (retrying won't help when the same row
       fails every time). Switch to <b>Every exception group</b> for the flat list.</li>
     <li>Scoped to a run, only lines that hit that run are shown: on an executor while one of its tasks ran there, or
-      from the driver while it ran.</li>
+      from the driver while it ran. The cluster's Errors tab shows every run's errors, each problem with a chip
+      naming its run.</li>
   </ul>
 
   <h2 id="logs">Logs</h2>
@@ -591,7 +632,9 @@ dbx-log-analyzer ui --output ./demo_out --cache ./demo_cache</code></pre>
   <ul class="look">
     <li><b>Every line</b> of the driver log4j logs and the executors' <code>stderr</code> and <code>stdout</code>, in
       file order, with its time (UTC), source, file, level, logger and message. Multi-line entries such as stack traces
-      stay together.</li>
+      stay together. WARN lines are amber.</li>
+    <li><b>Level chips</b> on top: All lines (the default, so a traceback logged at INFO is never hidden), Fatal,
+      Errors and Warnings, each with its count.</li>
     <li><b>Filters:</b> source (driver or executor), executor, level, logger, <b>signal</b> (a known problem pattern such
       as <code>executor_oom</code>, <code>fetch_failure</code>, <code>disk_spill</code> or <code>python_error</code>),
       a from/to time and a case-insensitive text search. Each drop-down shows how many lines each value has.</li>
@@ -608,11 +651,12 @@ dbx-log-analyzer ui --output ./demo_out --cache ./demo_cache</code></pre>
     <code>storage_throttling</code> for cloud storage limits. Logs always covers the whole cluster; use the From
     and To times to narrow it to one run.</p>
 
-  <h2 id="data">Tables (debug)</h2>
-  <figure><img src="docs/screenshots/data-debug.png" alt="Tables (debug): the intermediate tables behind every view, grouped by step" loading="lazy">
-    <figcaption>Tables (debug): every intermediate table behind the screens. Here the tasks, slowest first: task 909 of
+  <h2 id="data">Raw data</h2>
+  <figure><img src="docs/screenshots/data-debug.png" alt="Raw data: the intermediate tables behind every view, grouped by step" loading="lazy">
+    <figcaption>Raw data: every intermediate table behind the screens. Here the tasks, slowest first: task 909 of
       stage 8 on top.</figcaption></figure>
-  <p>The <b>Tables (debug)</b> tab shows every dataset the screens are built from. Use it to check a number you doubt, or to go past what the charts show.</p>
+  <p>The <b>Raw data</b> tab (on the cluster, and under <i>Logs &amp; raw data</i> in a run) shows every dataset the
+    screens are built from. Use it to check a number you doubt, or to go past what the charts show.</p>
   <ul class="look">
     <li><b>Grouped by step:</b> Setup (folders and files read), Driver logs, Executor logs (including JVM GC pauses),
       Event logs (tasks, failed task reasons, retries, stages, jobs, queries, executors, spill and shuffle over time,
@@ -625,7 +669,7 @@ dbx-log-analyzer ui --output ./demo_out --cache ./demo_cache</code></pre>
     <li><b>Outside the UI:</b> the same tables are Parquet files in the output folder, so you can query them
       directly:</li>
   </ul>
-<pre><code>duckdb -c "SELECT stage_id, task_id, executor_id, task_ms/1000 AS secs, shuffle_read/1e9 AS shuffle_gb
+<pre><code>duckdb -c "SELECT stage_id, task_id, executor_id, task_ms/1000 AS secs, shuffle_read/2^30 AS shuffle_gib
            FROM 'C:/dbx/output/0112-020000-demo0001/tasks.parquet'
            ORDER BY task_ms DESC LIMIT 10"</code></pre>
   <p>Or in Python: <code>pd.read_parquet(".../tasks.parquet")</code>. <code>--duckdb</code> on <code>build</code> or
@@ -647,14 +691,15 @@ dbx-log-analyzer ui --output ./demo_out --cache ./demo_cache</code></pre>
       <tr><td>Which line of my code failed?</td><td>Errors: the frame marked Fix here; the Log line link</td></tr>
       <tr><td>What did the executor log just before it died?</td><td>Logs: the line in context, filtered by executor and time</td></tr>
       <tr><td>What setting should I change?</td><td>What to change (cluster and run); the cluster's settings with where each value came from</td></tr>
-      <tr><td>I don't trust a number</td><td>Tables (debug): the table behind it, or the Parquet file with DuckDB</td></tr>
+      <tr><td>Are the logs complete?</td><td>The Coverage line under the cluster's or run's title</td></tr>
+      <tr><td>I don't trust a number</td><td>Raw data: the table behind it, or the Parquet file with DuckDB</td></tr>
     </tbody>
   </table></div>
 
   <h2 id="workflow">A 2 a.m. workflow</h2>
   <ol class="steps">
     <li><b>Analyze the cluster</b> (or click Analyze again). Read the status line: did a job or query fail, or did it
-      only retry tasks?</li>
+      only retry tasks? If a Coverage line shows, note what is missing from the logs.</li>
     <li><b>Cluster overview:</b> compare clock time with the run time added up, check the wait for cores, and read the
       two short answers. This usually tells you whether the issue is capacity (waiting) or the work itself.</li>
     <li><b>What to change:</b> open the top card. Its problems link straight to the query or stage.</li>
@@ -665,7 +710,7 @@ dbx-log-analyzer ui --output ./demo_out --cache ./demo_cache</code></pre>
       executor or GC. <b>By executor</b> says which, in one sentence.</li>
     <li><b>Something failed?</b> Errors shows the line of your code to fix; its Log line link shows what the executor
       was doing just before. Executors shows whether the machine ran out of memory or was lost.</li>
-    <li><b>Still not clear?</b> Dig in yourself with Events, Timeline, Executors, Logs and Tables (debug). By now the
+    <li><b>Still not clear?</b> Dig in yourself with Events, Timeline, Executors, Logs and Raw data. By now the
       findings have already ruled most things out.</li>
   </ol>
 
@@ -677,6 +722,9 @@ dbx-log-analyzer ui --output ./demo_out --cache ./demo_cache</code></pre>
       under adaptive query execution. It then says "not recorded" and never guesses.</li>
     <li><b>Table sizes</b> come from scans that skipped nothing. A table only ever read with filters shows the size of
       what was read.</li>
+    <li><b>Missing logs</b> leave gaps: rolled event-log files that are gone, executors without log folders, no GC
+      lines. The Coverage line names each gap and the numbers it affects; what falls in a gap is unknown, not
+      zero.</li>
     <li><b>Serverless compute</b> delivers no cluster logs. The analysis then says so.</li>
   </ul>
 
@@ -716,7 +764,7 @@ dbx-log-analyzer download --source s3 --root s3://my-bucket/cluster-logs --clust
 dbx-log-analyzer build --input ./cache/0101-000000-abcd1234 [--output ./output] [--duckdb]
 
 # older outputs: bring them up to date from their own datasets, without the raw logs (status, stage numbers,
-# storage vs DataFrame-cache reads, MERGE, capacity and workload findings, diagnosis)
+# storage vs DataFrame-cache reads, MERGE, capacity and workload findings, incidents, per-minute table, diagnosis)
 dbx-log-analyzer refresh-findings --output ./output [--cluster &lt;id&gt;]
 
 # which source types are available (is the optional SDK installed?)
@@ -730,7 +778,8 @@ dbx-log-analyzer ui                       # http://127.0.0.1:8765; --port, --no-
   <h2 id="datasets">Datasets</h2>
   <p>Each dataset is written to <code>&lt;output&gt;/&lt;cluster_id&gt;/&lt;name&gt;.parquet</code> with an explicit
     schema, so empty datasets keep their columns. Next to them, <code>summary.json</code> holds the counts, totals,
-    cluster info, findings by severity, a plain-English diagnosis, and the folder the raw logs were read from (which
+    cluster info, findings by severity, a plain-English diagnosis, the coverage (what the logs are missing), and the
+    folder the raw logs were read from (which
     Analyze again uses). <code>schemas.py</code> lists every column. <code>--duckdb</code> also loads them into
     <code>insights.duckdb</code>.</p>
   <div class="tbl"><table>
@@ -738,14 +787,14 @@ dbx-log-analyzer ui                       # http://127.0.0.1:8765; --port, --no-
     <tbody>
       <tr><td><code>tasks</code>, <code>stages</code>, <code>spark_jobs</code>, <code>sql_queries</code>, <code>executors</code></td><td>from the Spark event log; stages carry rows read, from and to the shuffle, written, and their parent stages</td></tr>
       <tr><td><code>sql_plan_nodes</code></td><td>physical plan operator per query (initial and final AQE plan) with its metrics: files and bytes read and skipped, rows written, inserted, updated, deleted</td></tr>
-      <tr><td><code>runs</code></td><td>a Databricks job run, notebook or session: the run every job, stage and query belongs to</td></tr>
+      <tr><td><code>runs</code></td><td>a Databricks job run, notebook or session: the run every job, stage and query belongs to, with its time queued on a full cluster (<code>queued_full_ms</code>)</td></tr>
       <tr><td><code>findings</code>, <code>incidents</code></td><td>ranked problems with evidence, fix and links; how they relate (root cause, effect)</td></tr>
       <tr><td><code>task_retries</code></td><td>task that failed at least once: the cause, the retry outcome, the time lost</td></tr>
       <tr><td><code>hotspots</code></td><td>peaks: skewed tasks, shuffle and spill peaks, slowest stages and operators</td></tr>
       <tr><td><code>log_lines</code>, <code>log_signals</code>, <code>log_errors</code></td><td>log line; line matching a known problem; exception with fingerprint and first user frame</td></tr>
       <tr><td><code>gc_events</code></td><td>JVM GC pause with heap before and after</td></tr>
       <tr><td><code>query_profile</code>, <code>executor_profile</code>, <code>stage_executor_profile</code></td><td>query, executor, stage × executor summaries</td></tr>
-      <tr><td><code>spill_shuffle_timeline</code>, <code>executor_busy</code></td><td>time bucket × executor: spill, shuffle, I/O, GC, busy and idle</td></tr>
+      <tr><td><code>spill_shuffle_timeline</code>, <code>executor_busy</code></td><td>time bucket × executor: spill, shuffle, I/O, GC, busy and idle (each task spread over the minutes it ran)</td></tr>
       <tr><td><code>settings</code>, <code>cluster_info</code></td><td>Spark setting with its value and source; cluster name, runtime, nodes</td></tr>
       <tr><td><code>run_story</code></td><td>one ordered stream of scheduler events, retries, important log lines and findings</td></tr>
     </tbody>

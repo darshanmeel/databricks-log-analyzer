@@ -376,7 +376,7 @@ function QuerySteps({ t, id, onJob, onQuery }: { t: QueryTime; id: number; onJob
             <tr>
               <th>Step</th><th className="num">Tasks</th><th>Submitted</th><th>First task</th><th className="num">Waited for cores<span className="unit"> ({su.wait.u})</span></th>
               <th className="num">Ran<span className="unit"> ({su.run.u})</span></th>
-              <th title="Rows a stage got (from storage, or from its parent stages through the shuffle) and passed on (to the next stage through the shuffle, or written out)">Rows in → out</th><th style={{ width: '30%' }}>{fmtTime(t0)} → {fmtTime(t.end)}</th>
+              <th title="Rows a stage got (from storage, or from its parent stages through the shuffle) and passed on (to the next stage through the shuffle, or written out)">Rows in → out</th><th style={{ width: '30%', minWidth: 160 }}>{fmtTime(t0)} → {fmtTime(t.end)}</th>
             </tr>
           </thead>
           <tbody>
