@@ -1,0 +1,5 @@
+* text=auto eol=lf
+*.woff2 binary
+*.png binary
+*.gz binary
+src/databricks_cluster_log_analyzer/api/static/** linguist-generated=true -diff

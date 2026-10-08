@@ -1,0 +1,23 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+build/
+dist/
+cache/
+output/
+*.duckdb
+*.duckdb.wal
+node_modules/
+frontend/dist/
+.DS_Store
+.vscode/
+.idea/
+
+# real cluster logs are sensitive: never commit
+sample_data/
+*.log.gz
+tests/fixtures/clusters/
+.playwright-mcp/

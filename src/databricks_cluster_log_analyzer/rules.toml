@@ -1,0 +1,250 @@
+# Databricks Cluster Log Analyzer: THE rules file.
+#
+# Thresholds, log signal patterns, the event types read from the Spark event log, executor removal-reason
+# regexes and framework stack-frame prefixes all live here, not in code. Ported from the earlier Databricks
+# notebook (SIGNALS, EVENTS, A2 finding rules).
+#
+# Override with your own copy: `dbx-log-analyzer build --rules my_rules.toml ...` or the environment variable
+# DBX_LOG_ANALYZER_RULES. A partial file is merged over these defaults section by section; `[[signals]]`,
+# when present, replaces the whole signal list (order matters: the first matching signal wins).
+#
+# Regexes are Python `re` syntax and written as TOML literal strings ('...') so backslashes stay as typed.
+
+[thresholds]
+# task_skew: slowest task >= skew_ratio x the median task AND >= skew_min_task_ms
+skew_ratio = 10.0
+skew_min_task_ms = 60000
+# disk_spill: >= spill_bytes spilled to disk in a stage (medium), high at >= spill_high_bytes
+spill_bytes = 1073741824          # 1 GB
+spill_high_bytes = 53687091200    # 50 GB
+# gc_pressure: share of task run time spent in GC
+gc_share = 0.2
+# tiny_tasks: >= tiny_tasks_min tasks with a median below tiny_tasks_p50_ms
+tiny_tasks_min = 2000
+tiny_tasks_p50_ms = 200
+# jvm_full_gc (from JVM GC log lines in stdout): >= full_gc_min "Pause Full" events on one executor (or the driver),
+# or total GC pause time >= gc_pause_share_min of the executor's lifetime
+full_gc_min = 3
+# executors_idle (Revision 12): per Spark context, executor core time (lifetime x cores) that ran no task is at
+# least idle_share_min of the total AND at least idle_core_min_minutes core-minutes
+idle_share_min = 0.6
+idle_core_min_minutes = 30
+# large_tasks (Revision 13): a stage whose median task read (storage input + shuffle read) at least large_task_min_mb
+# and that ran at least large_task_min_seconds
+large_task_min_mb = 256
+large_task_min_seconds = 60
+# big_read: a stage that read at least big_read_min_gb from storage (files, not shuffle); high from big_read_high_gb
+big_read_min_gb = 20
+big_read_high_gb = 100
+gc_pause_share_min = 0.1
+# gc_stuck: an executor with more than gc_stuck_full_per_min Full GCs a minute, of which more than gc_stuck_share left
+# the heap at least 90% full. Its long tasks are stuck in GC, not skewed.
+gc_stuck_full_per_min = 60
+gc_stuck_share = 0.5
+# waited_for_cores (Revision 17): a run that spent at least wait_min_minutes AND wait_share_min of its time with a stage
+# submitted and no core free (none of its stages running)
+wait_min_minutes = 5
+wait_share_min = 0.25
+# cores_full: per Spark context, the runs together waited at least cores_full_min_minutes AND cores_full_share_min of
+# their summed run time
+cores_full_min_minutes = 30
+cores_full_share_min = 0.2
+# merge_rewrite: a Delta MERGE that rewrote files and read at least merge_read_min_gb of the target, and at least
+# merge_read_ratio x its source (when the source size is known)
+merge_read_min_gb = 10
+merge_read_ratio = 5
+# Hierarchy graph "shuffle_heavy" flag: shuffle_read + shuffle_write of a stage attempt >= this
+shuffle_heavy_bytes = 1073741824  # 1 GB
+
+[graph]
+# GET /api/clusters/{cid}/graph: a Spark context with more than graph_max_stages stage attempts is truncated to
+# every job plus the flagged stages (failed, retried, spill, skew, gc, shuffle_heavy) and the graph_keep_longest
+# longest stages; the response then has "truncated": true and "dropped_stages": n.
+graph_max_stages = 400
+graph_keep_longest = 200
+
+[hotspots]
+# hotspots dataset (Revision 5). skew_task rows use the [thresholds] skew_ratio / skew_min_task_ms.
+top_per_stage = 5          # skewed tasks kept per stage attempt
+slowest = 10               # slowest_task rows per Spark context
+peaks = 3                  # shuffle / spill / GC peak buckets per Spark context
+data_skew_ratio = 5.0      # a skewed task is data skew when it read >= this x the stage's median bytes
+slow_executor_ratio = 2.0  # ... or a slow executor when its tasks are >= this x the stage median across stages
+
+[timeline]
+# Bucket width of the spill_shuffle_timeline dataset (and the Gantt "spill" markers). Each task's bytes are
+# attributed to the bucket of its finish time.
+timeline_bucket_seconds = 60
+
+[story]
+# Maximum number of (collapsed) log rows kept in run_story; highest severity kept first.
+story_max_log_rows = 2000
+
+[executors]
+# Executor removal reasons (SparkListenerExecutorRemoved "Removed Reason"; when the reason is a JSON string such as
+# {"cause":"kill request from HTTP endpoint",...} its `cause` is used). Each reason gets ONE removal_category: the
+# regexes below are tried in `removal_order` and the first match wins; nothing matching = "other".
+# Findings: oom -> high executor_oom; lost -> medium executor_lost; killed -> medium executor_killed;
+# autoscale / termination / other -> no finding (info rows in run_story only).
+removal_order = ["oom", "killed", "termination", "lost", "autoscale"]
+oom_regex = '(?i)memory|\bOOM\b|container killed|exit (code|status) (137|52)\b|exited with (code|status) (137|52)\b'
+killed_regex = '(?i)(exit(ed)? with (code|status)|exit (code|status)) 9\b|SIGKILL|killed by the OS'
+termination_regex = '(?i)cluster (is )?terminat|terminating cluster|SparkContext (was |is )?(stopped|shut ?down)|stopping SparkContext|application (has )?(ended|finished)|driver (is )?shutting down|shutdown hook'
+lost_regex = '(?i)spot|preempt|heartbeat|timed out|lost executor|executor lost|worker lost|\blost\b'
+autoscale_regex = '(?i)kill request from HTTP endpoint|\bidle\b|decommission|downscal|scal(e|ing) down|autoscal'
+
+[exceptions]
+# A Spark job or stage that ended with this message was cancelled by adaptive query execution because it re-planned
+# the query (a broadcast replaced a shuffle, ...): not a failure. Marked "replanned" and not counted as failed.
+replanned_regex = 'Adaptive query execution has replanned|cancelled unused stages'
+# Exception classes that make an `exception` finding high severity (others are medium).
+high_severity_regex = 'OutOfMemoryError|SparkException|Py4JJavaError|PythonException'
+# Platform lines that are logged on healthy clusters (a probe for an optional file, a profiler folder, a file system
+# nobody uses): low severity and listed last, never chained to a problem.
+benign_regex = '_encryption_meta/manifest\.json|ExecutorJfrCollector|logs/jfr does not exist|No FileSystem for scheme|No filesystem implementation found|NoSuchFieldException.*Promise|Promise.*NoSuchFieldException|ServiceConfigurationError'
+# Stack frames starting with one of these (after a leading "at ") are framework code; the first frame that
+# does not is reported as `user_frame` ("where to fix").
+framework_frame_prefixes = [
+    "java.", "javax.", "jdk.", "sun.", "com.sun.", "scala.",
+    "org.apache.", "com.databricks.", "py4j.", "io.netty.", "com.google.", "org.spark_project.",
+    "shaded.", "io.delta.", "org.json4s.", "com.fasterxml.", "akka.", "org.eclipse.jetty.",
+    "File \"/databricks/", "File \"/usr/lib", "File \"/usr/local/lib", "File \"/local_disk0/.ephemeral_nfs/envs",
+    "File \"/local_disk0/spark-", "File \"<frozen", "File \"/opt/conda", "File \"/root/.ipykernel",
+    # shaded libraries and cloud SDKs: platform code, never the user's
+    "grpc_shaded.", "io.grpc.", "com.amazonaws.", "software.amazon.", "com.azure.", "com.microsoft.azure.",
+    "org.apache.hadoop.", "com.google.cloud.", "kotlin.", "okhttp3.", "reactor.", "org.slf4j.", "org.apache.logging.",
+]
+
+[events]
+# Spark listener events read from the event log. Lines are filtered by this name as a string BEFORE json parsing.
+# The notebook's 9 events plus StageSubmitted, ApplicationStart/End, LogStart, EnvironmentUpdate (cluster_info) and
+# the Spark Connect operation/session events (connect_operations). SparkListenerTaskStart is deliberately not read.
+# Every event type (read or not) is still counted into the event_counts dataset.
+names = [
+    "SparkListenerTaskEnd",
+    "SparkListenerStageCompleted",
+    "SparkListenerJobStart",
+    "SparkListenerJobEnd",
+    "SparkListenerExecutorAdded",
+    "SparkListenerExecutorRemoved",
+    "org.apache.spark.sql.execution.ui.SparkListenerSQLExecutionStart",
+    "org.apache.spark.sql.execution.ui.SparkListenerSQLExecutionEnd",
+    "org.apache.spark.sql.execution.ui.SparkListenerSQLAdaptiveExecutionUpdate",
+    "org.apache.spark.sql.execution.ui.SparkListenerDriverAccumUpdates",
+    "org.apache.spark.sql.execution.ui.SparkListenerSQLAdaptiveSQLMetricUpdates",
+    "SparkListenerStageSubmitted",
+    "SparkListenerApplicationStart",
+    "SparkListenerApplicationEnd",
+    "SparkListenerLogStart",
+    "DBCEventLoggingListenerMetadata",
+    "SparkListenerEnvironmentUpdate",
+    "SparkListenerBlockManagerAdded",
+    "SparkListenerResourceProfileAdded",
+    "org.apache.spark.sql.connect.service.SparkListenerConnectOperationStarted",
+    "org.apache.spark.sql.connect.service.SparkListenerConnectOperationAnalyzed",
+    "org.apache.spark.sql.connect.service.SparkListenerConnectOperationReadyForExecution",
+    "org.apache.spark.sql.connect.service.SparkListenerConnectOperationFinished",
+    "org.apache.spark.sql.connect.service.SparkListenerConnectOperationFailed",
+    "org.apache.spark.sql.connect.service.SparkListenerConnectOperationCanceled",
+    "org.apache.spark.sql.connect.service.SparkListenerConnectOperationClosed",
+    "org.apache.spark.sql.connect.service.SparkListenerConnectSessionStarted",
+    "org.apache.spark.sql.connect.service.SparkListenerConnectSessionClosed",
+]
+
+[signal_filters]
+# Lines that are never a problem signal, whatever words they contain: configuration and telemetry dumps (one
+# property per line, Databricks usage-logging JSON, the dynamic-config vector). Without this, a dump that lists
+# spark.decommission.enabled or an AnalysisException setting reads as "executor lost" or "schema error".
+ignore_line_regex = 'UsageLogging|SaferConf\(|Read the dynamic config|"metric":"\w*[Cc]onfig|^\s*"?[\w.\-]+"?\s*[=:]\s*\S*\s*$'
+
+# Known problem patterns in driver/executor log lines: (signal, regex, severity, suggested fix).
+# Copied verbatim from the notebook's SIGNALS. Order matters: the FIRST matching signal wins.
+# Extend over time: when you meet a new failure, add its log pattern here.
+
+[[signals]]
+name = "executor_oom"
+pattern = 'java\.lang\.OutOfMemoryError|exceeding memory limits|Container killed'
+severity = "high"
+fix = "Use memory-optimized nodes or fewer cores per executor; raise shuffle partitions; check key skew."
+
+[[signals]]
+name = "driver_unresponsive"
+pattern = 'driver has stopped unexpectedly|Driver is up but is not responsive|is bigger than (spark\.driver\.)?maxResultSize'
+severity = "high"
+fix = "Avoid collect()/toPandas() on large data; use a larger driver."
+
+[[signals]]
+name = "gc_pressure"
+pattern = 'GC overhead limit exceeded|Full GC'
+severity = "medium"
+fix = "Reduce cached or broadcast data; more memory per core."
+
+[[signals]]
+name = "disk_spill"
+pattern = '[Ss]pilling (sort data|in-memory map)'
+severity = "medium"
+fix = "Raise shuffle partitions or rely on AQE; fix skewed keys; use SSD-backed nodes."
+
+# DataFrame cache blocks (rdd_<rdd>_<partition>) that did not fit, were dropped or were lost with their executor;
+# the dataframe_cache finding counts them
+[[signals]]
+name = "cache_not_fit"
+pattern = 'Not enough space to cache rdd_\d+_\d+'
+severity = "low"
+fix = "The DataFrame cache is bigger than the storage memory: cache less, or write an intermediate table."
+
+[[signals]]
+name = "cache_dropped"
+pattern = 'Dropping block rdd_\d+_\d+ from memory'
+severity = "low"
+fix = "Cached blocks are pushed out of memory: the cache does not fit."
+
+[[signals]]
+name = "cache_lost"
+pattern = 'No more replicas available for rdd_\d+_\d+'
+severity = "low"
+fix = "Cached blocks were lost with their executor and are recomputed: see autoscaling and out of memory."
+
+[[signals]]
+name = "fetch_failure"
+pattern = 'FetchFailedException|MetadataFetchFailedException'
+severity = "high"
+fix = "Shuffle data lost, usually from OOM or spot loss; fix the root cause, enable decommissioning."
+
+[[signals]]
+name = "executor_lost"
+# "decommission" only as a word, never inside a setting name such as spark.storage.decommission.enabled
+pattern = 'ExecutorLostFailure|Lost executor|(?<![\w.])[Dd]ecommission(?![\w.]*\s*=)'
+severity = "medium"
+fix = "Spot reclaim or OOM; check executor_oom; consider on-demand fallback."
+
+[[signals]]
+name = "broadcast_timeout"
+pattern = 'Could not execute broadcast in'
+severity = "medium"
+fix = "Broadcast side too large; remove the broadcast hint or lower the threshold."
+
+[[signals]]
+name = "disk_full"
+pattern = 'No space left on device'
+severity = "high"
+fix = "Bigger local disks or SSD nodes; reduce spill."
+
+[[signals]]
+name = "storage_throttling"
+# not class or setting names (ThrottledLogger, throttledInfoLogger, fs.s3a.retry.throttle) nor "throttling threshold"
+pattern = 'SlowDown|Status Code: 503|503 Service Unavailable|TooManyRequests|ServerBusy|(?<![\w.$])[Tt]hrottl(ed|ing)(?![\w$])(?! threshold)'
+severity = "medium"
+fix = "Too many small files or requests; compact tables; reduce write parallelism."
+
+[[signals]]
+name = "schema_error"
+pattern = 'AnalysisException|UNRESOLVED_COLUMN|DELTA_\w*SCHEMA\w*|SCHEMA_MISMATCH'
+severity = "high"
+fix = "Upstream schema changed; check lineage and schema evolution settings."
+
+[[signals]]
+name = "python_error"
+pattern = 'Traceback \(most recent call last\)|PythonException'
+severity = "high"
+fix = "Application error; see the exception fingerprints for the stack."
