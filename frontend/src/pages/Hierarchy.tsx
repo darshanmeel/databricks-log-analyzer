@@ -321,6 +321,12 @@ function StageTable({ cid, u, selected, onPick }: { cid: string; u: WorkUnit; se
                         </span>{' '}
                         <b>{s.label}</b>
                         {s.attempt > 0 && <span className="muted small"> attempt {s.attempt + 1}</span>}
+                        {s.from_stages?.length ? (
+                          <div className="muted small" title="Rows each parent stage wrote to the shuffle, which this stage read">
+                            ← {s.from_stages.map((p) => `stage ${p.stage_id}${p.rows != null ? `: ${fmtRows(p.rows)} rows` : ''}${p.reused ? ' (reused)' : ''}`).join(' · ')}
+                            {s.from_stages.some((p) => p.rows == null) && m(s, 'shuffle_read_records') != null ? ` · read ${fmtRows(m(s, 'shuffle_read_records'))} rows from the shuffle` : ''}
+                          </div>
+                        ) : null}
                         {probsAt(s.ctx, `${s.stageId}.${s.attempt}`).map((r) => (
                           <Link
                             key={r.problem_id}

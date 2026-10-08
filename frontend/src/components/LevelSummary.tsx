@@ -5,7 +5,7 @@ import { CauseBar, CauseLegend, causeParts } from './CauseBar';
 import { useState } from 'react';
 import { api, type SparkJobRow, type StageRow, type StageWhy } from '../api';
 import { useAsync } from '../hooks';
-import { fmtBytes, fmtDuration, fmtNum, fmtPct, fmtSkew, fmtTime, truncate, unitFor } from '../format';
+import { fmtBytes, fmtDuration, fmtNum, fmtPct, fmtRows, fmtSkew, fmtTime, truncate, unitFor } from '../format';
 import { gcBreach, skewBreach, spillBreach } from '../thresholds';
 import { StatusBadge } from './ui';
 import { ScopeTaskSection } from './TaskSections';
@@ -378,7 +378,8 @@ function QuerySteps({ t, id, onJob, onQuery }: { t: QueryTime; id: number; onJob
           <thead>
             <tr>
               <th>Step</th><th className="num">Tasks</th><th>Submitted</th><th>First task</th><th className="num">Waited for cores<span className="unit"> ({su.wait.u})</span></th>
-              <th className="num">Ran<span className="unit"> ({su.run.u})</span></th><th style={{ width: '34%' }}>{fmtTime(t0)} → {fmtTime(t.end)}</th>
+              <th className="num">Ran<span className="unit"> ({su.run.u})</span></th>
+              <th title="Rows a stage got (from storage, or from its parent stages through the shuffle) and passed on (to the next stage through the shuffle, or written out)">Rows in → out</th><th style={{ width: '30%' }}>{fmtTime(t0)} → {fmtTime(t.end)}</th>
             </tr>
           </thead>
           <tbody>
@@ -400,6 +401,7 @@ function QuerySteps({ t, id, onJob, onQuery }: { t: QueryTime; id: number; onJob
                   <td className="mono small">{fmtTime(s.first_task)}</td>
                   <td className={`num ${bigWait(s) ? 'st-warn' : 'muted'}`}>{bigWait(s) && <span aria-hidden>{SIGN.wait} </span>}{s.wait_ms >= 500 ? su.wait.f(s.wait_ms) : '0'}</td>
                   <td className="num">{su.run.f(s.run_ms)}</td>
+                  <td className="small"><RowsFlow s={s} /></td>
                   <td>
                     <div className="qs-lane" title={`waited ${fmtDuration(s.wait_ms)}, ran ${fmtDuration(s.run_ms)}`}>
                       {s.wait_ms > 0 && <span className="qs-wait" style={{ left: pct(s.submitted), width: width(s.submitted, s.first_task) }} />}
@@ -414,6 +416,17 @@ function QuerySteps({ t, id, onJob, onQuery }: { t: QueryTime; id: number; onJob
       </div>
     </div>
   );
+}
+
+/** What a stage passed along: rows in (from storage, from its parent stages' shuffle) → rows out (to the next
+ * stage's shuffle, written out). */
+export function RowsFlow({ s }: { s: Pick<QueryStep, 'rows_read' | 'rows_from_shuffle' | 'rows_to_shuffle' | 'rows_written' | 'parent_ids'> }) {
+  const part = (v: number | null | undefined, what: string) => (v ? `${fmtRows(v)} ${what}` : null);
+  const from = s.parent_ids?.length ? `from stage ${s.parent_ids.join(', ')}` : 'from the shuffle';
+  const inn = [part(s.rows_read, 'read'), part(s.rows_from_shuffle, from)].filter(Boolean);
+  const out = [part(s.rows_to_shuffle, 'to the shuffle'), part(s.rows_written, 'written')].filter(Boolean);
+  if (!inn.length && !out.length) return <span className="muted">–</span>;
+  return <span className="nowrap">{inn.join(' + ') || '0'} <span className="muted">→</span> {out.join(' + ') || '0'}</span>;
 }
 
 /** A query's tasks on their own, for pages that draw the graph between the summary and the tasks. */

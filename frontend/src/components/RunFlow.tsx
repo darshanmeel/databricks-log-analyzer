@@ -5,7 +5,7 @@
 import { useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { api, type FlowEdge, type FlowNode } from '../api';
-import { fmtBytes, fmtDuration, fmtNum, fmtTime, tickLabel, timeTicks, truncate } from '../format';
+import { fmtBytes, fmtDuration, fmtNum, fmtRows, fmtTime, tickLabel, timeTicks, truncate } from '../format';
 import { useAsync, useWidth } from '../hooks';
 import { useNavigate } from 'react-router-dom';
 import { to } from '../links';
@@ -304,11 +304,17 @@ export function RunFlow({ cid, onPick }: { cid: string; onPick: (n: FlowNode) =>
             const on = !chain || (chain.has(e.from) && chain.has(e.to));
             const mid = Math.max(x1, x2) + 18;
             const v = EDGE[e.kind];
+            const passed = e.rows != null ? `${fmtRows(e.rows)} rows${e.bytes ? ` (${fmtBytes(e.bytes)})` : ''}` : e.bytes ? fmtBytes(e.bytes) : '';
             return (
-              <path key={i} d={x2 > x1 + 12 ? `M${x1},${y1} C${(x1 + x2) / 2},${y1} ${(x1 + x2) / 2},${y2} ${x2 - 2},${y2}` : `M${x1},${y1} C${mid},${y1} ${mid},${y2} ${x2 - 2},${y2}`}
+              <g key={i}>
+              <path d={x2 > x1 + 12 ? `M${x1},${y1} C${(x1 + x2) / 2},${y1} ${(x1 + x2) / 2},${y2} ${x2 - 2},${y2}` : `M${x1},${y1} C${mid},${y1} ${mid},${y2} ${x2 - 2},${y2}`}
                 fill="none" stroke={v.color} strokeWidth={on ? 1.4 : 0.8} strokeDasharray={v.dash} opacity={on ? 0.9 : 0.15} markerEnd={`url(#fa-${e.kind})`}>
-                <title>{`${e.kind === 'table' ? `Wrote ${e.labels.join(', ')}, read later` : e.kind === 'shuffle' ? `Reused shuffle output (${e.labels.join(', ')})` : 'Ran inside it'}`}</title>
+                <title>{`${e.kind === 'table' ? `Wrote ${e.labels.join(', ')}, read later` : e.kind === 'shuffle' ? `Reused shuffle output (${e.labels.join(', ')})` : 'Ran inside it'}${passed ? `: ${passed} passed on` : ''}`}</title>
               </path>
+              {passed && on && (chain || drawn.length <= 20) && (
+                <text x={x2 - 6} y={y2 - 4} fontSize={9.5} textAnchor="end" fill={v.color}>{passed}</text>
+              )}
+              </g>
             );
           })}
         </svg>

@@ -393,14 +393,21 @@ def graph(store: Q.Store, cid: str, ctx: str | None, run: str | None = None) -> 
     for n in stage_nodes:
         for pid in n["_parents"]:
             cands = attempts_by_sid.get(pid)
-            if not cands:
+            if not cands:  # skipped here: its shuffle output was computed earlier (under another stage id)
+                n.setdefault("from_stages", []).append({"stage_id": pid, "attempt": 0, "rows": None, "bytes": None,
+                                                        "reused": True})
                 continue
             st = n["start"]
             before = [c for c in cands if st is None or c["start"] is None or c["start"] <= st]
             p = max(before or cands, key=lambda c: c["_att"])
             same_job = p["_job"] == n["_job"]
+            # what passed along it: the rows and bytes the parent wrote to the shuffle
+            pm = p.get("metrics") or {}
+            rows, size = pm.get("shuffle_write_records"), pm.get("shuffle_write")
             edges.append({"source": p["id"], "target": n["id"], "kind": "depends",
-                          "label": None if same_job else "reused"})
+                          "label": None if same_job else "reused", "rows": rows, "bytes": size})
+            n.setdefault("from_stages", []).append({"stage_id": p["_sid"], "attempt": p["_att"], "rows": rows,
+                                                    "bytes": size, "reused": not same_job})
     # retry: attempt N -> N+1
     for sid, cands in attempts_by_sid.items():
         cands = sorted(cands, key=lambda c: c["_att"])

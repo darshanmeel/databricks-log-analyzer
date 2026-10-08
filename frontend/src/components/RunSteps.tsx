@@ -4,6 +4,7 @@
 // were split over the executors. Stretches of a minute or more with no Spark work of the run are rows of their own.
 import { Fragment, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { RowsFlow } from './LevelSummary';
 import { api, type RunStepGroup, type RunStepStage, type RunSteps } from '../api';
 import { useAsync } from '../hooks';
 import { fmtBytes, fmtDuration, fmtNum, fmtPct, fmtTime, truncate } from '../format';
@@ -209,6 +210,7 @@ function StageTable({ cid, g }: { cid: string; g: RunStepGroup }) {
                   <td>
                     <Link to={to.stages(cid, g.ctx, s.stage_id, s.stage_attempt)}>Stage {s.stage_id}{s.stage_attempt ? `.${s.stage_attempt}` : ''}</Link>
                     <div className="muted small">job {s.spark_job_id ?? '–'}{s.status && s.status !== 'succeeded' ? <> · <StatusBadge status={s.status} /></> : null}</div>
+                    <div className="small" title="Rows in (read, or from its parent stages through the shuffle) → rows out (to the next stage through the shuffle, or written)"><RowsFlow s={s} /></div>
                   </td>
                   <td className="num">{n(s.tasks)}{s.failed_tasks ? <div className="small bad">{fmtNum(s.failed_tasks)} failed</div> : null}</td>
                   <td className="mono small">{fmtTime(s.submitted)}</td>

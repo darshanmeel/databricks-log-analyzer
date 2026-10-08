@@ -1499,7 +1499,12 @@ def query_time(store: Store, cid: str, ctx: str, query: int) -> dict[str, Any]:
         steps.append({"sql_execution_id": st.get("sql_execution_id"), "spark_job_id": st.get("spark_job_id"),
                       "stage_id": st["stage_id"], "stage_attempt": st["stage_attempt"], "status": st.get("status"),
                       "tasks": st.get("tasks") if st.get("tasks") is not None else st.get("num_tasks"),
-                      "submitted": s0, "first_task": f, "end": s1, "wait_ms": f - s0, "run_ms": s1 - f})
+                      "submitted": s0, "first_task": f, "end": s1, "wait_ms": f - s0, "run_ms": s1 - f,
+                      # rows passed along: in from storage and from the shuffle (its parent stages), out to the
+                      # shuffle (the next stage) and to storage
+                      "rows_read": st.get("input_records"), "rows_from_shuffle": st.get("shuffle_read_records"),
+                      "rows_to_shuffle": st.get("shuffle_write_records"), "rows_written": st.get("output_records"),
+                      "parent_ids": list(st.get("parent_ids") or [])})
     running = _union_ms(run_sp)
     waiting = _union_ms(_clip(wait_sp, run_sp))
     total = q1 - q0
@@ -1987,12 +1992,18 @@ def flow(store: Store, cid: str, run: str | None = None) -> dict[str, Any]:
 
     edges: dict[tuple, dict] = {}
 
-    def link(a: str | None, b: str | None, kind: str, label: str | None = None):
+    def link(a: str | None, b: str | None, kind: str, label: str | None = None, rows: int | None = None,
+             size: int | None = None):
         if not a or not b or a == b or a not in present or b not in present:
             return
-        e = edges.setdefault((a, b, kind), {"from": a, "to": b, "kind": kind, "labels": []})
+        e = edges.setdefault((a, b, kind), {"from": a, "to": b, "kind": kind, "labels": [], "rows": None, "bytes": None})
         if label and label not in e["labels"] and len(e["labels"]) < 5:
             e["labels"].append(label)
+            # what passed along it: a table: the rows its writer wrote; a reused shuffle: the rows that stage wrote
+            if rows is not None:
+                e["rows"] = (e["rows"] or 0) + int(rows)
+            if size is not None:
+                e["bytes"] = (e["bytes"] or 0) + int(size)
 
     # inside: the root query
     for q in queries:
@@ -2005,9 +2016,10 @@ def flow(store: Store, cid: str, run: str | None = None) -> dict[str, Any]:
         for t in q.get("tables_written") or []:
             if q.get("end_time") is not None:
                 writes.setdefault(_table_key(t), []).append(
-                    (q["end_time"], f"q:{q['spark_context_id']}:{q['sql_execution_id']}", _short_table(t)))
+                    (q["end_time"], f"q:{q['spark_context_id']}:{q['sql_execution_id']}", _short_table(t),
+                     q.get("output_records"), q.get("output_bytes")))
     for w in writes.values():
-        w.sort()
+        w.sort(key=lambda x: (x[0], x[1]))
     for q in queries:
         me = f"q:{q['spark_context_id']}:{q['sql_execution_id']}"
         if q.get("start_time") is None:
@@ -2015,16 +2027,19 @@ def flow(store: Store, cid: str, run: str | None = None) -> dict[str, Any]:
         for t in q.get("tables_read") or []:
             before = [w for w in writes.get(_table_key(t), []) if w[0] <= q["start_time"] and w[1] != me]
             if before:
-                link(before[-1][1], me, "table", before[-1][2])
+                link(before[-1][1], me, "table", before[-1][2], before[-1][3], before[-1][4])
     # shuffle: a stage this job lists ran in an earlier job, so this job reused its output
     ran_in = {(s["spark_context_id"], s["stage_id"]): s.get("spark_job_id") for s in stages
               if s.get("spark_job_id") is not None}
+    wrote_sh = {(s["spark_context_id"], s["stage_id"]): (s.get("shuffle_write_records"), s.get("shuffle_write"))
+                for s in stages if s.get("status") != "failed"}
     for j in jobs:
         me = node_of_job.get((j["spark_context_id"], j["spark_job_id"]))
         for sid in j.get("stage_ids") or []:
             src = ran_in.get((j["spark_context_id"], sid))
             if src is not None and src != j["spark_job_id"]:
-                link(node_of_job.get((j["spark_context_id"], src)), me, "shuffle", f"stage {sid}")
+                link(node_of_job.get((j["spark_context_id"], src)), me, "shuffle", f"stage {sid}",
+                     *wrote_sh.get((j["spark_context_id"], sid), (None, None)))
     times = [t for n in nodes for t in (n["start"], n["end"]) if isinstance(t, int)]
     return {"nodes": nodes, "edges": list(edges.values()), "truncated": truncated,
             "start": min(times) if times else None, "end": max(times) if times else None, "run": run}
@@ -3196,7 +3211,7 @@ def run_steps(store: Store, cid: str, run: str) -> dict[str, Any]:
         if r is None:
             raise NotFound(f"no run {run!r}")
         stages = store.select(con, cid, "stages", "run_key = ?", [run], order="start_time",
-                              exclude=("details", "rdd_scopes", "rdd_names", "parent_ids", "failure_reason", "job_description"))
+                              exclude=("details", "rdd_scopes", "rdd_names", "failure_reason", "job_description"))
         queries = {q["sql_execution_id"]: q for q in store.select(
             con, cid, "sql_queries", "run_key = ?", [run], truncate={"description": 200},
             exclude=("final_plan", "initial_plan", "details"))}
@@ -3260,6 +3275,9 @@ def run_steps(store: Store, cid: str, run: str) -> dict[str, Any]:
                             "status": st.get("status"), "tasks": st.get("tasks") if st.get("tasks") is not None else st.get("num_tasks"),
                             "submitted": s0, "first_task": f, "end": s1, "wait_ms": f - s0, "run_ms": s1 - f,
                             "disk_spill": st.get("disk_spill"), "failed_tasks": st.get("failed_tasks"),
+                            "rows_read": st.get("input_records"), "rows_from_shuffle": st.get("shuffle_read_records"),
+                            "rows_to_shuffle": st.get("shuffle_write_records"), "rows_written": st.get("output_records"),
+                            "parent_ids": list(st.get("parent_ids") or []),
                             **{c: st.get(c) for c in ("min_task_ms", "p10_task_ms", "p50_task_ms", "p90_task_ms", "max_task_ms",
                                                       "p10_task_bytes_in", "p50_task_bytes_in", "p90_task_bytes_in", "max_task_bytes_in",
                                                       "input_bytes", "input_records", "shuffle_read", "shuffle_write", "output_bytes",

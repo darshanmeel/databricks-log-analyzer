@@ -555,9 +555,12 @@ export interface GraphNode {
   metrics?: GraphMetrics | null;
   flags?: GraphFlag[] | null;
   what?: GraphWhat | null;
+  /** a stage: the parent stages whose shuffle output it read, with the rows and bytes each wrote */
+  from_stages?: { stage_id: number; attempt: number; rows: number | null; bytes: number | null; reused: boolean }[];
 }
 
-export interface GraphEdge { source: string; target: string; kind: GraphEdgeKind; label?: string | null }
+/** depends edges: rows / bytes the parent stage wrote to the shuffle, which the child reads */
+export interface GraphEdge { source: string; target: string; kind: GraphEdgeKind; label?: string | null; rows?: number | null; bytes?: number | null }
 
 export interface Graph {
   ctx: string;
@@ -756,7 +759,8 @@ export interface FlowNode extends DataDist, DataIO {
   /** stretches where a stage of it waited for a free core and none of its stages ran */
   waits?: [number, number][];
 }
-export interface FlowEdge { from: string; to: string; kind: 'inside' | 'table' | 'shuffle'; labels: string[] }
+/** rows / bytes: what passed along it (a table: the rows its writer wrote; a reused shuffle: the rows that stage wrote) */
+export interface FlowEdge { from: string; to: string; kind: 'inside' | 'table' | 'shuffle'; labels: string[]; rows?: number | null; bytes?: number | null }
 export interface Flow { nodes: FlowNode[]; edges: FlowEdge[]; truncated: boolean; start: Ms; end: Ms; run: string | null }
 
 
@@ -888,6 +892,8 @@ export interface QueryTime {
 export interface RunStepStage {
   stage_id: number; stage_attempt: number; spark_job_id: number | null; status: string | null; tasks: number | null;
   submitted: number; first_task: number; end: number; wait_ms: number; run_ms: number; disk_spill: number | null; failed_tasks: number | null;
+  /** rows in from storage / from the shuffle (its parent stages), out to the shuffle (the next stage) / to storage */
+  rows_read?: number | null; rows_from_shuffle?: number | null; rows_to_shuffle?: number | null; rows_written?: number | null; parent_ids?: number[];
   min_task_ms?: number | null; p10_task_ms?: number | null; p50_task_ms?: number | null; p90_task_ms?: number | null; max_task_ms?: number | null;
   p10_task_bytes_in?: number | null; p50_task_bytes_in?: number | null; p90_task_bytes_in?: number | null; max_task_bytes_in?: number | null;
   input_bytes?: number | null; input_records?: number | null; shuffle_read?: number | null; shuffle_write?: number | null; output_bytes?: number | null;
@@ -917,6 +923,7 @@ export interface RunSteps {
 export interface QueryStep {
   sql_execution_id: number | null; spark_job_id: number | null; stage_id: number; stage_attempt: number; status: string | null;
   tasks: number | null; submitted: number; first_task: number; end: number; wait_ms: number; run_ms: number;
+  rows_read?: number | null; rows_from_shuffle?: number | null; rows_to_shuffle?: number | null; rows_written?: number | null; parent_ids?: number[];
 }
 
 /** Revision 20: what one run read and wrote */

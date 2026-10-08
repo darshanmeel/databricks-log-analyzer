@@ -699,7 +699,7 @@ function TimeScene({ m, L, view, W, H, px, sel, focusable, keyFor }: { m: GModel
     const dim = L.dimmed.has(e.source) || L.dimmed.has(e.target);
     edges.push(
       <path key={i} className={`gedge t ${e.kind} ${hot ? 'hot' : ''} ${dim ? 'dim' : ''} ${e.label === 'reused' ? 'reused' : ''}`} d={d} markerEnd={`url(#ga-${hot ? 'hot' : e.kind === 'retry' ? 'retry' : e.kind === 'depends' ? 'dep' : 'link'})`}>
-        <title>{e.kind === 'retry' ? `Retried: ${e.label ?? ''}` : e.kind === 'depends' ? 'Reads the output of this stage' : ''}</title>
+        <title>{e.kind === 'retry' ? `Retried: ${e.label ?? ''}` : e.kind === 'depends' ? `Reads the output of this stage${e.rows != null ? `: ${e.rows.toLocaleString()} rows` : ''}${e.bytes ? `, ${(e.bytes / 1024 ** 2).toFixed(1)} MB` : ''}` : ''}</title>
       </path>,
     );
   });
