@@ -1,25 +1,26 @@
 # Databricks Cluster Log Analyzer
 
-> **Not a perfect tool, but a fast one, and it helps every time.** In most cases (somewhere between 90% and 99%,
-> depending on the problem) it names the real issue on its own, in minutes and without much effort from you. When it
-> can't name it, it still gives you more than enough data to work it out yourself: its findings help you **rule things
-> out** and show you **where to dive in**. So it helps with the analysis 100% of the time. As a developer you know where
-> to look and what to fix, in minutes rather than hours, and you can trust what you find.
+> **Not a perfect tool, but a fast one, and it helps every time.** In most cases (90% to 99%, depending on the
+> problem) it names the real issue on its own, in minutes and with little effort from you. When it can't, it still
+> gives you enough data to work it out yourself: its findings help you **rule things out** and show you **where to dive
+> in**. So it helps with the analysis 100% of the time. You know where to look and what to fix in minutes, not hours,
+> and you can trust what you find.
 
 Point it at the logs Databricks delivers for a cluster (driver and executor logs, Spark event logs). It turns them into
 Parquet datasets and opens a **local web UI** that answers:
 
-- **What ran and how long it took:** the cluster's time on the clock next to run time added up over runs, and how much
-  was spent waiting for a free core.
-- **What failed and why:** failed jobs and queries, task retries that still succeeded, lost or out-of-memory
+- **Where did the time go?** How long the cluster was up next to the run time added up over all runs, how much of it
+  was spent waiting for a free core, and each run's time split by cause.
+- **What failed, and why?** Failed jobs and queries, task retries that still succeeded, lost or out-of-memory
   executors, and errors grouped with the first line of your own code.
-- **What to change:** grouped fixes, highest impact first, each with what the data shows, the likely cause and the
-  setting or code change. This is shown for the whole cluster and for each run.
-- **Which tables cost the most:** size, files, file size, files skipped, bytes and rows pulled, and scan time, for the
+- **What should I change?** Grouped fixes, highest impact first, each with what the data shows, the likely cause and
+  the setting or code change. For the whole cluster and for each run.
+- **Which tables cost the most?** Size, files, file size, files skipped, bytes and rows pulled, and scan time, for the
   cluster, a run or one query. It flags files over 1 GB, big tables read whole, and tables scanned again and again.
-- **Rows passed along:** rows read and written per table; rows in and out of every stage, per parent stage. It flags a
-  join that puts out more rows than came in. It also shows the rows passed from one job or query to the next.
-- **Drill down** from cluster to run, query, job, stage and task, with skew, spill, shuffle, GC and executor charts.
+- **Where did the rows go?** Rows read and written per table, rows in and out of every stage (per parent stage), and
+  rows passed from one query or Spark job to the next. It flags a join that puts out more rows than came in.
+- **Which stage or task is to blame?** Drill down from cluster to run, query, Spark job, stage and task, with skew,
+  spill, shuffle, GC and executor charts.
 
 Everything runs on your laptop: no Spark, no cluster, nothing leaves the machine.
 
@@ -27,13 +28,13 @@ Everything runs on your laptop: no Spark, no cluster, nothing leaves the machine
 |---|---|
 | ![Cluster overview](docs/screenshots/cluster-overview.png) | ![Query](docs/screenshots/query-graph.png) |
 
-**The full tour, with every screen explained: open [README.html](README.html)** in a browser (clone or download the
-repo and double-click it, or view it online through
-[htmlpreview](https://htmlpreview.github.io/?https://github.com/darshanmeel/databricks-log-analyzer/blob/main/README.html)).
+**For the full tour, with every screen explained, open [README.html](README.html)** in a browser: clone or download
+the repo and double-click it, or view it online through
+[htmlpreview](https://htmlpreview.github.io/?https://github.com/darshanmeel/databricks-log-analyzer/blob/main/README.html).
 
 ## Install and run
 
-Only **Python 3.11+** is needed: the web UI is already built and ships in the package, so you don't need Node.js.
+You need only **Python 3.11+**. The web UI is already built and ships in the package, so you don't need Node.js.
 
 **Windows (PowerShell)**
 
@@ -56,11 +57,11 @@ dbx-log-analyzer ui --output ~/dbx/output --cache ~/dbx/cache
 A browser tab opens at http://127.0.0.1:8765. On **Home**:
 
 1. Pick **Local folder** (or a Unity Catalog volume, ADLS or S3).
-2. Paste the folder that *contains* the cluster-id folder.
+2. Enter the folder that *contains* the cluster-id folder.
 3. Pick the cluster and click **Analyze**.
 
-Each analyzed cluster has an **Analyze again** button. It rebuilds the analysis from the same raw logs with the newest
-version of the tool, as long as those logs are still on disk.
+Every analyzed cluster has an **Analyze again** button. It rebuilds the analysis from the same raw logs with the
+newest version of the tool, as long as those logs are still on disk.
 
 ### Without installing the package
 
@@ -90,13 +91,13 @@ Then on Home pick **Local folder**, enter `./demo_logs` and analyze `0112-020000
 
 ### Good to know
 
-- **To update:** `git pull`, then start the UI again. Old analyses still open. Click **Analyze again** for the newest
+- **To update:** `git pull`, then start the UI again. Old analyses still open; click **Analyze again** for the newest
   findings.
 - **"No module named databricks_cluster_log_analyzer":** run `python -m pip install -e .` in this folder, or set
   `PYTHONPATH=src`.
 - **"Command not found":** use `python -m databricks_cluster_log_analyzer ui ...` instead.
 - **Port in use:** add `--port 8766`.
-- **Keep `--output` and `--cache` outside the repo.** That way nothing from a real cluster can be committed by accident.
+- **Keep `--output` and `--cache` outside the repo,** so nothing from a real cluster can be committed by accident.
 
 ## Command line
 
@@ -107,5 +108,5 @@ dbx-log-analyzer build --input ./cache/0101-000000-abcd1234 [--duckdb]       # p
 dbx-log-analyzer ui                                                          # the web UI
 ```
 
-Sources, the log folder layout, every dataset, the rules file and how the tool is built are all described in
-[README.html](README.html).
+[README.html](README.html) covers the rest: sources and the log folder layout, every command, every dataset, the rules
+file and how the tool is built.

@@ -106,7 +106,7 @@
     <li><a href="#findings">Findings</a></li>
     <li><a href="#errors">Errors</a></li>
     <li><a href="#logs">Logs</a></li>
-    <li><a href="#data">Data / Debug</a></li>
+    <li><a href="#data">Tables (debug)</a></li>
     <li class="group">Reference</li>
     <li><a href="#guide">Which screen answers what</a></li>
     <li><a href="#workflow">A 2 a.m. workflow</a></li>
@@ -128,12 +128,11 @@
 
   <div class="punch" id="why">
     <span class="kicker">Why use it</span>
-    <p><b>It is not a perfect tool, but it is a fast one, and it helps every time.</b> In most cases (somewhere
-      between 90% and 99%, depending on the problem) it names the real issue on its own, in minutes and without much
-      effort from you. When it can't name it, it still gives you more than enough data to work it out yourself: its
-      findings help you <b>rule things out</b> and point you to <b>where to dive in</b>. So it helps with the analysis
-      100% of the time. As a developer you know where to look and what to fix, in minutes rather than hours, and you can
-      trust what you find.</p>
+    <p><b>It is not a perfect tool, but it is a fast one, and it helps every time.</b> In most cases (90% to 99%,
+      depending on the problem) it names the real issue on its own, in minutes and with little effort from you. When it
+      can't, it still gives you enough data to work it out yourself: its findings help you <b>rule things out</b> and
+      show you <b>where to dive in</b>. So it helps with the analysis 100% of the time. You know where to look and what
+      to fix in minutes, not hours, and you can trust what you find.</p>
   </div>
   <ul class="pills">
     <li>Driver, executor and Spark event logs</li><li>Local folder, Unity Catalog volume, ADLS, S3</li>
@@ -141,30 +140,36 @@
   </ul>
 
   <h2 id="what">What it does</h2>
-  <p>It reads the raw logs (log4j driver logs, stdout/stderr, executor logs and the Spark event log), turns them into
-    Parquet datasets, and serves a web UI on your machine. You drill down level by level, from what happened to the
-    exact stage or task:</p>
+  <p>It reads the raw logs (driver log4j logs, driver and executor stdout/stderr, and the Spark event log), turns them
+    into Parquet datasets, and serves a web UI on your machine. You drill down one level at a time, from the whole
+    cluster to the exact stage or task:</p>
   <p><b>cluster</b> → <b>run</b> (a Databricks job run, notebook or session) → <b>query</b> → <b>Spark job</b> →
     <b>stage</b> → <b>task</b>.</p>
   <ul>
-    <li><b>Time:</b> the cluster's time on the clock next to run time added up over all runs (overlapping runs add up
+    <li><b>Time:</b> how long the cluster was up, next to the run time added up over all runs (overlapping runs add up
       to more than the clock), and the time spent waiting for a free core. Each run's and each query's time is split by
       cause: waiting for cores, CPU, storage, GC, writing shuffle, waiting for shuffle data, or no Spark work.</li>
     <li><b>Failures:</b> a cluster shows as <i>failed</i> only when a job or query failed. Task retries that succeeded
-      are shown as such, never as failures. It also lists lost, killed or out-of-memory executors and errors grouped by
-      fingerprint, each with the first frame of your own code.</li>
-    <li><b>What to change:</b> fixes grouped by impact, each with what the data shows, the likely cause and the setting
-      or code change, plus the problems found behind it. This is shown for the whole cluster and for each run.</li>
+      are shown as retries, never as failures. Lost, killed and out-of-memory executors are listed, and errors are
+      grouped by fingerprint, each with the first frame of your own code.</li>
+    <li><b>What to change:</b> fixes grouped by impact, each with what the data shows, the likely cause, the setting or
+      code change, and the problems found behind it. For the whole cluster and for each run.</li>
     <li><b>Tables:</b> for the cluster, a run or one query: size, file count, file size, files skipped, bytes and rows
-      pulled, scan time and task time. It flags tables with files over 1 GB, big tables read whole, and tables scanned
-      again and again.</li>
-    <li><b>Rows:</b> rows read and written (inserted, updated, deleted, copied unchanged) per table and query. For every
-      stage it shows rows in, per parent stage, and rows out, and flags a join that puts out more rows than came in. It
-      also shows the rows passed between jobs and between queries.</li>
+      pulled, scan time and task time. It flags files over 1 GB, big tables read whole, and tables scanned again and
+      again.</li>
+    <li><b>Rows:</b> rows read and written (inserted, updated, deleted, copied unchanged) per table and query; rows in
+      (per parent stage) and out of every stage, with a flag on a join that puts out more rows than came in; and the
+      rows passed between Spark jobs and between queries.</li>
   </ul>
+  <p><b>How the screens are laid out.</b> A cluster opens on its overview, with tabs for Executors (all runs), Logs
+    (whole cluster) and Tables (debug). Pick a run and you get the run's tabs: <b>Overview</b>, <b>Findings &amp;
+    errors</b>, <b>Queries &amp; stages</b>, <b>Events &amp; timeline</b>, <b>Executors</b> and <b>Logs &amp;
+    tables</b>. The tour below starts at Home, works down from the cluster to a single task, then covers the other
+    tabs.</p>
 
   <h2 id="install">Install and run</h2>
-  <p>Only <b>Python 3.11+</b> is needed. The web UI is already built and ships in the package.</p>
+  <p>You need only <b>Python 3.11+</b>. The web UI is already built and ships in the package, so you don't need
+    Node.js. A browser tab opens at <code>http://127.0.0.1:8765</code>.</p>
   <div class="tabs-os">
     <div><h4>Windows (PowerShell)</h4>
 <pre><code>git clone https://github.com/darshanmeel/databricks-log-analyzer.git
@@ -179,17 +184,26 @@ dbx-log-analyzer ui --output ~/dbx/output --cache ~/dbx/cache</code></pre></div>
   </div>
   <h3>Without installing the package</h3>
   <p>Install the libraries once, then point Python at <code>src</code> each time:</p>
+  <div class="tabs-os">
+    <div><h4>Windows (PowerShell)</h4>
 <pre><code>python -m pip install pandas pyarrow duckdb click fastapi uvicorn   # once
-$env:PYTHONPATH = "src"                                            # PowerShell; bash: PYTHONPATH=src python3 ...
-python -m databricks_cluster_log_analyzer ui --output C:\dbx\output --cache C:\dbx\cache</code></pre>
+$env:PYTHONPATH = "src"                                            # in every new window
+python -m databricks_cluster_log_analyzer ui --output C:\dbx\output --cache C:\dbx\cache</code></pre></div>
+    <div><h4>macOS / Linux</h4>
+<pre><code>python3 -m pip install pandas pyarrow duckdb click fastapi uvicorn   # once
+PYTHONPATH=src python3 -m databricks_cluster_log_analyzer ui --output ~/dbx/output --cache ~/dbx/cache</code></pre></div>
+  </div>
   <p>Cloud sources need their extra: <code>pip install -e ".[databricks]"</code> (Unity Catalog volumes),
-    <code>".[adls]"</code>, <code>".[s3]"</code> or <code>".[all]"</code>. To update: <code>git pull</code>, then
-    restart the UI. Analyses you already have still open, and <b>Analyze again</b> rebuilds one with the newest
-    findings.</p>
+    <code>".[adls]"</code>, <code>".[s3]"</code> or <code>".[all]"</code>.</p>
   <ul>
-    <li><b>Port in use:</b> add <code>--port 8766</code>.</li>
+    <li><b>To update:</b> <code>git pull</code>, then start the UI again. Old analyses still open; <b>Analyze again</b>
+      rebuilds one with the newest findings.</li>
+    <li><b>"No module named databricks_cluster_log_analyzer":</b> run <code>python -m pip install -e .</code> in the
+      repo folder, or set <code>PYTHONPATH=src</code>.</li>
     <li><b>"Command not found":</b> use <code>python -m databricks_cluster_log_analyzer ui ...</code>.</li>
-    <li><b>Keep output and cache outside the repo:</b> then nothing from a real cluster can be committed by accident.</li>
+    <li><b>Port in use:</b> add <code>--port 8766</code>.</li>
+    <li><b>Keep <code>--output</code> and <code>--cache</code> outside the repo,</b> so nothing from a real cluster can
+      be committed by accident.</li>
   </ul>
 
   <h2 id="demo">Try the demo cluster</h2>
@@ -225,13 +239,13 @@ dbx-log-analyzer ui --output ./demo_out --cache ./demo_cache</code></pre>
   <figure><img src="docs/screenshots/cluster-overview.png" alt="Cluster overview: tiles, where the time went, how the runs ended, the runs" loading="lazy">
     <figcaption>The first screen of a cluster: one row of numbers, two short answers, then every run.</figcaption></figure>
   <ul class="look">
-    <li><b>Clock time:</b> how long the cluster was up (1h 16m) next to the run time added up over runs (46m 34s) and
-      how many runs were going at once on average. It prevents the "8 days of run time on a 12-hour cluster"
-      confusion.</li>
-    <li><b>Waiting for cores:</b> added up over runs and as a share of run time, plus on the clock: how long at least
-      one run was waiting.</li>
-    <li><b>Where the time went</b> and <b>How the runs ended:</b> the two answers in plain words, with links to the
-      detail.</li>
+    <li><b>Clock time:</b> how long the cluster was up (1h 16m) next to the run time added up over runs (46m 34s), and
+      how many runs were going at once on average. When runs overlap, the sum is bigger than the clock: 8 days of run
+      time on a 12-hour cluster is not a bug.</li>
+    <li><b>Waiting for cores:</b> added up over runs and as a share of run time, and on the clock: how long at least one
+      run was waiting.</li>
+    <li><b>Where the time went</b> and <b>How the runs ended:</b> the two short answers in plain words, with links to
+      the detail. The first one reads <i>Why runs were slow</i> when runs were slow or waited a lot.</li>
     <li><b>Where the runs' time went:</b> one bar split by cause, then every run with its wait and run time, its usual
       time, rows and flags (spill, big task reads, retries). The left rail lists the runs grouped by program, worst
       first.</li>
@@ -240,10 +254,11 @@ dbx-log-analyzer ui --output ./demo_out --cache ./demo_cache</code></pre>
   <h2 id="change">What to change</h2>
   <figure><img src="docs/screenshots/what-to-change.png" alt="What to change: folded fix cards, one opened" loading="lazy">
     <figcaption>Each change folds to its title and headline fact. Open the ones you care about.</figcaption></figure>
+  <p>On the Cluster overview, and again on each run's Overview. Start here when you want the fix, not the analysis.</p>
   <ul class="look">
-    <li><b>Highest impact first.</b> FIX means the data is clear; CHECK means look before you change. The setting it
-      is about (for example <code>spark.sql.shuffle.partitions</code>) is shown next to the title.</li>
-    <li><b>Opened:</b> what we saw (the headline, then more facts and the likely cause on demand), the fix, links to
+    <li><b>Highest impact first.</b> FIX means the data is clear; CHECK means look before you change. The setting a
+      card is about (for example <code>spark.sql.shuffle.partitions</code>) sits next to its title.</li>
+    <li><b>Opened:</b> what we saw (the headline, with more facts and the likely cause on demand), the fix, links to
       the queries, runs and stages, and <i>the problems found behind it</i>. Long stage lists show the top 10 first.</li>
     <li><b>Further down:</b> other problems not covered by a change, by kind, and the cluster's settings with where each
       value came from (cluster, code or default).</li>
@@ -251,7 +266,7 @@ dbx-log-analyzer ui --output ./demo_out --cache ./demo_cache</code></pre>
 
   <h2 id="tables">Tables read</h2>
   <figure><img src="docs/screenshots/tables-read.png" alt="Tables read: highlighted summary line, flags and the table list" loading="lazy">
-    <figcaption>Highlighted above Details: it often tells in a second that a table was read too big or too often.</figcaption></figure>
+    <figcaption>Highlighted above Details: one look often tells you a table was read too big or too often.</figcaption></figure>
   <ul class="look">
     <li><b>The headline:</b> how many tables, the bytes and rows pulled from files, the task time, and the costliest
       table with its share of the time.</li>
@@ -330,7 +345,7 @@ dbx-log-analyzer ui --output ./demo_out --cache ./demo_cache</code></pre>
     <li><b>Size bands:</b> "78% of tasks ≥ 128 MB · 84% of the data" means the tasks were given more than the ~128 MB
       Spark sizes a task for: too few shuffle partitions, or files that can't be split.</li>
     <li><b>Export tasks (CSV)</b> saves every task of the stage. <b>All 200 rows</b> opens the same tasks in
-      Data / Debug, already filtered to this stage.</li>
+      Tables (debug), already filtered to this stage.</li>
   </ul>
   <h3>How to read it</h3>
   <div class="tbl"><table>
@@ -431,6 +446,8 @@ dbx-log-analyzer ui --output ./demo_out --cache ./demo_cache</code></pre>
     Arrows carry the rows passed. A "+" on either side unfolds the rest of the chain.</p>
 
   <h2 id="events">Events</h2>
+  <p>Use it when you need the order of things: what ran when, what waited on what, and what happened just before a
+    failure.</p>
   <figure><img src="docs/screenshots/events.png" alt="Events: what happened when, the critical path, then every event in order" loading="lazy">
     <figcaption>Events &amp; timeline → Events: the run told in order, with its critical path on top.</figcaption></figure>
   <ul class="look">
@@ -446,6 +463,7 @@ dbx-log-analyzer ui --output ./demo_out --cache ./demo_cache</code></pre>
   </ul>
 
   <h2 id="timeline">Timeline</h2>
+  <p>Use it to see when things went wrong, and on which executor.</p>
   <figure><img src="docs/screenshots/timeline.png" alt="Timeline: incidents, Spark jobs, stages and one lane per executor" loading="lazy">
     <figcaption>When did things go wrong: incidents on the same clock as jobs, stages and every executor's tasks.</figcaption></figure>
   <ul class="look">
@@ -467,6 +485,8 @@ dbx-log-analyzer ui --output ./demo_out --cache ./demo_cache</code></pre>
     across all of them means the whole stage was short of memory.</p>
 
   <h2 id="executors">Executors</h2>
+  <p>Use it when you suspect the machines rather than the data: memory, GC, lost executors, or executors that sat
+    idle.</p>
   <figure><img src="docs/screenshots/executors.png" alt="Executors: what each was given, how it ended, tasks, busy, GC, spill and problems" loading="lazy">
     <figcaption>Executors (all runs): what each executor was given, how long it lived, how it ended, and what went
       wrong on it.</figcaption></figure>
@@ -536,10 +556,12 @@ dbx-log-analyzer ui --output ./demo_out --cache ./demo_cache</code></pre>
     <code>storage_throttling</code> for cloud storage limits. Logs always covers the whole cluster; use the From
     and To times to narrow it to one run.</p>
 
-  <h2 id="data">Data / Debug</h2>
-  <figure><img src="docs/screenshots/data-debug.png" alt="Data / Debug: the intermediate tables behind every view, grouped by step" loading="lazy">
+  <h2 id="data">Tables (debug)</h2>
+  <figure><img src="docs/screenshots/data-debug.png" alt="Tables (debug): the intermediate tables behind every view, grouped by step" loading="lazy">
     <figcaption>Tables (debug): every intermediate table behind the screens. Here the tasks, slowest first: task 909 of
       stage 8 on top.</figcaption></figure>
+  <p>The <b>Tables (debug)</b> tab (the page itself is titled <i>Data / Debug</i>) shows every dataset the screens are
+    built from. Use it to check a number you doubt, or to go past what the charts show.</p>
   <ul class="look">
     <li><b>Grouped by step:</b> Setup (folders and files read), Driver logs, Executor logs (including JVM GC pauses),
       Event logs (tasks, failed task reasons, retries, stages, jobs, queries, executors, spill and shuffle over time,
@@ -547,16 +569,16 @@ dbx-log-analyzer ui --output ./demo_out --cache ./demo_cache</code></pre>
       exceptions, findings, the timeline). Each shows its row count.</li>
     <li><b>Search</b> all text columns, <b>sort</b> by any column, choose rows per page, and click a row to unwrap long
       text such as a plan or a stack.</li>
-    <li>Every screen has a <b>See full table in Data / Debug</b> link that opens the table behind it, often already
-      filtered (a stage's tasks, a query's stages).</li>
-    <li><b>Use it to check a number</b> you doubt, or to go past what the charts show. The same tables are Parquet files
-      in the output folder, so you can also query them directly:</li>
+    <li>Charts that summarize a dataset carry a <b>See full table in Data / Debug</b> link that opens the table behind
+      them, often already filtered (a stage's tasks, a query's stages).</li>
+    <li><b>Outside the UI:</b> the same tables are Parquet files in the output folder, so you can query them
+      directly:</li>
   </ul>
 <pre><code>duckdb -c "SELECT stage_id, task_id, executor_id, task_ms/1000 AS secs, shuffle_read/1e9 AS shuffle_gb
            FROM 'C:/dbx/output/0112-020000-demo0001/tasks.parquet'
            ORDER BY task_ms DESC LIMIT 10"</code></pre>
-  <p>Or in Python: <code>pd.read_parquet(".../tasks.parquet")</code>. <code>--duckdb</code> on <code>build</code> also
-    loads every dataset into one <code>insights.duckdb</code>.</p>
+  <p>Or in Python: <code>pd.read_parquet(".../tasks.parquet")</code>. <code>--duckdb</code> on <code>build</code> or
+    <code>analyze</code> also loads every dataset into one <code>insights.duckdb</code>.</p>
 
   <h2 id="guide">Which screen answers what</h2>
   <div class="tbl"><table>
@@ -574,7 +596,7 @@ dbx-log-analyzer ui --output ./demo_out --cache ./demo_cache</code></pre>
       <tr><td>Which line of my code failed?</td><td>Errors: the frame marked Fix here; the Log line link</td></tr>
       <tr><td>What did the executor log just before it died?</td><td>Logs: the line in context, filtered by executor and time</td></tr>
       <tr><td>What setting should I change?</td><td>What to change (cluster and run); the cluster's settings with where each value came from</td></tr>
-      <tr><td>I don't trust a number</td><td>Data / Debug: the table behind it, or the Parquet file with DuckDB</td></tr>
+      <tr><td>I don't trust a number</td><td>Tables (debug): the table behind it, or the Parquet file with DuckDB</td></tr>
     </tbody>
   </table></div>
 
@@ -582,18 +604,18 @@ dbx-log-analyzer ui --output ./demo_out --cache ./demo_cache</code></pre>
   <ol class="steps">
     <li><b>Analyze the cluster</b> (or click Analyze again). Read the status line: did a job or query fail, or did it
       only retry tasks?</li>
-    <li><b>Cluster overview:</b> look at clock time against time added up, waiting for cores, and the two short answers.
-      This is where most runs show whether the issue is capacity (waiting) or the work itself.</li>
-    <li><b>Tables read:</b> one look tells you whether a table was read whole, has huge files, or was scanned too often.</li>
+    <li><b>Cluster overview:</b> compare clock time with the run time added up, check the wait for cores, and read the
+      two short answers. This usually tells you whether the issue is capacity (waiting) or the work itself.</li>
     <li><b>What to change:</b> open the top card. Its problems link straight to the query or stage.</li>
+    <li><b>Tables read:</b> one look tells you whether a table was read whole, has huge files, or was scanned too often.</li>
     <li><b>Open the worst run, then its slowest query:</b> follow the rows in → out stage by stage. A join that grows
       rows, a skewed stage or a spill stands out.</li>
     <li><b>Open the slow stage's tasks:</b> a max ×10 on as much data is skew; a max ×10 on normal data is a slow
       executor or GC. <b>By executor</b> says which, in one sentence.</li>
     <li><b>Something failed?</b> Errors shows the line of your code to fix; its Log line link shows what the executor
       was doing just before. Executors shows whether the machine ran out of memory or was lost.</li>
-    <li><b>Still not clear?</b> The events, timeline, executors, logs and the raw datasets (Data / Debug) are all there
-      to dig into yourself. Even then, the findings above have already ruled most things out.</li>
+    <li><b>Still not clear?</b> Dig in yourself with Events, Timeline, Executors, Logs and Tables (debug). By now the
+      findings have already ruled most things out.</li>
   </ol>
 
   <h2 id="limits">What it cannot tell</h2>
@@ -630,10 +652,14 @@ dbx-log-analyzer ui --output ./demo_out --cache ./demo_cache</code></pre>
 <pre><code># which clusters are there (newest driver activity first)?
 dbx-log-analyzer clusters --root ./my-logs
 dbx-log-analyzer clusters --source volume --root /Volumes/cat/sch/vol/cluster_logs --profile DEFAULT
+dbx-log-analyzer clusters                 # no source: the clusters already analyzed in ./output
 
 # download (remote, incremental) and parse into &lt;output&gt;/&lt;cluster_id&gt;/
 dbx-log-analyzer analyze --source s3 --root s3://my-bucket/cluster-logs --cluster 0101-000000-abcd1234
 dbx-log-analyzer analyze --source s3 --root s3://my-bucket/cluster-logs --latest 5
+
+# download only (remote, incremental) into &lt;cache&gt;/&lt;cluster_id&gt;/
+dbx-log-analyzer download --source s3 --root s3://my-bucket/cluster-logs --cluster 0101-000000-abcd1234
 
 # parse a local folder
 dbx-log-analyzer build --input ./cache/0101-000000-abcd1234 [--output ./output] [--duckdb]
@@ -641,7 +667,13 @@ dbx-log-analyzer build --input ./cache/0101-000000-abcd1234 [--output ./output] 
 # older outputs: add newer findings from their datasets, without the raw logs
 dbx-log-analyzer refresh-findings --output ./output [--cluster &lt;id&gt;]
 
-dbx-log-analyzer ui                       # http://127.0.0.1:8765</code></pre>
+# which source types are available (is the optional SDK installed?)
+dbx-log-analyzer sources
+
+dbx-log-analyzer ui                       # http://127.0.0.1:8765; --port, --no-browser</code></pre>
+  <p><code>--volume /Volumes/...</code> is short for <code>--source volume --root /Volumes/...</code>.
+    <code>build</code>, <code>analyze</code> and <code>refresh-findings</code> take <code>--rules</code>; every command
+    takes <code>--help</code>.</p>
 
   <h2 id="datasets">Datasets</h2>
   <p>Each dataset is written to <code>&lt;output&gt;/&lt;cluster_id&gt;/&lt;name&gt;.parquet</code> with an explicit
@@ -671,11 +703,13 @@ dbx-log-analyzer ui                       # http://127.0.0.1:8765</code></pre>
   <p>The thresholds (skew, spill, GC, tiny tasks, shuffle-heavy), the log signal patterns, the executor removal
     categories and the framework stack-frame prefixes are all in one file:
     <code>src/databricks_cluster_log_analyzer/rules.toml</code>. Override them with <code>--rules my_rules.toml</code> or
-    <code>DBX_LOG_ANALYZER_RULES=my_rules.toml</code>; your file is merged over the defaults.</p>
+    <code>DBX_LOG_ANALYZER_RULES=my_rules.toml</code>. Your file is merged over the defaults section by section, so it
+    only needs the values you change. One exception: a <code>[[signals]]</code> list in your file replaces the whole
+    default list, so copy the defaults first if you want to add a signal.</p>
 
   <h2 id="privacy">Privacy</h2>
-  <p>Everything runs on your machine. The web server listens on <code>127.0.0.1</code> only, and nothing is sent
-    anywhere. Keep <code>--output</code> and <code>--cache</code> outside the repo so that logs from a real cluster
+  <p>Everything runs on your machine. The web server listens on <code>127.0.0.1</code> by default, and nothing is
+    sent anywhere. Keep <code>--output</code> and <code>--cache</code> outside the repo so that logs from a real cluster
     can't be committed by accident.</p>
 
   <h2 id="built">How it is built</h2>
