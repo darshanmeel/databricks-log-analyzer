@@ -60,6 +60,11 @@ export const getRunScope = () => runScope;
 /** Endpoints that accept `run=`: datasets, graph, hotspots (others are cluster-wide). */
 const RUN_AWARE = /^\/clusters\/[^/]+\/(datasets\/|graph$|hotspots$|gantt$|flow$|errors$|spill-shuffle$)/;
 
+/** The server is not answering: it stopped (its window closed, Ctrl+C in it, or it crashed). */
+const unreachable = () =>
+  `Cannot reach the analyzer at ${window.location.host}: it has stopped. Start it again with \`dbx-log-analyzer ui\` ` +
+  `(the same --output and --port ${window.location.port || '80'}), then Try again. Why it stopped: .dbx_ui.log in the --output folder.`;
+
 async function get<T>(path: string, params?: Params, signal?: AbortSignal): Promise<T> {
   let res: Response;
   if (runScope && RUN_AWARE.test(path) && !(params && 'run' in params)) params = { ...(params ?? {}), run: runScope };
@@ -67,7 +72,7 @@ async function get<T>(path: string, params?: Params, signal?: AbortSignal): Prom
     res = await fetch(`/api${path}${qs(params)}`, { signal });
   } catch (e) {
     if ((e as Error).name === 'AbortError') throw e;
-    throw new ApiError(0, 'Cannot reach the analyzer API. Start it with `dbx-log-analyzer ui` (port 8765).');
+    throw new ApiError(0, unreachable());
   }
   return parse<T>(res);
 }
@@ -81,7 +86,7 @@ async function post<T>(path: string, body: unknown): Promise<T> {
       body: JSON.stringify(body),
     });
   } catch {
-    throw new ApiError(0, 'Cannot reach the analyzer API. Start it with `dbx-log-analyzer ui` (port 8765).');
+    throw new ApiError(0, unreachable());
   }
   return parse<T>(res);
 }

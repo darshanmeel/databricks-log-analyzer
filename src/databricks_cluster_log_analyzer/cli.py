@@ -7,7 +7,9 @@ works and means --source volume --root <path>.
 from __future__ import annotations
 
 import json
+import logging
 import sys
+import time
 import threading
 import webbrowser
 from datetime import datetime, timezone
@@ -354,12 +356,82 @@ def ui(output, cache, host, port, no_browser):
         raise click.ClickException(f"UI not available: {e}") from e
     out, cache_p = Path(output).resolve(), Path(cache).resolve()
     out.mkdir(parents=True, exist_ok=True)
+    log = _ui_log(out, port)
     app = create_app(out, cache_p)
     url = f"http://{'127.0.0.1' if host in ('0.0.0.0', '::') else host}:{port}/"
     click.echo(f"Databricks Cluster Log Analyzer UI at {url}  (output {out}, cache {cache_p}); Ctrl+C to stop")
+    click.echo(f"Keep this window open: closing it or pressing Ctrl+C in it stops the UI. Log: {log}")
     if not no_browser:
         threading.Timer(1.2, lambda: webbrowser.open(url)).start()
-    uvicorn.run(app, host=host, port=port, log_level="warning")
+    import copy
+
+    from uvicorn.config import LOGGING_CONFIG
+
+    # uvicorn sets its logging up when it starts: the log file goes in through its config (request errors only)
+    cfg = copy.deepcopy(LOGGING_CONFIG)
+    cfg["formatters"]["file"] = {"()": "databricks_cluster_log_analyzer.cli._UtcFormatter"}
+    cfg["handlers"]["file"] = {"class": "logging.FileHandler", "filename": str(log), "encoding": "utf-8",
+                               "level": "ERROR", "formatter": "file"}
+    # on "uvicorn" only: "uvicorn.error" (startup errors, request tracebacks) passes its records up to it
+    cfg["loggers"]["uvicorn"]["handlers"] = [*cfg["loggers"]["uvicorn"].get("handlers", []), "file"]
+    # Ctrl+C (or a shutdown signal) is handled inside uvicorn: run() then returns normally
+    reason = "stopped: Ctrl+C in its window (or a shutdown signal)"
+    try:
+        uvicorn.run(app, host=host, port=port, log_level="warning", log_config=cfg)
+    except KeyboardInterrupt:
+        reason = "stopped: Ctrl+C in its window"
+    except SystemExit as e:
+        reason = f"could not start or stopped early (exit code {e.code}; is port {port} already in use?)"
+        raise
+    except BaseException as e:
+        reason = f"stopped by an error: {type(e).__name__}: {e}"
+        raise
+    finally:
+        _ui_log_line(log, reason)
+
+
+UI_LOG = ".dbx_ui.log"
+
+
+class _UtcFormatter(logging.Formatter):
+    """The log file's lines in UTC, like the UI and the start / stop lines."""
+
+    converter = time.gmtime
+
+    def __init__(self):
+        super().__init__("%(asctime)s UTC  %(levelname)s %(message)s", "%Y-%m-%d %H:%M:%S")
+
+
+def _ui_log_line(path: Path, text: str) -> None:
+    try:
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(f"{datetime.now(timezone.utc):%Y-%m-%d %H:%M:%S} UTC  {text}\n")
+    except OSError:
+        pass
+
+
+def _ui_log(out: Path, port: int) -> Path:
+    """<output>/.dbx_ui.log: when the UI started and stopped and why, request errors and, through faulthandler, the
+    stack of a crash inside a native library. A start with no stop line before it means the process was killed (its
+    window closed, the machine slept or ran out of memory); that is said in the console at the next start."""
+    import faulthandler
+
+    path = out / UI_LOG
+    try:
+        last = [ln for ln in path.read_text("utf-8", errors="replace").splitlines() if ln.strip()][-1]
+    except (OSError, IndexError):
+        last = ""
+    if " started on port " in last:
+        click.echo(f"Note: the UI that started at {last[:23]} ended without stopping cleanly (its window was closed, "
+                   f"or the process was killed or crashed). Details, if any, are in {path}.")
+        _ui_log_line(path, "the previous run ended without a clean stop")
+    _ui_log_line(path, f"started on port {port}, version {__version__}")
+    try:
+        f = open(path, "a", encoding="utf-8")  # kept open for the life of the process: faulthandler writes to it
+        faulthandler.enable(file=f)
+    except OSError:
+        pass
+    return path
 
 
 if __name__ == "__main__":  # pragma: no cover
