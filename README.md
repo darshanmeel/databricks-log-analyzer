@@ -98,6 +98,39 @@ dbx-log-analyzer ui --output ./demo_out --cache ./demo_cache
 
 Then on Home pick **Local folder**, enter `./demo_logs` and analyze `0112-020000-demo0001`.
 
+### Local Spark logs (local mode, History Server)
+
+A Spark app run on your laptop (`spark.master = local[N]`) writes one event-log file, with the driver and executor in
+it (when `spark.eventLog.enabled` is `true`). The Spark History Server's **Download** button gives the same file in a
+zip. Put it in the event-log place of a cluster folder:
+
+```text
+C:\spark-logs\                                  <- the root you enter on Home
+  0101-000000-local01\                          <- any name in the cluster-id pattern: 4 digits-6 digits-letters/digits
+    eventlog\local\local-1700000000000\         <- the app id (the file's name)
+      eventlog                                  <- the event-log file, renamed to "eventlog"
+```
+
+1. Unzip the History Server download if you have one. It holds one file named after the app (`local-…`, `app-…` or
+   `application_…`).
+2. Make the folders above and rename the file to `eventlog`. A `.gz` file works as it is (`eventlog.gz`).
+3. On Home pick **Local folder**, enter `C:\spark-logs` and analyze `0101-000000-local01`. One cluster folder per
+   app; put a second app in `0101-000000-local02`.
+
+You get everything that comes from the event log: Spark jobs, stages, tasks, SQL queries with their plans, tables
+read and written, rows in and out, spill, shuffle, GC time per task, settings and the executor's cores and memory.
+
+- **Don't put the event log in `driver/` or `executor/`.** Those folders are for text logs (log4j, stdout, stderr);
+  an event log read there is just lines of JSON, with no jobs, stages or queries.
+- **Rolling event logs** (`spark.eventLog.rolling.enabled`, a folder `eventlog_v2_<app-id>` of `events_1_…`,
+  `events_2_…` files): rename them `eventlog-1`, `eventlog-2`, … in the same order, all in the one app folder.
+- **Compressed with lz4, zstd or snappy** (`spark.eventLog.compress`): decompress first; only plain and gzip files
+  are read.
+- **Console output:** if you saved what the run printed, put it in `0101-000000-local01\driver\stdout` to get its
+  errors and log lines too. Without it the Coverage line says only the event log is there.
+- In local mode the driver is the only executor, so the executor charts (busy and idle cores) and the
+  capacity findings stay empty. Queries, stages and tasks are complete.
+
 ### Good to know
 
 - **To update:** `git pull`, then start the UI again. Old analyses still open; click **Analyze again** for the newest

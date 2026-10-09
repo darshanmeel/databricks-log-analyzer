@@ -112,6 +112,7 @@
     <li><a href="#workflow">A 2 a.m. workflow</a></li>
     <li><a href="#limits">What it cannot tell</a></li>
     <li><a href="#sources">Sources and log layout</a></li>
+    <li><a href="#local-spark">Local Spark logs</a></li>
     <li><a href="#cli">Command line</a></li>
     <li><a href="#datasets">Datasets</a></li>
     <li><a href="#rules">Rules and thresholds</a></li>
@@ -748,6 +749,42 @@ dbx-log-analyzer ui --output ./demo_out --cache ./demo_cache</code></pre>
   executor/   &lt;app-id&gt;/&lt;executor-id&gt;/stdout, stderr (+ rolled .gz)
   eventlog/   &lt;cluster_id&gt;_&lt;hash&gt;/&lt;spark_context_id&gt;/eventlog (+ rolled eventlog-&lt;date&gt;.gz)
   init_scripts/ (ignored)</code></pre>
+
+  <h2 id="local-spark">Local Spark logs (local mode, History Server)</h2>
+  <p>A Spark app run on your laptop (<code>spark.master = local[N]</code>) writes one event-log file, with the driver
+    and executor in it (when <code>spark.eventLog.enabled</code> is <code>true</code>). The Spark History Server's
+    <b>Download</b> button gives the same file in a zip. Put it in the event-log place of a cluster folder:</p>
+<pre><code>C:\spark-logs\                                  &lt;- the root you enter on Home
+  0101-000000-local01\                          &lt;- any name in the cluster-id pattern: 4 digits-6 digits-letters/digits
+    eventlog\local\local-1700000000000\         &lt;- the app id (the file's name)
+      eventlog                                  &lt;- the event-log file, renamed to "eventlog"</code></pre>
+  <ol>
+    <li>Unzip the History Server download if you have one. It holds one file named after the app
+      (<code>local-…</code>, <code>app-…</code> or <code>application_…</code>).</li>
+    <li>Make the folders above and rename the file to <code>eventlog</code>. A <code>.gz</code> file works as it is
+      (<code>eventlog.gz</code>).</li>
+    <li>On Home pick <b>Local folder</b>, enter <code>C:\spark-logs</code> and analyze
+      <code>0101-000000-local01</code>. One cluster folder per app; put a second app in
+      <code>0101-000000-local02</code>.</li>
+  </ol>
+  <p>You get everything that comes from the event log: Spark jobs, stages, tasks, SQL queries with their plans,
+    tables read and written, rows in and out, spill, shuffle, GC time per task, settings and the executor's cores and
+    memory.</p>
+  <ul>
+    <li><b>Don't put the event log in <code>driver/</code> or <code>executor/</code>.</b> Those folders are for text
+      logs (log4j, stdout, stderr); an event log read there is just lines of JSON, with no jobs, stages or
+      queries.</li>
+    <li><b>Rolling event logs</b> (<code>spark.eventLog.rolling.enabled</code>, a folder
+      <code>eventlog_v2_&lt;app-id&gt;</code> of <code>events_1_…</code>, <code>events_2_…</code> files): rename them
+      <code>eventlog-1</code>, <code>eventlog-2</code>, … in the same order, all in the one app folder.</li>
+    <li><b>Compressed with lz4, zstd or snappy</b> (<code>spark.eventLog.compress</code>): decompress first; only
+      plain and gzip files are read.</li>
+    <li><b>Console output:</b> if you saved what the run printed, put it in
+      <code>0101-000000-local01\driver\stdout</code> to get its errors and log lines too. Without it the Coverage
+      line says only the event log is there.</li>
+    <li>In local mode the driver is the only executor, so the executor charts (busy and idle cores) and the capacity
+      findings stay empty. Queries, stages and tasks are complete.</li>
+  </ul>
 
   <h2 id="cli">Command line</h2>
 <pre><code># which clusters are there (newest driver activity first)?
