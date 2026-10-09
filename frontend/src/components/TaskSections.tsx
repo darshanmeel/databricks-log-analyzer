@@ -403,7 +403,14 @@ function PerExecutor({ c, pick, others }: { c: TaskColumns; pick: Pick; others: 
     return [...m.entries()].map(([id, idx]) => ({ id, idx, ms: idx.reduce((a, i) => a + (t[i] ?? 0), 0), max: Math.max(...idx.map((i) => t[i] ?? 0)) }))
       .sort((a, b) => b.ms - a.ms);
   }, [c]); // eslint-disable-line react-hooks/exhaustive-deps
-  if (groups.length < 2) return null;
+  if (!groups.length) return null;
+  // one executor ran them all: its table is section 1, so say that instead of leaving a gap in the numbering
+  if (groups.length < 2) return (
+    <div className="ts-section">
+      <h3 className="ts-h"><span className="ts-num">2</span> Each executor</h3>
+      <p className="muted small">All {fmtNum(groups[0].idx.length)} {groups[0].idx.length === 1 ? 'task' : 'tasks'} ran on {groups[0].id === 'driver' ? 'the driver' : `executor ${groups[0].id}`}, so its table is the one above.</p>
+    </div>
+  );
   const totMs = groups.reduce((a, g) => a + g.ms, 0) || 1;
   const slowest = groups.reduce((a, g) => (g.max > a.max ? g : a));
   const scale = (k: MetricKey) => stats(valuesOf(c, k, mode, null))?.max ?? 0;
@@ -696,7 +703,9 @@ function StageBody({ cid, ctx, stageId, attempt, sharing, n, c }: { cid: string;
 
 /** What the folded executor view holds. */
 const execWhat = (c: TaskColumns, others: string) => [
-  `The same task numbers for each of the ${fmtNum(c.executors.length)} executors: which one was slow, read the most or spilled`,
+  c.executors.length === 1
+    ? 'One executor ran all these tasks: its numbers are the table above'
+    : `The same task numbers for each of the ${fmtNum(c.executors.length)} executors: which one was slow, read the most or spilled`,
   `Each executor's cores over time, with ${others} that ran there`,
 ];
 
