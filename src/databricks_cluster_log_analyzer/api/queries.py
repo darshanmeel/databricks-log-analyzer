@@ -742,7 +742,16 @@ def table_query(
         if run:
             win = run_window(store, con, cid, run) if name in WITH_SHARED_ROWS or name in SPAN_COLUMNS else None
             tcol = TS_COLUMN.get(name)
-            if "run_key" in sch and name in WITH_SHARED_ROWS and win and tcol in sch:
+            # the cluster's shared rows (log lines, executors) belong to a run only when it had the cluster to itself:
+            # with other runs going at the same time they are as much theirs, so a run page shows its own rows only
+            if name in WITH_SHARED_ROWS and win and not run_alone(store, con, cid, run):
+                win = None
+            if name == "incidents" and "finding_id" in sch and store.dataset_path(cid, "findings", required=False):
+                # an incident is a run's through its findings: never by time alone
+                fp = store.dataset_path(cid, "findings")
+                where.append(f"finding_id IN (SELECT finding_id FROM {store.src(fp)} WHERE run_key = ?)")
+                params.append(run)
+            elif "run_key" in sch and name in WITH_SHARED_ROWS and win and tcol in sch:
                 # the run's own rows, and the cluster's shared rows (executors, logs) in the run's time; a row tied to
                 # a job, stage or query is never shared, even without a run (a query that ran no Spark job)
                 own = "".join(f" AND {qi(c)} IS NULL" for c in ("spark_job_id", "stage_id", "sql_execution_id") if c in sch)
@@ -824,6 +833,15 @@ def run_window(store: Store, con, cid: str, run: str) -> tuple[int, int] | None:
     if r.get("start_time") is None or r.get("end_time") is None:
         return None
     return int(r["start_time"]), int(r["end_time"])
+
+
+def run_alone(store: Store, con, cid: str, run: str) -> bool:
+    """No other run overlapped this one (its overlapping_runs is empty)."""
+    rows = store.select(con, cid, "runs", "run_key = ?", [run], limit=1)
+    if not rows:
+        return False
+    o = rows[0].get("overlapping_runs")
+    return not (o is not None and len(o) > 0)
 
 
 def runs(store: Store, cid: str) -> dict[str, Any]:
