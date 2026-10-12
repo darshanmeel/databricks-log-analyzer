@@ -1,6 +1,6 @@
 // Revision 20: how big a table is and what reading it cost. The size and file count come from a scan that skipped
 // nothing (files read + files skipped); a MERGE rewrites every file it touches, so files over 1 GiB are flagged.
-import { api, type TableStats as TS } from '../api';
+import { api, type JdbcRead, type TableStats as TS } from '../api';
 import { useState } from 'react';
 import { useAsync } from '../hooks';
 import { TOP_ROWS } from './SettingsAdvice';
@@ -45,12 +45,27 @@ function flagsOf(t: TS, scope: Scope): { text: string; bad?: boolean }[] {
 
 /** Every table read from files (the cluster, one run or one query), the costliest first, with a highlighted line on
  * top that says in a second which read cost the most and what is wrong with it. */
+/** Reads from databases over JDBC: rows (JDBC reports no bytes), and how evenly the read was split. */
+function JdbcLine({ jdbc }: { jdbc: JdbcRead[] }) {
+  const all = jdbc.reduce((a, j) => a + j.rows, 0);
+  const t = jdbc[0];
+  const uneven = t.p50_task_rows && t.max_task_rows >= 10 * Math.max(1, t.p50_task_rows);
+  return (
+    <div className="tr-line">
+      <b>{fmtNum(jdbc.length)} {jdbc.length === 1 ? 'database read' : 'database reads'} over JDBC</b>: <b>{fmtRows(all)} rows</b>.
+      {' '}Most: <code className="fp-table" title={t.source}>{short(t.source)}</code> {fmtRows(t.rows)} rows in {fmtNum(t.partitions || 1)} {t.partitions === 1 ? 'partition' : 'partitions'}
+      {uneven ? <span className="st-warn">; its biggest partition had {fmtRows(t.max_task_rows)} rows against a {fmtRows(t.p50_task_rows)} median: the partition column splits it unevenly</span> : null}
+    </div>
+  );
+}
+
 export function TablesRead({ cid, scope = {}, embedded = false }: { cid: string; scope?: Scope; embedded?: boolean }) {
   const st = useAsync((s) => api.tables(cid, s, scope), [cid, scope.run, scope.ctx, scope.query]);
   const [all, setAll] = useState(false);
   const [shown, setShown] = useState(false);
   const rows = (st.data?.tables ?? []).filter((t) => t.size_bytes || t.scan_task_ms);
-  if (!rows.length) return null;
+  const jdbc = st.data?.jdbc ?? [];
+  if (!rows.length && !jdbc.length) return null;
   const where = scope.query !== undefined ? 'this query' : scope.run ? 'this run' : 'this cluster';
   const allTask = rows.reduce((a, t) => a + (t.scan_task_ms || 0), 0);
   const pulled = rows.reduce((a, t) => a + (t.bytes_from_files || 0), 0);
@@ -60,12 +75,13 @@ export function TablesRead({ cid, scope = {}, embedded = false }: { cid: string;
   const head = (
     <div className="tr-head">
       <span className={`ro-eyebrow ${flagged.length ? 'warn' : ''}`}>Tables read</span>
-      <div className="tr-line">
+      {jdbc.length > 0 && <JdbcLine jdbc={jdbc} />}
+      {top && <div className="tr-line">
         <b>{fmtNum(rows.length)} {rows.length === 1 ? 'table' : 'tables'}</b> read from files by {where}: <b>{fmtBytes(pulled)}</b>{rowsAll ? <> and <b>{fmtRows(rowsAll)} rows</b></> : null} pulled, <b>{fmtDuration(allTask)}</b> of task time.
         {' '}Most: <code className="fp-table" title={top.table}>{short(top.table)}</code>
         {top.size_bytes ? <> ~{fmtBytes(top.size_bytes)} in {fmtNum(top.files)} files</> : null}
         {top.scan_task_ms && allTask ? <>, {fmtDuration(top.scan_task_ms)} ({Math.round((100 * top.scan_task_ms) / allTask)}%)</> : null}
-      </div>
+      </div>}
       {flagged.length > 0 && (
         <ul className="tr-flags">
           {flagged.slice(0, 5).map(({ t, f }) => (

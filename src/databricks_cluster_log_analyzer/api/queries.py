@@ -4572,4 +4572,46 @@ def cluster_tables(store: Store, cid: str, run: str | None = None, ctx: str | No
     store.cluster_dir(cid)
     with store.connect() as con:
         st = table_stats(store, con, cid, run or None, (ctx, query) if ctx and query is not None else None)
-    return {"tables": sorted(st.values(), key=lambda t: -(t["scan_task_ms"] or 0))}
+        jdbc = jdbc_reads(store, con, cid, run or None, (ctx, query) if ctx and query is not None else None)
+    return {"tables": sorted(st.values(), key=lambda t: -(t["scan_task_ms"] or 0)), "jdbc": jdbc}
+
+
+def jdbc_reads(store: Store, con, cid: str, run: str | None = None, query: tuple[str, int] | None = None) -> list[dict[str, Any]]:
+    """What was read from databases over JDBC (no files, so not in the tables read from files): per source, the rows,
+    the queries and runs, the partitions and the time, and how uneven the partitions were (rows of the biggest task
+    against the median)."""
+    qpath = store.dataset_path(cid, "sql_queries", required=False)
+    if qpath is None:
+        return []
+    sch = store.schema(con, qpath)
+    if "final_plan" not in sch:
+        return []
+    where, params = ["(final_plan LIKE '%JDBCRelation%' OR initial_plan LIKE '%JDBCRelation%')"], []
+    if query is not None:
+        where.append("spark_context_id = ? AND sql_execution_id = ?")
+        params += [query[0], int(query[1])]
+    elif run and "run_key" in sch:
+        where.append("run_key = ?")
+        params.append(run)
+    cols = [c for c in ("spark_context_id", "sql_execution_id", "run_key", "final_plan", "initial_plan", "input_records",
+                        "duration_ms", "p50_task_rows_in", "max_task_rows_in") if c in sch]
+    rows = store.rows(con, f"SELECT {', '.join(cols)} FROM {store.src(qpath)} WHERE {' AND '.join(where)}", params)
+    by: dict[str, dict[str, Any]] = {}
+    for q in rows:
+        j = jdbc_source(q.get("final_plan")) or jdbc_source(q.get("initial_plan"))
+        if not j:
+            continue
+        # the source without credentials or host details: the table or query it read
+        src = re.sub(r"(?i)(password|user)=[^;&\s]+", r"\1=…", str(j["source"]))[:120]
+        b = by.setdefault(src, {"source": src, "rows": 0, "queries": 0, "runs": set(), "partitions": 0, "took_ms": 0,
+                                "max_task_rows": 0, "p50_task_rows": None})
+        b["rows"] += int(q.get("input_records") or 0)
+        b["queries"] += 1
+        if q.get("run_key"):
+            b["runs"].add(q["run_key"])
+        b["partitions"] = max(b["partitions"], int(j.get("partitions") or 0))
+        b["took_ms"] += int(q.get("duration_ms") or 0)
+        if (q.get("max_task_rows_in") or 0) > b["max_task_rows"]:
+            b["max_task_rows"], b["p50_task_rows"] = int(q["max_task_rows_in"]), q.get("p50_task_rows_in")
+    out = [{**b, "runs": len(b["runs"])} for b in by.values()]
+    return sorted(out, key=lambda b: -b["rows"])

@@ -14,7 +14,9 @@ import { indexProblems } from '../problems';
 
 const ekey = (r: ExecutorProfileRow) => `${r.spark_context_id ?? ''}|${r.executor_id}`;
 const execLabel = (id: string) => (id === 'driver' ? 'driver' : `exec ${id}`);
-const FULL_GC_MIN = 3; // rules.full_gc_min default (CONTRACT Revision 3 item 4)
+const FULL_GC_MIN = 3;
+/** More marks than this on one executor's lane are drawn as one mark per stretch of time, shaded by how many. */
+const MARKS_MAX = 50; // rules.full_gc_min default (CONTRACT Revision 3 item 4)
 
 const tooltipStyle = {
   contentStyle: { background: 'var(--panel)', border: '1px solid var(--line)', borderRadius: 6, color: 'var(--ink)', fontSize: 12.5 },
@@ -119,11 +121,20 @@ function Lifetimes({ rows, end, selected, onSelect, gantt }: { rows: ExecutorPro
                   </>
                 );
               })()}
-              {marks
-                .filter((m) => m.executor_id === r.executor_id && m.ts >= t0 && m.ts <= t1)
-                .map((m, i) => (
-                  <span key={`m${i}`} className={`lane-mark ${m.kind}`} style={{ left: `${pct(m.ts)}%` }} title={`${fmtTime(m.ts)} · ${m.label}`} />
-                ))}
+              {(() => {
+                const mine = marks.filter((m) => m.executor_id === r.executor_id && m.ts >= t0 && m.ts <= t1);
+                if (mine.length <= MARKS_MAX)
+                  return mine.map((m, i) => <span key={`m${i}`} className={`lane-mark ${m.kind}`} style={{ left: `${pct(m.ts)}%` }} title={`${fmtTime(m.ts)} · ${m.label}`} />);
+                // hundreds of Full GCs on one lane are a smear: one mark per stretch, darker where there are more
+                const B = 48, w = (t1 - t0) / B;
+                const n = new Array(B).fill(0), sp = new Array(B).fill(0);
+                for (const m of mine) { const i = Math.min(B - 1, Math.floor((m.ts - t0) / w)); if (m.kind === 'spill') sp[i] += 1; else n[i] += 1; }
+                const most = Math.max(1, ...n, ...sp);
+                return n.map((k, i) => (k + sp[i] > 0 ? (
+                  <span key={`b${i}`} className={`lane-mark ${k ? 'full_gc' : 'spill'}`} style={{ left: `${pct(t0 + (i + 0.5) * w)}%`, opacity: 0.35 + 0.65 * ((k + sp[i]) / most) }}
+                    title={`${fmtTime(t0 + i * w)} – ${fmtTime(t0 + (i + 1) * w)}: ${k ? `${fmtNum(k)} Full GCs` : ''}${k && sp[i] ? ', ' : ''}${sp[i] ? `${fmtNum(sp[i])} spills` : ''}`} />
+                ) : null));
+              })()}
               {r.removed_time !== null && <span className={`end-mark ${bad ? 'problem' : ''}`} style={{ left: `calc(${pct(b)}% - 1px)` }} />}
               {r.removed_time !== null && (
                 <span
@@ -326,6 +337,7 @@ function GcPerExecutor({ rows, selected, onPick }: { rows: ExecutorProfileRow[];
 
 export default function Executors() {
   const { cid, summary } = useCluster();
+  const scopeRun = useRunScopeCtx().run;
   const [sp, setQ] = useQueryState();
   const ctxParam = sp.get('ctx');
   const selExec = sp.get('executor');
@@ -382,14 +394,16 @@ export default function Executors() {
               {selRow && <ExecutorDetail cid={cid} r={selRow} onClose={() => setQ({ executor: null }, true)} />}
               <Panel
                 title="When each executor was alive, and how hard it worked"
-                note={gantt.data?.busy?.length
+                note={!scopeRun
+                  ? "One row per executor, for every run on the cluster; the label at its end says how it left. Grey hatch: running tasks of any run; the bands on top: CPU (upper) and task memory (lower), darker is busier; empty is idle."
+                  : gantt.data?.busy?.length
                   ? "One row per executor on the run's clock; the label at its end says how it left. Executors are shared: grey hatch is the executor running tasks of any run, and the bands on top are this run's own tasks (upper: CPU, lower: task memory; darker is busier). Hatch without a band means the cores were busy with other runs' work; only what is left empty was idle."
                   : "One row per executor on the run's clock. The bar spans its lifetime and the label at its end says how it left. Inside the bar, the upper band is CPU in use and the lower band is task memory in use: darker is busier, empty is idle."}
               >
                 <Lifetimes rows={t.rows} end={summary.end_time} selected={selKey} onSelect={pick} gantt={gantt.data ?? null} />
                 <div className="legend small" style={{ marginTop: 8 }}>
-                  <span className="item"><span className="sw" style={{ background: 'var(--series-1)' }} />This run's CPU (upper band)</span>
-                  <span className="item"><span className="sw" style={{ background: 'var(--series-2)' }} />This run's task memory (lower band)</span>
+                  <span className="item"><span className="sw" style={{ background: 'var(--series-1)' }} />{scopeRun ? "This run's CPU" : 'CPU of the tasks'} (upper band)</span>
+                  <span className="item"><span className="sw" style={{ background: 'var(--series-2)' }} />{scopeRun ? "This run's task memory" : 'Task memory'} (lower band)</span>
                   {gantt.data?.busy?.length ? <span className="item"><span className="sw busy-any-sw" />Busy with any run's tasks</span> : null}
                   <span className="item"><span className="sw" style={{ background: 'var(--surface-2)', border: '1px solid var(--border)' }} />Alive, nothing running</span>
                   <span className="item">◆ Full GC (JVM paused)</span>

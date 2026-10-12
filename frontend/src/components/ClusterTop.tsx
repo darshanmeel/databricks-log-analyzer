@@ -293,7 +293,7 @@ function TimeWent({ cid, runs, took, waiting, running, t0, t1, compute, peak, ca
                     <td className="num">{fmtNum(r.tasks)}</td>
                     {/* a source without read bytes (JDBC) reports rows: show those, not its shuffle. Storage reads are
                         apart from DataFrame-cache reads (Spark counts both as input) */}
-                    <td className="num">{!r.input_bytes && (r.input_records ?? 0) > 0
+                    <td className="num">{!r.input_bytes && (r.input_records ?? 0) > 0 || ((r.input_records ?? 0) >= 1e6 && (r.input_bytes ?? 0) < GB)
                       ? <span title={r.shuffle_read ? `shuffle read ${fmtBytes(r.shuffle_read)}` : undefined}>{fmtRows(r.input_records)} rows</span>
                       : r.input_bytes ? <span title={r.shuffle_read ? `plus shuffle read ${fmtBytes(r.shuffle_read)}` : undefined}>{fmtBytes(storageOf(r))}</span> : '–'}
                       {cacheOf(r) >= GB / 4 ? <div className="muted small">+ {fmtBytes(cacheOf(r))} from a DataFrame cache</div> : null}</td>

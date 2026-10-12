@@ -696,7 +696,7 @@ export const api = {
   stageWhy: (cid: string, ctx: string, by: { query?: number; job?: number }, s?: AbortSignal) => get<{ stages: StageWhy[] }>(`${c(cid)}/stage-why`, { ctx, ...by }, s),
   runEnd: (cid: string, run: string, s?: AbortSignal) => get<RunEnd>(`${c(cid)}/run-end`, { run }, s),
   queryLogic: (cid: string, ctx: string, id: number, s?: AbortSignal) => get<PlanLogic>(`${c(cid)}/query-logic`, { ctx, id: String(id) }, s),
-  tables: (cid: string, s?: AbortSignal, scope?: { run?: string; ctx?: string; query?: number }) => get<{ tables: TableStats[] }>(`${c(cid)}/tables`, scope, s),
+  tables: (cid: string, s?: AbortSignal, scope?: { run?: string; ctx?: string; query?: number }) => get<{ tables: TableStats[]; jdbc?: JdbcRead[] }>(`${c(cid)}/tables`, scope, s),
   runTables: (cid: string, run: string, s?: AbortSignal) => get<RunTables>(`${c(cid)}/run-tables`, { run }, s),
   group: (cid: string, runs: string[], s?: AbortSignal) => get<GroupView>(`${c(cid)}/group`, { runs: runs.join(',') }, s),
   gantt: (cid: string, ctx: string | null, maxTasks = 20000, s?: AbortSignal, win?: { start: number; end: number }) =>
@@ -1014,6 +1014,9 @@ export interface JdbcStep {
  * wave (behind other runs or its own tasks), whichever is longer. Older analyses have only the first. */
 /** Waiting for a core, one meaning everywhere: time when none of the run's tasks could start because every core was
  * busy (the cause bar's "waiting"). Its tasks queuing behind its own while others ran is "ran in waves", apart. */
+/** What was read from a database over JDBC (no files: rows, not bytes). */
+export interface JdbcRead { source: string; rows: number; queries: number; runs: number; partitions: number; took_ms: number; max_task_rows: number; p50_task_rows: number | null }
+
 export const waitOf = (r: { waiting_ms?: number | null; queued_full_ms?: number | null }) =>
   r.waiting_ms ?? r.queued_full_ms ?? 0;
 
