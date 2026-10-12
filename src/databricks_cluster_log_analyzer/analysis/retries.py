@@ -21,7 +21,13 @@ REMOVAL_WORDS = {"oom": "out of memory", "killed": "killed", "lost": "lost", "au
                  "termination": "stopped (cluster terminating)", "other": "removed"}
 #: plain-English labels for first_failure_category
 CATEGORY_LABELS = {"executor_lost": "executor lost", "oom": "out of memory", "fetch_failed": "shuffle fetch failed",
-                   "exception": "exception in task code", "killed": "killed", "other": "other"}
+                   "exception": "exception in task code", "source_db": "source database connection lost",
+                   "killed": "killed", "other": "other"}
+#: a task that lost its connection to a source database over JDBC: the database or the network, not the task's code
+SOURCE_DB_TEXT_RE = re.compile(r"(?is)(?=.*(?:jdbc|com\.sap\.db|oracle\.jdbc|sqlserver|postgresql|mysql|mariadb|db2|"
+                               r"snowflake|teradata|data receive failed|connectionid:|sessionid:))(?=.*(?:connection timed out|connect timed out|socket ?timeout|"
+                               r"read timed out|data receive failed|connection reset|cannot connect to|"
+                               r"communications link failure|connection refused))")
 
 
 OOM_TEXT_RE = re.compile(r"OutOfMemoryError|Java heap space|GC overhead limit exceeded|"
@@ -42,7 +48,9 @@ def failure_category(end_reason: str | None, error: str | None, removal_cat: str
             return "killed"
         return "executor_lost"
     if er == "ExceptionFailure":
-        return "oom" if OOM_TEXT_RE.search(txt) else "exception"
+        if OOM_TEXT_RE.search(txt):
+            return "oom"
+        return "source_db" if SOURCE_DB_TEXT_RE.match(txt) else "exception"
     if er == "TaskKilled":
         return "other" if "another attempt succeeded" in txt.lower() else "killed"
     return "other"

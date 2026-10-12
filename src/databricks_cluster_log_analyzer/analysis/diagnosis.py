@@ -44,7 +44,11 @@ def _story_links(r: Mapping) -> list[dict]:
 def _outcome(t) -> dict | None:
     jobs, queries = t["spark_jobs"], t["sql_queries"]
     fj = [j for j in jobs if j["result"] == "JobFailed"]
-    fq = [q for q in queries if q["status"] == "failed"]
+    # a query that failed outside any run without running a stage is a platform's own (MLflow autologging's table
+    # lookup): no run was affected, so the run did not fail
+    orphan = [q for q in queries if q["status"] == "failed" and not q.get("run_key") and not q.get("stages")
+              and any(x.get("run_key") for x in queries)]
+    fq = [q for q in queries if q["status"] == "failed" and q not in orphan]
     fs = [s for s in t["stages"] if s["status"] == "failed"]
     inc = [j for j in jobs if j["end_time"] is None]
     if not jobs and not queries:
@@ -82,6 +86,9 @@ def _outcome(t) -> dict | None:
         text += f" {len(inc)} jobs never finished (the cluster may have stopped or still be running)."
     if fs:
         text += f" {len(fs)} stage attempts failed but were retried successfully."
+    if orphan:
+        text += (f" {len(orphan)} internal quer{'ies' if len(orphan) != 1 else 'y'} outside any run failed without "
+                 "running a stage (a library's own lookup, such as MLflow autologging): no run was affected.")
     return {"kind": "outcome", "severity": "medium" if inc or fs else "info",
             "title": "The run succeeded" if not inc else "The run did not finish cleanly", "text": text,
             "links": [link("job", f"job {j['spark_job_id']}", j["spark_context_id"], j["spark_job_id"]) for j in inc[:3]]}

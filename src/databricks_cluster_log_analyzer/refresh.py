@@ -15,6 +15,7 @@ the minutes each task ran)."""
 from __future__ import annotations
 
 import json
+import re
 import os
 from pathlib import Path
 
@@ -84,6 +85,33 @@ def _ms_frame(tdf: pd.DataFrame | None) -> pd.DataFrame | None:
     return out
 
 
+def _reclassify_retries(path: Path, findings: list[dict]) -> list[dict]:
+    """Task attempts that lost their JDBC connection to a source database were "exception in task code" in older
+    outputs: call them what they are, in task_retries.parquet and in the retry findings' text."""
+    from collections import Counter
+
+    from .analysis.retries import SOURCE_DB_TEXT_RE, category_text, stage_retry_summary
+
+    rows = _rows(path)
+    changed = False
+    for r in rows:
+        if r.get("first_failure_category") == "exception" and SOURCE_DB_TEXT_RE.match(r.get("first_failure_error") or ""):
+            r["first_failure_category"] = "source_db"
+            changed = True
+    if not changed:
+        return rows
+    write_parquet(rows, path, "task_retries")
+    summ = stage_retry_summary(rows)
+    for f in findings:
+        if f.get("category") != "task_retries":
+            continue
+        rs = summ.get((f.get("spark_context_id"), f.get("stage_id"), f.get("stage_attempt")))
+        if rs and isinstance(rs.get("by_category"), Counter):
+            f["evidence"] = re.sub(r"retried \([^)]*\)", f"retried ({category_text(rs['by_category'])})",
+                                   f.get("evidence") or "", count=1)
+    return rows
+
+
 def refresh_findings(out_dir: str | os.PathLike, rules: Rules) -> dict:
     """`out_dir` is <output>/<cluster_id>. Returns {"added": n, "by_category": {...}}."""
     d = Path(out_dir)
@@ -120,12 +148,14 @@ def refresh_findings(out_dir: str | os.PathLike, rules: Rules) -> dict:
     recheck_gc(findings, stages, rules)
     # the log signal findings again, without the lines the event log does not back (a fetch failure no task had, an
     # executor lost as the cluster stopped)
-    sig_rows = confirmed_signals(signals, stages, _rows(d / "task_retries.parquet"), _rows(d / "apps.parquet"))
+    retries = _reclassify_retries(d / "task_retries.parquet", findings)
+    sig_rows = confirmed_signals(signals, stages, retries, _rows(d / "apps.parquet"))
     new += _signal_findings(cid, summarize_signals(_real_losses(sig_rows, executors, rules)))
     log_cats = {f"log:{s.name}" for s in rules.signals}
     calibrate(findings, rules)
     demote_orphan_failures(findings, queries)
     allf = add_findings(findings, runs, new, replace=(*CATEGORIES, *WORKLOAD_CATEGORIES, *CAPACITY_CATEGORIES, *log_cats))
+    demote_orphan_failures(allf, queries)  # the recomputed log findings too
     write_parquet(allf, d / "findings.parquet", "findings")
     if (d / "query_profile.parquet").exists():
         qp = _rows(d / "query_profile.parquet")

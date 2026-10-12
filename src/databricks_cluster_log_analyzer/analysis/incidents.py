@@ -135,7 +135,8 @@ BECAUSE = {
 
 
 _SOURCE_DB_RE = re.compile(r"connection timed out|connect timed out|sockettimeoutexception|read timed out|"
-                           r"data receive failed|connection reset|cannot open socket|communications link failure")
+                           r"data receive failed|connection reset|cannot open socket|communications link failure|"
+                           r"socket timeout|cannot connect to|timeoutexception|connection refused")
 _JDBC_VENDOR_RE = re.compile(r"com\.sap\.db|oracle\.jdbc|com\.microsoft\.sqlserver|org\.postgresql|com\.mysql|"
                              r"org\.mariadb|com\.ibm\.db2|net\.snowflake|com\.teradata")
 
@@ -143,6 +144,10 @@ _JDBC_VENDOR_RE = re.compile(r"com\.sap\.db|oracle\.jdbc|com\.microsoft\.sqlserv
 def _exception_kind(f: Mapping, err_rows: list[dict]) -> str:
     cls = (f.get("entity") or "").lower()
     msg = " ".join(str(e.get("message") or "") for e in err_rows).lower()
+    # where it was thrown: a JDBC driver's own frames (older outputs called them the user's code)
+    frames = " ".join(str(x) for e in err_rows for x in ([e.get("user_frame")] + list(e.get("top_frames") or [])
+                                                         if e.get("top_frames") is not None else [e.get("user_frame")]))
+    frames = (frames + " " + (f.get("evidence") or "")).lower()
     on_driver = bool(err_rows) and all(e.get("source") == "driver" and not e.get("executor_id") for e in err_rows)
     if "outofmemory" in cls:
         return "oom"
@@ -151,7 +156,8 @@ def _exception_kind(f: Mapping, err_rows: list[dict]) -> str:
         return "fetch"
     # a read from a source database that timed out (SAP HANA, Oracle, SQL Server, Postgres ... over JDBC): the
     # database or the network, not the task's code
-    if _SOURCE_DB_RE.search(msg) and ("jdbc" in msg or _JDBC_VENDOR_RE.search(msg) or "jdbc" in cls):
+    if (_SOURCE_DB_RE.search(msg) or _SOURCE_DB_RE.search(cls)) and (
+            "jdbc" in msg or _JDBC_VENDOR_RE.search(msg) or "jdbc" in cls or _JDBC_VENDOR_RE.search(frames)):
         return "source_db"
     if "job aborted" in msg or "job aborted" in (f.get("evidence") or "").lower():
         return "job_aborted"

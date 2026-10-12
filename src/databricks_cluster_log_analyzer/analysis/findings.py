@@ -584,6 +584,16 @@ def demote_orphan_failures(findings: list[dict], queries: list[dict]) -> None:
     autologging's table lookup) is listed, as low: no run was affected. Needs the queries' run_key."""
     orphan = {(q["spark_context_id"], q["sql_execution_id"]) for q in queries
               if q.get("status") == "failed" and not q.get("run_key") and not q.get("stages")}
+    # the same error's line in the driver log (schema_error, exception): the same internal query, not a failure
+    errs = [str(q.get("error") or "").strip().splitlines()[0][:80] for q in queries
+            if (q["spark_context_id"], q["sql_execution_id"]) in orphan and q.get("error")]
+    errs = [e for e in errs if len(e) >= 20]
+    for f in findings:
+        if (errs and (f["category"].startswith("log:") or f["category"] == "exception")
+                and any(e in (f.get("evidence") or "") for e in errs)):
+            f["severity"] = "low"
+            if "no run was affected" not in (f.get("evidence") or ""):
+                f["evidence"] = "The internal query outside any run (no run was affected): " + (f.get("evidence") or "")
     for f in findings:
         if f["category"] == "query_failed" and (f.get("spark_context_id"), f.get("sql_execution_id")) in orphan:
             f["severity"] = "low"
