@@ -101,6 +101,7 @@ export function ClusterTop({ cid, runs, executors, compute, onPick, find, more, 
   const up = compute?.cluster_start && compute?.cluster_end ? compute.cluster_end - compute.cluster_start : null;
   const busy = useMemo(() => busyClock(runs, t1), [runs, t1]);
   const findings = useMemo(() => [...(fs.data?.rows ?? [])].sort(plainFirst), [fs.data]);
+  const appSlow = findings.some((f) => !f.run_key && f.severity === 'high' && (f.category === 'no_spark_work' || f.category === 'tiny_task_stages'));
   const errs = useAsync((s) => api.errors(cid, s).catch(() => [] as ErrorGroup[]), [cid]);
   const top = useTopFailure(cid, true);
   const failedTasks = sum(runs, (r) => r.failed_tasks);
@@ -125,8 +126,9 @@ export function ClusterTop({ cid, runs, executors, compute, onPick, find, more, 
       {timeline}
       <div className="ro-hero">
         <section className="ro-hero-box">
-          <span className={`ro-eyebrow ${slow.length || waitShare >= 0.2 ? 'warn' : ''}`}>{slow.length || waitShare >= 0.2 ? 'Why runs were slow' : 'Where the time went'}</span>
-          <WhySlow cid={cid} progs={progs} waiting={waiting} took={took} running={running} peak={peak.n} execs={atPeak.length} cores={cores} slow={slow} avg={busy ? took / busy : 0} />
+          <span className={`ro-eyebrow ${slow.length || waitShare >= 0.2 || appSlow ? 'warn' : ''}`}>{slow.length || waitShare >= 0.2 || appSlow ? 'Why it was slow' : 'Where the time went'}</span>
+          <WhySlow cid={cid} progs={progs} waiting={waiting} took={took} running={running} peak={peak.n} execs={atPeak.length} cores={cores} slow={slow} avg={busy ? took / busy : 0}
+            appLevel={findings.filter((f) => !f.run_key && (f.category === 'no_spark_work' || f.category === 'tiny_task_stages'))} />
         </section>
         <section className="ro-hero-box">
           <span className={`ro-eyebrow ${failed.length || lost.length ? 'bad' : ''}`}>How the runs ended</span>
@@ -164,8 +166,10 @@ export function ClusterTop({ cid, runs, executors, compute, onPick, find, more, 
   );
 }
 
-function WhySlow({ cid, progs, waiting, took, running, peak, execs, cores, slow, avg }: {
+function WhySlow({ cid, progs, waiting, took, running, peak, execs, cores, slow, avg, appLevel = [] }: {
   cid: string; progs: Program[]; waiting: number; took: number; running: number; peak: number; execs: number; cores: number; slow: RunRow[]; avg: number;
+  /** The app's own findings about where its time went (no Spark work, stages of tiny tasks): they come first. */
+  appLevel?: Finding[];
 }) {
   const share = waiting / Math.max(1, took);
   const top = progs[0];
@@ -174,6 +178,11 @@ function WhySlow({ cid, progs, waiting, took, running, peak, execs, cores, slow,
   return (
     <>
       <ul className="ro-points">
+        {appLevel.map((f) => {
+          const first = (f.evidence ?? '').split(/(?<=\.)\s/)[0];
+          const head = first.split(/: | \(/)[0];
+          return <li key={f.finding_id}><b>{head}</b>{first.length > head.length ? <span className="muted"> · {truncate(first.slice(head.length).replace(/^[:(\s]+/, ''), 140)}</span> : null}</li>;
+        })}
         {share >= 0.1 && <li><b>{fmtDuration(waiting)} waiting for a free core</b> <span className="muted">· added up over runs, {fmtPct(share, 0)} of their {fmtDuration(took)}</span></li>}
         {share >= 0.1 && <li>Up to <b>{fmtNum(peak)} runs at once</b> <span className="muted">on {cores ? `${fmtNum(cores)} cores (${fmtNum(execs)} ${execs === 1 ? 'executor' : 'executors'})` : `${fmtNum(execs)} ${execs === 1 ? 'executor' : 'executors'}`}{avg >= 1.05 ? `; ${avg.toFixed(1)} at once on average` : ''}</span></li>}
         {top && <li><b>{top.name}</b> {topShare >= 0.4 ? 'did most of the work' : 'did the most work'} <span className="muted">· {fmtDuration(top.running)} running tasks, added up over {fmtNum(top.runs.length)} runs{top.spill >= GB ? `, spilled ${fmtBytes(top.spill)}` : ''}</span></li>}

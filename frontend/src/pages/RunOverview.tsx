@@ -129,6 +129,11 @@ export function RunOverview({ run }: { run: RunRow }) {
         {allSteps && <RunStepsPanel cid={cid} run={run.run_key} />}
 
         <TablesRead cid={cid} scope={{ run: run.run_key }} />
+        {/* one place for tables: what it read (above), and table by table what it read and wrote, folded */}
+        <details className="panel" style={{ padding: 0 }}>
+          <summary className="panel-head" style={{ cursor: 'pointer' }}><h2 style={{ display: 'inline', fontSize: 15 }}>What it read and wrote, table by table</h2></summary>
+          <div className="panel-body"><RunTables cid={cid} run={run.run_key} /></div>
+        </details>
 
         {/* how it ended, in order: short, and "How it ended" above links to it, so it is not folded */}
         {e && (
@@ -148,10 +153,9 @@ export function RunOverview({ run }: { run: RunRow }) {
           </p>
         )}
 
-        <Fold name="run" title="Details" ids={['ro-find']} hint="more numbers, find in this run, what it read and wrote">
+        <Fold name="run" title="Details" ids={['ro-find']} hint="more numbers, find a stage, query or task in this run">
           {moreTiles}
           <div id="ro-find"><TopFinder cid={cid} run={run.run_key} /></div>
-          <RunTables cid={cid} run={run.run_key} />
         </Fold>
       </div>
     </div>
