@@ -41,5 +41,7 @@ export function runOption(r: RunRow): string {
 
 /** Group key for runs of the same code: the program, else the kind of run. */
 export function runGroup(r: RunRow): string {
+  // the app's jobs outside any named run (local tests, a job group per test): their own group, named for what they are
+  if (r.kind === 'app' && (r.label ?? '').startsWith('Outside any run')) return 'Outside any run';
   return r.program ?? (r.kind === 'app' ? 'Spark apps' : r.kind === 'notebook' ? 'Notebooks' : r.kind === 'connect_session' ? 'Spark Connect sessions' : 'Other runs');
 }

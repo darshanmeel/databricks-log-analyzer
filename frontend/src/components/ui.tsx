@@ -147,7 +147,7 @@ const LINK_KIND: Record<string, string> = {
   stage: 'Stage',
   query: 'Query',
   executor: 'Exec',
-  job: 'Job',
+  job: 'Spark job',
   finding: 'Finding',
   log: 'Log',
   error: 'Error',

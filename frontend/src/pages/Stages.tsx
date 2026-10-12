@@ -323,7 +323,7 @@ function StageDetailView({ cid, d, retries, onClose }: { cid: string; d: StageDe
         <div className="row" style={{ gap: 8 }}>
           {d.job && (
             <Link className="btn small" to={to.hierarchy(cid, { ctx: s.spark_context_id, job: d.job.spark_job_id })}>
-              Job {d.job.spark_job_id}
+              Spark job {d.job.spark_job_id}
             </Link>
           )}
           {d.query && (

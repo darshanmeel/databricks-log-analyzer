@@ -180,8 +180,8 @@ function WhySlow({ cid, progs, waiting, took, running, peak, execs, cores, slow,
       <ul className="ro-points">
         {appLevel.map((f) => {
           const first = (f.evidence ?? '').split(/(?<=\.)\s/)[0];
-          const head = first.split(/: | \(/)[0];
-          return <li key={f.finding_id}><b>{head}</b>{first.length > head.length ? <span className="muted"> · {truncate(first.slice(head.length).replace(/^[:(\s]+/, ''), 140)}</span> : null}</li>;
+          const head = first.split(/: /)[0];
+          return <li key={f.finding_id}><b>{head}</b>{first.length > head.length ? <span className="muted"> · {truncate(first.slice(head.length).replace(/^[:\s]+/, ''), 140)}</span> : null}</li>;
         })}
         {share >= 0.1 && <li><b>{fmtDuration(waiting)} waiting for a free core</b> <span className="muted">· added up over runs, {fmtPct(share, 0)} of their {fmtDuration(took)}</span></li>}
         {share >= 0.1 && <li>Up to <b>{fmtNum(peak)} runs at once</b> <span className="muted">on {cores ? `${fmtNum(cores)} cores (${fmtNum(execs)} ${execs === 1 ? 'executor' : 'executors'})` : `${fmtNum(execs)} ${execs === 1 ? 'executor' : 'executors'}`}{avg >= 1.05 ? `; ${avg.toFixed(1)} at once on average` : ''}</span></li>}

@@ -218,7 +218,7 @@ function ChildTable({ rows, onPick, word, why }: {
     </th>
   );
   const U = ({ u }: { u: string }) => <span className="unit"> ({u})</span>;
-  const showStages = word === 'Job';
+  const showStages = word === 'Job' || word === 'Spark job';
   // a stage row also gets its tasks' spread: time and data per task (p10, median, p90, biggest)
   const perTask = word === 'Stage';
   // one unit per column, written in its heading; the cells are bare numbers

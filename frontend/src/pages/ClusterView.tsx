@@ -311,7 +311,7 @@ ${mine.reduce((n, g) => n + g.rs.length, 0)} runs, ${myEx.length} executors`)}
     const s = e.added_time ?? t0, en = e.removed_time ?? t1;
     const bad = BAD.test(`${e.removal_category ?? ''} ${e.removed_reason ?? ''}`);
     exRows.push({
-      y, h: 12, label: `exec ${e.executor_id}`, sub: e.cores ? `${e.cores} cores` : undefined,
+      y, h: 12, label: `exec ${e.executor_id}`, sub: e.cores ? `${e.cores} ${e.cores === 1 ? 'core' : 'cores'}` : undefined,
       node: [
         // up the whole time it lived: amber where it ran nothing (paid for, idle), blue where it ran tasks
         <rect key="b" x={x(s)} y={y + 2} width={Math.max(2, x(en) - x(s))} height={8} rx={2} fill="var(--text-3)" fillOpacity={0.18} stroke="var(--line)" strokeWidth={0.6}

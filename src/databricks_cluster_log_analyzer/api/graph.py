@@ -268,7 +268,7 @@ def graph(store: Q.Store, cid: str, ctx: str | None, run: str | None = None) -> 
         op = op_by_id.get(j.get("connect_operation_id")) if j.get("connect_operation_id") else None
         see(j.get("start_time"), j.get("end_time"))
         job_nodes.append({
-            "id": f"job:{ctx}:{jid}", "type": "job", "label": f"Job {jid}",
+            "id": f"job:{ctx}:{jid}", "type": "job", "label": f"Spark job {jid}",
             "sublabel": _short(j.get("description")) or _short(j.get("call_site")),
             "status": status, "start": j.get("start_time"), "end": j.get("end_time"),
             "duration_ms": j.get("duration_ms"), "parent": app_id, "metrics": m, "flags": _ordered_flags(flags),

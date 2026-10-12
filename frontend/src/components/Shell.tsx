@@ -281,7 +281,7 @@ function RailItem({ r, on, longest, choose, by }: { r: RunRow; on: boolean; long
 /** The run's name in the rail: its subject, unless that is a word the logs use for every run (a Spark Connect
  * session id), then its program, then its start time. */
 const VAGUE = /^(session_id|user_id|operation_id|job_id|run_id)$/i;
-const railName = (r: RunRow) => (r.subject && !VAGUE.test(r.subject) ? r.subject : runGroup(r) || fmtTime(r.start_time));
+const railName = (r: RunRow) => (runGroup(r) === 'Outside any run' ? r.label ?? 'Outside any run' : r.subject && !VAGUE.test(r.subject) ? r.subject : runGroup(r) || fmtTime(r.start_time));
 
 /** Runs on this cluster, by program, worst first. Programs whose runs all took about their usual time fold to one line. */
 function RunRail({ runs, run, choose }: { runs: RunRow[]; run: string | null; choose: (k: string) => void }) {

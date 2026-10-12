@@ -185,7 +185,7 @@ export function RunFlow({ cid, onPick }: { cid: string; onPick: (n: FlowNode) =>
             </ul>
             <div className={top[0] === 'running' ? '' : 'st-warn'}>
               {top[0] === 'gaps' && m.idle && m.idle.ms >= IDLE_MS && m.idle.ms >= total / 2
-                ? <><b>It sat idle for {fmtDuration(m.idle.ms)}</b> between {m.idle.from.kind === 'query' ? 'Query' : 'Job'} {m.idle.from.id} ({fmtTime(m.idle.from.end)}) and {m.idle.to.kind === 'query' ? 'Query' : 'Job'} {m.idle.to.id} ({fmtTime(m.idle.to.start)}): its own work took {fmtDuration(Math.max(0, total - m.idle.ms))}. <span className="muted">Nothing from this run reached Spark in that time: it waited on something outside Spark (a sleep, a poll, another job or table to be ready, a lock) or its driver code ran that long. Check the notebook between those two queries.</span></>
+                ? <><b>It sat idle for {fmtDuration(m.idle.ms)}</b> between {m.idle.from.kind === 'query' ? 'Query' : 'Spark job'} {m.idle.from.id} ({fmtTime(m.idle.from.end)}) and {m.idle.to.kind === 'query' ? 'Query' : 'Spark job'} {m.idle.to.id} ({fmtTime(m.idle.to.start)}): its own work took {fmtDuration(Math.max(0, total - m.idle.ms))}. <span className="muted">Nothing from this run reached Spark in that time: it waited on something outside Spark (a sleep, a poll, another job or table to be ready, a lock) or its driver code ran that long. Check the notebook between those two queries.</span></>
                 : top[0] === 'gaps' ? <><b>Most of it is outside Spark</b>: look at the driver code between queries, not at the queries.</>
                 : top[0] === 'waiting' ? <><b>Most of it is waiting for cores</b>: other runs held them; run fewer at once or add workers.</>
                 : <><b>Most of it is Spark work</b>: the slowest steps on the path are where to look.</>}
@@ -269,7 +269,7 @@ export function RunFlow({ cid, onPick }: { cid: string; onPick: (n: FlowNode) =>
                   return pv && pv.end !== null && s - pv.end > 0 ? (
                     <g>
                       <line x1={x(pv.end)} x2={x(s)} y1={y + ROW / 2} y2={y + ROW / 2} stroke="var(--wait)" strokeWidth={2} strokeDasharray="1 3" strokeLinecap="round">
-                        <title>{`${fmtDuration(s - pv.end)} after ${pv.kind === 'query' ? 'Query' : 'Job'} ${pv.id} with no Spark work of this run: code outside Spark on the driver, or waiting on something outside Spark`}</title>
+                        <title>{`${fmtDuration(s - pv.end)} after ${pv.kind === 'query' ? 'Query' : 'Spark job'} ${pv.id} with no Spark work of this run: code outside Spark on the driver, or waiting on something outside Spark`}</title>
                       </line>
                       {x(s) - x(pv.end) > 150 && (
                         <text x={(x(pv.end) + x(s)) / 2} y={y + ROW / 2 - 3} fontSize={10.5} textAnchor="middle" fill="var(--wait)">
