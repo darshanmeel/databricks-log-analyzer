@@ -117,7 +117,8 @@ CHAIN = [  # (key, label, signals, finding categories, removal category)
 ]
 
 
-_SLOW_KINDS = {"task skew", "disk spill", "GC pressure", "too many tiny tasks"}
+_SLOW_KINDS = {"task skew", "disk spill", "GC pressure", "too many tiny tasks", "time on the driver, no Spark work",
+               "queries that only counted rows"}
 
 
 def _incident_steps(inc_rows: list[dict], fby: Mapping) -> list[tuple]:

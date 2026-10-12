@@ -35,7 +35,8 @@ INCIDENT_COLS = ["cluster_id", "finding_id", "incident_id", "incident_rank", "in
 # kind -> (label, level). Lower levels come first in Spark's usual failure order and can cause higher ones.
 KINDS = {
     "skew": ("task skew", 0), "tiny": ("too many tiny tasks", 0), "large": ("tasks too big", 0),
-    "big_read": ("big table read", 0), "idle": ("executors idle", 0), "spill": ("disk spill", 1),
+    "big_read": ("big table read", 0), "idle": ("executors idle", 0), "driver": ("time on the driver, no Spark work", 0),
+    "count": ("queries that only counted rows", 0), "spill": ("disk spill", 1),
     "cache": ("DataFrame cache larger than memory", 1), "autoscale": ("autoscaling removed executors mid-work", 4),
     "gc": ("GC pressure", 2), "oom": ("out of memory", 3), "killed": ("executor killed by the OS", 3),
     "disk_full": ("disk full", 3), "lost": ("executor lost", 4), "fetch": ("shuffle fetch failure", 5),
@@ -44,7 +45,8 @@ KINDS = {
     "query_failed": ("query failed", 8), "reported": ("error reported to the notebook / job", 9),
 }
 CATEGORY_KIND = {
-    "task_skew": "skew", "tiny_tasks": "tiny", "large_tasks": "large", "big_read": "big_read", "executors_idle": "idle",
+    "task_skew": "skew", "tiny_tasks": "tiny", "tiny_task_stages": "tiny", "no_spark_work": "driver",
+    "count_only": "count", "large_tasks": "large", "big_read": "big_read", "executors_idle": "idle",
     "disk_spill": "spill", "log:disk_spill": "spill",
     "gc_pressure": "gc", "log:gc_pressure": "gc", "jvm_full_gc": "gc", "gc_stuck": "gc", "executor_oom": "oom", "oom_site": "oom",
     "log:executor_oom": "oom", "executor_killed": "killed", "log:disk_full": "disk_full", "executor_lost": "lost",
@@ -54,10 +56,10 @@ CATEGORY_KIND = {
 }
 # findings about the whole run or cluster (queueing, MERGE, counts, DDL loops, init scripts): no cause -> effect with
 # a failure, so they stay outside incidents (the cache and autoscaling findings above do take part)
-NOT_IN_INCIDENTS = {"capacity_bound", "autoscale_lag", "cores_full", "waited_for_cores", "merge_rewrite", "count_only",
+NOT_IN_INCIDENTS = {"capacity_bound", "autoscale_lag", "cores_full", "waited_for_cores", "merge_rewrite",
                     "ddl_loop", "disk_cache", "init_script", "dedup_noop"}
 AUTOSCALED_RE = re.compile(r"removed \d+ executors? \(([\w, ]+)\)")
-PERF_KINDS = {"skew", "tiny", "large", "big_read", "idle", "spill", "gc"}
+PERF_KINDS = {"skew", "tiny", "large", "big_read", "idle", "driver", "count", "spill", "gc"}
 ERROR_KINDS = {"task_error", "driver_error", "other_error", "reported", "source_db"}
 FAILURE_KINDS = {"oom", "killed", "disk_full", "lost", "fetch", "task_error", "source_db", "driver_error", "stage_failed",
                  "job_aborted", "query_failed", "reported"}
@@ -687,6 +689,10 @@ def build_incidents(cid: str, findings: list[dict], stages: list[dict], executor
         if top["kind"] in ("lost", "oom", "killed") and top["sc"].execs:
             ex = ", ".join(sorted({e for _, e in top["sc"].execs}))
             return f"Executor {ex}: {top['label']}"
+        # about a whole run or app, not the one query its first stage belongs to: the finding names it
+        if top["lead"]["f"].get("category") in ("no_spark_work", "tiny_task_stages", "count_only"):
+            ent = top["lead"]["f"].get("entity") or ""
+            return f"{ent[0].upper()}{ent[1:]}: {top['label']}" if ent else top["label"].capitalize()
         if all(p["kind"] in PERF_KINDS for p in inc["ps"]) and len(inc["sc"].queries) == 1:
             q = next(iter(inc["sc"].queries))
             return f"Query {q[1]} ran slow: {', '.join(kinds)}"
