@@ -296,7 +296,8 @@ def build(cluster_dir: str | os.PathLike, output_root: str | os.PathLike, *, clu
         "stage_retries": sum(1 for s in stages if s["stage_attempt"]),
     }
     totals = {"mem_spill": tsum("mem_spill"), "disk_spill": tsum("disk_spill"),
-              "gc_share": round(tsum("gc_ms") / run_sum, 3) if run_sum else None,  # unknown without tasks
+              # of task time, as the stages have it; unknown without tasks
+              "gc_share": round(min(1.0, tsum("gc_ms") / (tsum("task_ms") or run_sum)), 3) if run_sum else None,
               "input_bytes": tsum("input_bytes"), "shuffle_read": tsum("shuffle_read"),
               "shuffle_write": tsum("shuffle_write"), "output_bytes": tsum("output_bytes"), "task_ms": tsum("task_ms")}
     summary = build_summary({

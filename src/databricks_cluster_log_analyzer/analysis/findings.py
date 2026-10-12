@@ -48,6 +48,16 @@ FIX = {
 }
 
 
+def stage_gc_ms(s: dict) -> float:
+    """A stage's GC time over all its tasks (ms): its own sum, else the share times its task time."""
+    if s.get("_gc_ms") is not None:
+        return s["_gc_ms"]
+    base = s.get("_task_ms_sum")
+    if base is None and s.get("p50_task_ms") is not None:
+        base = s["p50_task_ms"] * (s.get("tasks") or 0)
+    return (s.get("gc_share") or 0) * (base or s.get("duration_ms") or 0)
+
+
 def _idle_findings(cid: str, profile: list[dict], rules: Rules) -> list[dict]:
     """Revision 12: per Spark context, executor core time paid for but not used by any task."""
     by_ctx: dict[str, list[dict]] = {}
@@ -354,7 +364,8 @@ def _event_findings(cid: str, stages, executors, queries, rules: Rules, retries=
     stage_rows(lambda s: s["disk_spill"] is not None and s["disk_spill"] >= rules.spill_bytes,
                lambda s: "high" if s["disk_spill"] >= rules.spill_high_bytes else "medium", "disk_spill",
                lambda s: f"{s['disk_spill'] / GB:,.1f} GiB spilled to disk" + _spill_ratio(s))
-    stage_rows(lambda s: s["gc_share"] is not None and s["gc_share"] >= rules.gc_share and (s["tasks"] or 0) > 0,
+    stage_rows(lambda s: s["gc_share"] is not None and s["gc_share"] >= rules.gc_share and (s["tasks"] or 0) > 0
+               and stage_gc_ms(s) >= rules.gc_min_ms,
                # a share alone is noise on a short stage: medium only when GC cost the stage a minute or more of its time
                lambda s: "medium" if s["gc_share"] * (s.get("duration_ms") or 0) >= 60_000 else "low", "gc_pressure",
                lambda s: f"{spark_double_str(round_half_up(s['gc_share'] * 100))}% of task time in GC")

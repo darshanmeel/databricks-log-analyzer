@@ -66,7 +66,8 @@ def query_profile(queries: list[dict], jobs: list[dict], stages: list[dict], tdf
     for q in queries:
         k = (q["spark_context_id"], q["sql_execution_id"])
         ss = stages_by_q.get(k, [])
-        gc, run = _sum(s.get("_gc_ms") for s in ss), _sum(s.get("_run_ms") for s in ss)
+        gc = _sum(s.get("_gc_ms") for s in ss)
+        run = _sum(s.get("_task_ms_sum") for s in ss) or _sum(s.get("_run_ms") for s in ss)
         start, end = q["start_time"], q["end_time"]
         lost = None
         if start is not None:
@@ -80,7 +81,7 @@ def query_profile(queries: list[dict], jobs: list[dict], stages: list[dict], tdf
             "max_stage_ms": _max(s["duration_ms"] for s in ss), "tasks": _sum(s["tasks"] for s in ss),
             "failed_tasks": _sum(s["failed_tasks"] for s in ss), "mem_spill": _sum(s["mem_spill"] for s in ss),
             "disk_spill": _sum(s["disk_spill"] for s in ss),
-            "gc_share": round(gc / run, 3) if gc is not None and run else None,
+            "gc_share": round(min(1.0, gc / run), 3) if gc is not None and run else None,
             "max_stage_skew": _max(s["skew"] for s in ss), "input_bytes": _sum(s["input_bytes"] for s in ss),
             "shuffle_read": _sum(s["shuffle_read"] for s in ss), "shuffle_write": _sum(s["shuffle_write"] for s in ss),
             "output_bytes": _sum(s["output_bytes"] for s in ss), "executors_used": execs_by_q.get(k, 0 if ss else None),
@@ -314,7 +315,7 @@ def executor_profile(executors: list[dict], apps: list[dict], tdf: pd.DataFrame,
             "idle_core_ms": (lifetime * cores - (busy or 0)) if lifetime is not None and cores else None,
             **{c: ev.get(c) for c in ("resource_profile_id", "heap_mb", "overhead_mb", "offheap_mb",
                                       "unified_memory", "storage_memory", "task_cpus")},
-            "gc_share": round(gc / run, 3) if gc is not None and run else None,
+            "gc_share": round(min(1.0, gc / (busy or run)), 3) if gc is not None and (busy or run) else None,
             "mem_spill": ta.get("mem_spill"), "disk_spill": ta.get("disk_spill"),
             "max_peak_mem": ta.get("max_peak_mem"),
             "log_lines": lines if has_logs else None, "log_errors_lines": err if has_logs else None,

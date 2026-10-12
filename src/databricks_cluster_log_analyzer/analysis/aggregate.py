@@ -256,9 +256,12 @@ def stage_metric_cols(m: dict) -> dict:
         if dmx:
             data_skew = round_half_up(dmx / max(dmed or 0, 1), 1)
             break
+    # GC as a share of task time (what the label says), never above 1: GC is measured over the whole JVM, so on short
+    # tasks it can exceed the task's own run time
     gc_share = None
-    if m.get("_gc_ms") is not None and m.get("_run_ms"):
-        gc_share = round_half_up(m["_gc_ms"] / m["_run_ms"], 3)
+    base = m.get("_task_ms_sum") or m.get("_run_ms")
+    if m.get("_gc_ms") is not None and base:
+        gc_share = round_half_up(min(1.0, m["_gc_ms"] / base), 3)
     return {
         "tasks": m.get("tasks"), "failed_tasks": m.get("failed_tasks"),
         "p50_task_ms": p50, "max_task_ms": mx, "min_task_ms": m.get("min_task_ms"), "skew": skew, "data_skew": data_skew,

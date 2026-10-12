@@ -17,8 +17,10 @@ skew_min_task_ms = 60000
 # disk_spill: >= spill_bytes spilled to disk in a stage (medium), high at >= spill_high_bytes
 spill_bytes = 1073741824          # 1 GB
 spill_high_bytes = 53687091200    # 50 GB
-# gc_pressure: share of task run time spent in GC
+# gc_pressure: share of task time spent in GC, and at least gc_min_seconds of GC in the stage (a share alone is
+# noise on a short stage: 40% of 50 ms is not a problem)
 gc_share = 0.2
+gc_min_seconds = 10
 # tiny_tasks: >= tiny_tasks_min tasks with a median below tiny_tasks_p50_ms
 tiny_tasks_min = 2000
 tiny_tasks_p50_ms = 200

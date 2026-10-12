@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 
 from .. import ANALYZER_REVISION, __version__
 from ..config import Rules
-from .findings import frame_text
+from .findings import frame_text, stage_gc_ms
 from .retries import CATEGORY_LABELS
 from ..util import fmt_bytes, fmt_clock, fmt_ms, fmt_words
 
@@ -244,7 +244,7 @@ def _performance(t, rules: Rules) -> dict | None:
                 sev = "medium"
         if s["gc_share"] is not None:
             bits.append(f"GC {s['gc_share'] * 100:.0f}%")
-            if s["gc_share"] >= rules.gc_share:
+            if s["gc_share"] >= rules.gc_share and stage_gc_ms(s) >= rules.gc_min_ms:
                 sev = "medium"
         parts.append(f"stage {s['stage_id']}.{s['stage_attempt']} ({(s['stage_name'] or '')[:60]}): {', '.join(bits)}")
     share = sum(s["duration_ms"] for s in top) / total if total else 0

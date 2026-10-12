@@ -291,7 +291,7 @@ def test_stage_tiny_tasks_and_gc(ds):
     assert s2.min_task_ms == t[(t.spark_context_id == A) & (t.stage_id == 2)].task_ms.min() <= s2.p50_task_ms
     assert s2.spark_job_id == 1 and s2.sql_execution_id == 1
     s3 = stage(ds, A, 3)
-    assert s3.gc_share == pytest.approx(0.3)
+    assert s3.gc_share == pytest.approx(0.294)  # GC over task time (2.94 s of 10 s), not run time
     assert s3.spark_job_id == 2 and s3.sql_execution_id == 2
 
 
@@ -317,8 +317,8 @@ def test_stage_gc_share_formula(ds):
     for _, r in s.iterrows():
         g = t[(t.spark_context_id == r.spark_context_id) & (t.stage_id == r.stage_id)
               & (t.stage_attempt == r.stage_attempt)]
-        if g.run_ms.sum() > 0:
-            assert r.gc_share == pytest.approx(round(g.gc_ms.sum() / g.run_ms.sum(), 3)), (r.stage_id, r.stage_attempt)
+        if g.task_ms.sum() > 0:  # GC over task time, never above 1
+            assert r.gc_share == pytest.approx(round(min(1.0, g.gc_ms.sum() / g.task_ms.sum()), 3)), (r.stage_id, r.stage_attempt)
         assert r.tasks == len(g)
         # skew over the successful attempts, as Spark's stage summary (all of them when none succeeded)
         ok = g[~g.failed.astype(bool)] if (~g.failed.astype(bool)).any() else g
@@ -437,8 +437,8 @@ def test_findings_details(ds):
     spill = one(a[a.category == "disk_spill"])
     assert spill.severity == "medium" and "3.0 GiB" in spill.evidence and spill.stage_id == 1
     gc = one(a[a.category == "gc_pressure"])
-    # 30% GC on a short stage cost it under a minute: low, not medium
-    assert gc.severity == "low" and "30" in gc.evidence and gc.stage_id == 3
+    # 29% GC (of task time) on a short stage cost it under a minute: low, not medium
+    assert gc.severity == "low" and "29" in gc.evidence and gc.stage_id == 3
     tiny = one(a[a.category == "tiny_tasks"])
     assert tiny.stage_id == 2 and "2000" in tiny.evidence
     retries = one(a[a.category == "task_retries"])

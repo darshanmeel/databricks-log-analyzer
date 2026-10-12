@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..analysis.findings import stage_gc_ms
 from . import queries as Q
 
 GRAPH_FLAGS = ("failed", "retried", "spill", "skew", "gc", "shuffle_heavy")
@@ -101,7 +102,8 @@ def _stage_flags(s: dict, attempts: int, retries: int, rules) -> list[str]:
     skew, mx = s.get("skew"), s.get("max_task_ms")
     if skew is not None and _num(skew) >= rules.skew_ratio and _num(mx) >= rules.skew_min_task_ms:
         flags.append("skew")
-    if s.get("gc_share") is not None and _num(s.get("gc_share")) >= rules.gc_share:
+    if (s.get("gc_share") is not None and _num(s.get("gc_share")) >= rules.gc_share
+            and stage_gc_ms({k: (None if v != v else v) for k, v in s.items()}) >= rules.gc_min_ms):
         flags.append("gc")
     if _num(s.get("shuffle_read")) + _num(s.get("shuffle_write")) >= rules.shuffle_heavy_bytes:
         flags.append("shuffle_heavy")

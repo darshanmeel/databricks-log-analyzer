@@ -145,7 +145,7 @@ def test_evidence_formats_match_notebook(ds):
     spill = a[a.category == "disk_spill"].iloc[0]
     assert spill.evidence.startswith("3.0 GiB spilled to disk")  # then how much went to memory first
     gc = a[a.category == "gc_pressure"].iloc[0]
-    assert re.fullmatch(r"30(\.0)?% of task time in GC", gc.evidence), gc.evidence
+    assert re.fullmatch(r"29(\.0)?% of task time in GC", gc.evidence), gc.evidence  # 2.94 s of GC in 10 s tasks
     tiny = a[a.category == "tiny_tasks"].iloc[0]
     s2 = s[(s.spark_context_id == mf.CTX_A) & (s.stage_id == 2)].iloc[0]
     assert tiny.evidence == f"2000 tasks, median {int(s2.p50_task_ms)} ms"

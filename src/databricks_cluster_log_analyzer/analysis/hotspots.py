@@ -151,7 +151,8 @@ def _skew_tasks(tdf, stage_info, query_info, rules: Rules, cid: str, stuck=froze
         for _, r in hot.iterrows():
             b = (0 if is_null(r["shuffle_read"]) else r["shuffle_read"]) + (0 if is_null(r["input_bytes"]) else r["input_bytes"])
             bratio = b / med_bytes if med_bytes else (float("inf") if b > 0 else None)
-            gc_share = (r["gc_ms"] / r["run_ms"]) if not is_null(r["gc_ms"]) and not is_null(r["run_ms"]) and r["run_ms"] else 0
+            base = r["task_ms"] if not is_null(r.get("task_ms")) and r.get("task_ms") else r["run_ms"]
+            gc_share = min(1.0, r["gc_ms"] / base) if not is_null(r["gc_ms"]) and not is_null(base) and base else 0
             slow = slowness.get((ctx, r["executor_id"]))
             lost = bool(r.get("failed")) and r.get("end_reason") in ("ExecutorLostFailure", "TaskResultLost") and not b
             if (ctx, r["executor_id"]) in stuck:
@@ -174,7 +175,7 @@ def _skew_tasks(tdf, stage_info, query_info, rules: Rules, cid: str, stuck=froze
                           else ", so this is data skew (a hot key or partition)"))
             elif gc_share >= rules.gc_share:
                 cause = "gc"
-                why = f"it spent {gc_share:.0%} of its run time in garbage collection, so memory pressure slowed it"
+                why = f"it spent {gc_share:.0%} of its time in garbage collection, so memory pressure slowed it"
             elif slow is not None and slow >= rules.hotspot_slow_executor_ratio:
                 cause = "slow_executor"
                 why = (f"its data size was normal but executor {r['executor_id']} is {slow:.1f}× slower than other "
