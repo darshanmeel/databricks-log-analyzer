@@ -386,7 +386,7 @@ function QuerySteps({ t, id, onJob, onQuery }: { t: QueryTime; id: number; onJob
                 <tr key={`${s.stage_id}.${s.stage_attempt}`}>
                   <td>
                     {own ? (
-                      s.spark_job_id !== null ? <a href="#" onClick={(e) => { e.preventDefault(); onJob(s.spark_job_id!); }}>Job {s.spark_job_id}</a> : 'No job'
+                      s.spark_job_id !== null ? <a href="#" onClick={(e) => { e.preventDefault(); onJob(s.spark_job_id!); }}>Spark job {s.spark_job_id}</a> : 'No Spark job'
                     ) : (
                       <a href="#" onClick={(e) => { e.preventDefault(); if (s.sql_execution_id !== null) onQuery(s.sql_execution_id); }}>Query {s.sql_execution_id} inside it</a>
                     )}
@@ -446,7 +446,7 @@ export function QuerySummary({ cid, ctx, id, title, onJob, onQuery, tasks = true
   const stages = (st.data.stages ?? []) as Stage[];
   const jobs = (st.data.jobs ?? []) as Job[];
   const rows = jobs.map((j) => ({
-    id: String(j.spark_job_id), label: `Job ${j.spark_job_id}`, sub: j.description ?? '', status: (j as unknown as { status?: string }).status ?? j.result,
+    id: String(j.spark_job_id), label: `Spark job ${j.spark_job_id}`, sub: j.description ?? '', status: (j as unknown as { status?: string }).status ?? j.result,
     dur: j.duration_ms, stages: stages.filter((s) => s.spark_job_id === j.spark_job_id), tasks: sum(stages.filter((s) => s.spark_job_id === j.spark_job_id).map((s) => s.tasks)),
   })).sort((a, b) => (b.dur ?? 0) - (a.dur ?? 0));
   return (
@@ -489,7 +489,7 @@ export function JobSummary({ cid, ctx, jobId, onStage }: { cid: string; ctx: str
   })).sort((a, b) => (b.dur ?? 0) - (a.dur ?? 0));
   return (
     <section className="panel">
-      <div className="panel-head"><h2>Job {jobId}</h2><span className="muted small">{job?.description ? truncate(job.description, 80) : `${fmtNum(stages.length)} stages`}</span></div>
+      <div className="panel-head"><h2>Spark job {jobId}</h2><span className="muted small">{job?.description ? truncate(job.description, 80) : `${fmtNum(stages.length)} stages`}</span></div>
       <div className="panel-body stack">
         <WhyLine dur={job?.duration_ms ?? null} stages={stages} why={why} />
         <VCards cards={levelCards(stages, 'job', why)} compact />

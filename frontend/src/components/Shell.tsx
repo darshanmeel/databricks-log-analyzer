@@ -382,7 +382,7 @@ function RunTitle({ r }: { r: RunRow }) {
       </div>
       <div className="run-meta mono">
         {[
-          r.databricks_job_id ? `job ${r.databricks_job_id}` : null,
+          r.databricks_job_id ? `Databricks job ${r.databricks_job_id}` : null,
           r.task_run_id || r.databricks_run_id ? `task run ${r.task_run_id ?? r.databricks_run_id}` : r.label,
           `${fmtTime(r.start_time)} → ${fmtTime(r.end_time)}`,
           fmtDuration(r.duration_ms) + (x !== null && r.typical_duration_ms ? ` · ${usualWord(r)} ${fmtDuration(r.typical_duration_ms)}` : ''),

@@ -281,7 +281,7 @@ export function deriveGraph(h: Hierarchy, ops: ConnectOperationRow[], ctx: strin
     nodes.push({
       id: jid,
       type: 'job',
-      label: `Job ${j.spark_job_id}`,
+      label: `Spark job ${j.spark_job_id}`,
       sublabel: j.description ?? j.call_site,
       status: failed ? 'failed' : j.result ? 'succeeded' : 'incomplete',
       start: j.start_time,

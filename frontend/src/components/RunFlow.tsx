@@ -237,7 +237,7 @@ export function RunFlow({ cid, onPick }: { cid: string; onPick: (n: FlowNode) =>
                 onMouseMove={(ev) => {
                   const box = (ev.currentTarget.ownerSVGElement as SVGSVGElement).getBoundingClientRect();
                   setTip({ x: ev.clientX - box.left, y: ev.clientY - box.top, text:
-                    `${n.kind === 'query' ? `Query ${n.id}` : `Job ${n.id} (no SQL)`}: ${truncate(n.what ?? '', 160)}\n${fmtTime(n.start)} → ${fmtTime(n.end)} UTC · ${n.status ?? ''}` +
+                    `${n.kind === 'query' ? `Query ${n.id}` : `Spark job ${n.id} (no SQL)`}: ${truncate(n.what ?? '', 160)}\n${fmtTime(n.start)} → ${fmtTime(n.end)} UTC · ${n.status ?? ''}` +
                     (waitMs >= 1000 ? `\nwaited ${fmtDuration(waitMs)} for a free core (cores busy with other work), ran ${fmtDuration(Math.max(0, (n.end ?? 0) - (n.start ?? 0) - waitMs))}` : '') +
                     (n.jobs.length && n.kind === 'query' ? ` · Spark jobs ${n.jobs.slice(0, 6).join(', ')}${n.jobs.length > 6 ? '…' : ''}` : '') +
                     (data ? `\nread ${fmtBytes(data)}${n.output_bytes ? `, wrote ${fmtBytes(n.output_bytes)}` : ''}` : '') +
@@ -260,7 +260,7 @@ export function RunFlow({ cid, onPick }: { cid: string; onPick: (n: FlowNode) =>
                   </text>
                 )}
                 <text x={ind + (nk ? 13 : 4)} y={y + 13} fontSize={11.5} fill="var(--text)">
-                  <tspan fontWeight={600}>{n.kind === 'query' ? `Query ${n.id}` : `Job ${n.id}`}</tspan>
+                  <tspan fontWeight={600}>{n.kind === 'query' ? `Query ${n.id}` : `Spark job ${n.id}`}</tspan>
                   <tspan opacity={0.65}> {truncate((n.what ?? '').replace(/\s+/g, ' '), Math.max(8, (n.kind === 'query' ? 26 : 28) - Math.round((ind + (nk ? 9 : 0)) / 6)))}</tspan>
                   {nk && fold.has(n.key) ? <tspan opacity={0.65}> (+{nk})</tspan> : null}
                 </text>

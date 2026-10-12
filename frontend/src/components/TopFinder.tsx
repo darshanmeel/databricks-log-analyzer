@@ -189,7 +189,7 @@ function Row({ r, kind, cid, showRun, runName, b, max }: { r: TopRow; kind: TopK
   const stageHref = inRun(to.stages(cid, ctx, r.stage_id ?? null, r.stage_attempt ?? 0), r.run_key);
   const href = kind === 'jobs' ? inRun(to.hierarchy(cid, { ctx, job: r.spark_job_id ?? null }), r.run_key)
     : kind === 'queries' ? inRun(to.query(cid, ctx, r.sql_execution_id ?? 0), r.run_key) : stageHref;
-  const name = kind === 'jobs' ? `Job ${r.spark_job_id}` : kind === 'queries' ? `Query ${r.sql_execution_id}`
+  const name = kind === 'jobs' ? `Spark job ${r.spark_job_id}` : kind === 'queries' ? `Query ${r.sql_execution_id}`
     : kind === 'stages' ? `Stage ${r.stage_id}${r.stage_attempt ? `.${r.stage_attempt}` : ''}` : `Task ${r.task_id}`;
   const bad = r.failed || r.status === 'failed' || r.result === 'failed' || (r.result ?? '').toLowerCase().includes('fail');
   const skew = r.data_skew ?? r.skew ?? r.max_stage_skew ?? null;

@@ -141,7 +141,7 @@ function Steps({ cid, d: data }: { cid: string; d: RunSteps }) {
                       <span className="muted" aria-hidden>{isOpen ? '▾ ' : '▸ '}</span>
                       {g.kind === 'query' && g.id !== null ? (
                         <Link to={to.query(cid, g.ctx, g.id)} onClick={(e) => e.stopPropagation()}><b>Query {g.id}</b></Link>
-                      ) : <b>Job {g.id ?? '?'}</b>}
+                      ) : <b>Spark job {g.id ?? '?'}</b>}
                       {g.status && g.status !== 'succeeded' && g.status !== 'completed' ? <> <StatusBadge status={g.status} /></> : null}
                       {what && <span> · {what}</span>}
                       <div className="muted small">{truncate((g.description ?? '').replace(/\s+/g, ' '), 110)}</div>

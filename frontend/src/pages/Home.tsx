@@ -80,7 +80,7 @@ function ClustersTable({ clusters, reload }: { clusters: ClusterListItem[]; relo
             <th>Status</th>
             <th>Started (UTC)</th>
             <th className="num">Duration</th>
-            <th className="num">Jobs failed</th>
+            <th className="num" title="Spark jobs (not Databricks jobs) that failed, of all">Spark jobs failed</th>
             <th className="num" title="Task attempts that failed. Spark runs a failed task again, so these do not fail the cluster unless a job or query failed too.">Task attempts retried</th>
             <th>Findings</th>
             <th>Analyzed</th>

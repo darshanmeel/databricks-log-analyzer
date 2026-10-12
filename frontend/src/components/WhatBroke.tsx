@@ -23,7 +23,8 @@ export function useTopFailure(cid: string, cluster: boolean, run?: string): { da
     return joinIncidents(f?.rows ?? [], inc?.rows ?? []);
   }, [cid, cluster, run]);
   const data = useMemo(() => {
-    const fails = groupIncidents(st.data ?? []).filter(isFailure);
+    // a failure that hit no run (a library's internal query, demoted to low) is not what went wrong
+    const fails = groupIncidents(st.data ?? []).filter((i) => isFailure(i) && i.head.incident_severity !== 'low');
     return fails.length ? { inc: fails[0], root: rootOf(fails[0]), count: fails.length } : null;
   }, [st.data]);
   return { data, loading: st.loading };

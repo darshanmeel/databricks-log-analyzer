@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { api, type FindingRow, type IncidentRow, type Severity } from '../api';
 import { Link } from 'react-router-dom';
 import { useCluster, useRunScopeCtx } from '../components/Shell';
@@ -103,8 +103,9 @@ function Incidents({ cid, rows, focus }: { cid: string; rows: Joined[]; focus: s
         stages, executors and timing; each one says why it was made.
       </p>
       <div className="incidents">
-        {incs.map((inc) => (
-          <IncidentCard key={inc.id} cid={cid} inc={inc} focus={focus} />
+        {/* one line each: the first one (and the one a link points at) open, the rest on click */}
+        {incs.map((inc, i) => (
+          <IncidentCard key={inc.id} cid={cid} inc={inc} focus={focus} first={i === 0} />
         ))}
       </div>
       <LooseFindings cid={cid} rows={rows.filter((r) => !r.inc)} focus={focus} />
@@ -216,16 +217,25 @@ function IncidentStrip({ incs }: { incs: Incident[] }) {
   );
 }
 
-function IncidentCard({ cid, inc, focus }: { cid: string; inc: Incident; focus: string | null }) {
+function IncidentCard({ cid, inc, focus, first }: { cid: string; inc: Incident; focus: string | null; first?: boolean }) {
   const h = inc.head;
   const root = inc.problems.find((p) => p.lead.inc!.role === 'root') ?? inc.problems[0];
   const contributing = inc.problems.filter((p) => p !== root && (p.lead.inc!.role === 'contributing' || p.lead.inc!.role === 'related'));
   const chain = inc.problems.filter((p) => p !== root && !contributing.includes(p));
   const span = h.incident_start !== null && h.incident_end !== null ? h.incident_end - h.incident_start : null;
   const hasFocus = focus !== null && inc.byFinding.has(focus);
+  const [open, setOpen] = useState<boolean>(!!first || hasFocus || (typeof location !== 'undefined' && location.hash === `#incident-${inc.id}`));
+  // a click on the strip above (a #incident-… link) opens its card
+  useEffect(() => {
+    const on = () => { if (location.hash === `#incident-${inc.id}`) setOpen(true); };
+    window.addEventListener('hashchange', on);
+    return () => window.removeEventListener('hashchange', on);
+  }, [inc.id]);
   return (
-    <section id={`incident-${inc.id}`} className={`incident sev-${h.incident_severity}`}>
-      <header className="incident-head">
+    <section id={`incident-${inc.id}`} className={`incident sev-${h.incident_severity} ${open ? '' : 'folded'}`}>
+      <header className="incident-head" role="button" tabIndex={0} aria-expanded={open} style={{ cursor: 'pointer' }}
+        onClick={() => setOpen(!open)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(!open); } }}>
+        <span className="muted" aria-hidden>{open ? '▾' : '▸'}</span>
         <SeverityBadge sev={h.incident_severity} />
         <span className="fid">{inc.id}</span>
         <h2>{h.incident_title}</h2>
@@ -237,7 +247,7 @@ function IncidentCard({ cid, inc, focus }: { cid: string; inc: Incident; focus: 
         </span>
       </header>
       {h.incident_impact && <p className="incident-impact">Cost: {h.incident_impact}</p>}
-      <div className="incident-body">
+      {open && <div className="incident-body">
         <div className="root-box">
           <div className="lbl">{inc.problems.length > 1 && root.lead.inc!.role === 'root' && chain.length ? 'Most likely root cause' : 'What was found'}</div>
           <ProblemView cid={cid} p={root} focus={focus} big />
@@ -278,7 +288,7 @@ function IncidentCard({ cid, inc, focus }: { cid: string; inc: Incident; focus: 
             ))}
           </div>
         )}
-      </div>
+      </div>}
       {hasFocus && <div className="muted small">Finding {focus} is part of this incident.</div>}
     </section>
   );

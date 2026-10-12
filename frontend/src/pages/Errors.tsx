@@ -394,7 +394,8 @@ function ProblemCard({ cid, p, d, focus, compact }: { cid: string; p: Prob; d: J
             </tbody>
           </table>
         </div>
-        <details className="err-stack" open={!compact || shown === focused}>
+        {/* stacks folded: open the one a link points at */}
+        <details className="err-stack" open={shown === focused}>
           <summary className="lbl">
             Stack of {short(shown.exception_class)}
             {shown.where.length ? ` on ${whereLabel(shown.where)}` : ''}

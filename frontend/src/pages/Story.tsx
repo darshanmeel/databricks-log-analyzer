@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { FlowPanel } from '../components/RunFlow';
 import { Link } from 'react-router-dom';
 import { api, optional, STORY_KINDS, type AppRow, type Severity, type StoryRow } from '../api';
 import { LogLines } from '../components/LogLines';
@@ -174,7 +173,7 @@ export default function Story() {
         </div>
       </div>
 
-      <FlowPanel cid={cid} open />
+      {/* the timeline of the run's queries is on its Overview */}
       <div className="panel">
         {st.error ? (
           <ErrorState error={st.error} onRetry={st.reload} />

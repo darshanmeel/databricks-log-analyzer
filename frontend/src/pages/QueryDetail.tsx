@@ -218,7 +218,7 @@ function QueryView({ cid, ctx, id, d }: { cid: string; ctx: string; id: string; 
               <div className="stack" style={{ gap: 6 }}>
                 {d.jobs.map((j) => (
                   <div key={j.spark_job_id} className="row" style={{ gap: 10, alignItems: 'baseline' }}>
-                    <Link to={to.hierarchy(cid, { ctx: j.spark_context_id, job: j.spark_job_id })}>Job {j.spark_job_id}</Link>
+                    <Link to={to.hierarchy(cid, { ctx: j.spark_context_id, job: j.spark_job_id })}>Spark job {j.spark_job_id}</Link>
                     <StatusBadge status={(j.result ?? '').toLowerCase().includes('fail') ? 'failed' : j.result ? 'succeeded' : 'incomplete'} />
                     <span className="muted small">{fmtDuration(j.duration_ms)}</span>
                     <span className="small ink2 grow wrap-any">{truncate(j.error ?? j.description, 160)}</span>

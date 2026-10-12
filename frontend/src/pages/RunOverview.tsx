@@ -4,7 +4,6 @@
 // with no run picked.
 import { Fragment, useMemo, useState, type ReactNode } from 'react';
 import { TablesRead } from '../components/TableStats';
-import { ChangeList } from '../components/ClusterTop';
 import { Link, useNavigate } from 'react-router-dom';
 import { api, waitOf, type EngineCount, type FindingRow, type RunEnd, type RunRow, type RunStepGroup, type RunSteps } from '../api';
 import { useAsync } from '../hooks';
@@ -12,13 +11,14 @@ import { fmtBytes, fmtDuration, fmtNum, fmtPct, fmtRows, fmtTime, truncate } fro
 import { to } from '../links';
 import { useCluster, useRunScopeCtx, isSlow } from '../components/Shell';
 import { Fold, Tile } from '../components/ui';
-import { FindingPoints, depthOf, plainFirst } from '../components/FindingPoints';
+import { plainFirst } from '../components/FindingPoints';
 import { RunStepsPanel, whatItDid } from '../components/RunSteps';
-import { TopFinder, WaitRanBar } from '../components/TopFinder';
+import { TopFinder, WaitRanBar, inRun } from '../components/TopFinder';
 import { RunTables } from '../components/RunTables';
 import { ErrClassChip } from '../components/ClusterTop';
 import { CauseBar, CauseHeadline, CauseLegend, causeOf, causeParts, type CauseKey } from '../components/CauseBar';
 import { WhatBroke, useTopFailure, type TopFailure } from '../components/WhatBroke';
+import { FlowPanel } from '../components/RunFlow';
 
 const TOP = 5; // queries listed in "where the time went"
 const GB = 1024 ** 3;
@@ -48,7 +48,7 @@ const brief = (w: string) => {
     .map((b) => b.replace(/^MERGE:\s*rewriting [\d,]+ files\b.*/i, 'MERGE: write the changes'))
     .map((b) => b.replace(/^MERGE: (\w)/, (_x, c: string) => `MERGE: ${c.toLowerCase()}`)).join(' · ');
 };
-const gname = (g: RunStepGroup) => (g.kind === 'query' ? `Query ${g.id}` : `Job ${g.id ?? '?'}`);
+const gname = (g: RunStepGroup) => (g.kind === 'query' ? `Query ${g.id}` : `Spark job ${g.id ?? '?'}`);
 const took = (g: RunStepGroup) => g.end - g.start;
 const short = (ms: number) => fmtDuration(ms).replace(/ (\d+)s$/, ' $1s');
 export function RunOverview({ run }: { run: RunRow }) {
@@ -80,9 +80,7 @@ export function RunOverview({ run }: { run: RunRow }) {
   const moreTiles = (
     <div className="kpis">
       <Tile label="Tasks" value={fmtNum(run.tasks)} foot={run.failed_tasks ? `${fmtNum(run.failed_tasks)} attempts failed` : 'none failed'} tone={run.failed_tasks ? 'warn' : undefined} />
-      <Tile label="Spill" value={fmtBytes(spill)} foot={`disk ${fmtBytes(run.disk_spill ?? 0)} · memory ${fmtBytes(run.mem_spill ?? 0)}`} />
       <Tile label="Shuffle" value={fmtBytes(Math.max(run.shuffle_read ?? 0, run.shuffle_write ?? 0))} foot={`read ${fmtBytes(run.shuffle_read ?? 0)} · write ${fmtBytes(run.shuffle_write ?? 0)}`} />
-      <Tile label="Ran next to it" value={fmtNum(others)} foot="runs on the same executors" />
       <Tile label="Executors gone" value={e ? fmtNum(gone.length) : '…'} foot={goneTitle ?? 'while it ran'} />
     </div>
   );
@@ -102,6 +100,9 @@ export function RunOverview({ run }: { run: RunRow }) {
             {e ? <HowEnded cid={cid} e={e} d={d} /> : <p className="muted small">{end.error ? `Could not load: ${end.error.message}` : 'Loading…'}</p>}
           </section>
         </div>
+
+        {/* where on its clock the time went: every query on one timeline with the critical path */}
+        {d && d.groups.length > 1 && <FlowPanel cid={cid} open />}
 
         {/* only the numbers that say something: an empty or normal one is under Details */}
         <div className="kpis">
@@ -129,26 +130,28 @@ export function RunOverview({ run }: { run: RunRow }) {
 
         <TablesRead cid={cid} scope={{ run: run.run_key }} />
 
-        {/* one fix list on the first screen (Fix, above); the cluster's changes this run is part of, with the evidence
-            behind each, are under Details */}
-        <Fold name="run" title="Details" ids={['ro-change', 'ro-find', 'ro-end', 'ro-problems']}
-          hint={`more numbers, what to change, find, tables, the end in order${fs.loading ? '' : `, all ${fmtNum(findings.length)} problems`}`}>
+        {/* how it ended, in order: short, and "How it ended" above links to it, so it is not folded */}
+        {e && (
+          <div className="ro-two">
+            <EndInOrder cid={cid} e={e} d={d} />
+            <div className="stack" style={{ gap: 12 }}>
+              {e.engine && <Engine e={e.engine} />}
+              <EndErrors cid={cid} e={e} />
+            </div>
+          </div>
+        )}
+
+        {/* one fix list on this page (Fix, above); every problem of the run is on its Findings tab */}
+        {!fs.loading && findings.length > 0 && (
+          <p className="small" style={{ margin: 0 }}>
+            <Link to={inRun(to.findings(cid), run.run_key)}>All {fmtNum(findings.length)} problems found in this run, with their fixes →</Link>
+          </p>
+        )}
+
+        <Fold name="run" title="Details" ids={['ro-find']} hint="more numbers, find in this run, what it read and wrote">
           {moreTiles}
-          <ChangeList cid={cid} rows={findings} loading={fs.loading} runs={scope.runs} run={run.run_key} />
           <div id="ro-find"><TopFinder cid={cid} run={run.run_key} /></div>
           <RunTables cid={cid} run={run.run_key} />
-
-          {e && (
-            <div className="ro-two">
-              <EndInOrder cid={cid} e={e} d={d} />
-              <div className="stack" style={{ gap: 12 }}>
-                {e.engine && <Engine e={e.engine} />}
-                <EndErrors cid={cid} e={e} />
-              </div>
-            </div>
-          )}
-
-          <Problems cid={cid} rows={findings} loading={fs.loading} d={d} />
         </Fold>
       </div>
     </div>
@@ -163,6 +166,9 @@ interface Analysis {
   otherShare: number | null;
   /** Time with its tasks queued on a full cluster, also behind its own (it ran in waves). */
   queuedMs: number;
+  /** Share of its clock with none of its stages running: the driver's time. */
+  outsideShare: number;
+  noSparkFinding?: FindingRow;
 }
 
 /** "…, 19% of it behind other runs)" / "…, behind its own tasks)" in the capacity finding. */
@@ -186,6 +192,8 @@ function analyse(d: RunSteps, fs: FindingRow[]): Analysis {
     spillFindings: fs.filter((f) => f.category === 'disk_spill'),
     otherShare: otherShareOf(fs.find((f) => f.category === 'capacity_bound')),
     queuedMs: d.queued_full_ms ?? 0,
+    outsideShare: Math.min(1, (d.outside_ms ?? 0) / Math.max(1, total)),
+    noSparkFinding: fs.find((f) => f.category === 'no_spark_work'),
   };
 }
 
@@ -199,6 +207,7 @@ function WhySlow({ cid, run, a, execs }: { cid: string; run: RunRow; a: Analysis
       <ul className="ro-points">
         {waited && <li><b>{fmtDuration(d)} waiting for a free core</b> <span className="muted">· none of its tasks could start, {fmtPct(a.waitShare, 0)} of {fmtDuration(a.total)}</span>
           {others ? <span className="muted"> · {fmtNum(others)} other runs on the same {execs || ''} executors</span> : null}</li>}
+        {a.outsideShare >= 0.5 && <li><b>{fmtDuration(a.total * a.outsideShare)} with no Spark work</b> <span className="muted">· {fmtPct(a.outsideShare, 0)} of {fmtDuration(a.total)}: statements that ran no tasks, code between them, or waiting outside Spark</span></li>}
         {/* one line: the cause card below has the detail */}
         {t && <li><b>{gname(t)}{a.merge ? ' (MERGE)' : ''}</b> {a.topShare >= 0.4 ? 'did most of the work' : 'ran longest'}
           <span className="muted"> · {fmtDuration(t.running_ms)} of {fmtDuration(a.running)} running{a.merge ? `, read ${a.merge.read} of the target` : (t.input_bytes || t.shuffle_read) ? `, read ${fmtBytes((t.input_bytes ?? 0) + (t.shuffle_read ?? 0))}` : ''}{a.merge?.spilled || (t.disk_spill ?? 0) > 0 ? `, spilled ${a.merge?.spilled ?? fmtBytes(t.disk_spill)}` : ''}</span></li>}
@@ -361,6 +370,11 @@ function Fixes({ run, a, spill, findings, failure }: { run: RunRow; a: Analysis;
   const t = a.top;
   const fixes: { who: string; text: ReactNode; plain: string; wins?: string }[] = [];
   const done = new Set<string>();
+  // the driver's time first when it is most of the run: its finding's fix
+  if (a.outsideShare >= 0.5 && a.noSparkFinding?.fix) {
+    fixes.push({ who: 'Driver', plain: a.noSparkFinding.fix, text: firstSentences(a.noSparkFinding.fix) });
+    done.add('no_spark_work');
+  }
   // what broke comes first: the fix of the failure's most likely root cause
   const rf = failure?.root.lead;
   if (rf?.fix) {
@@ -427,12 +441,23 @@ function Causes({ cid, a, run, execs, burst, toCluster }: { cid: string; a: Anal
     : ([['read', (t.input_bytes ?? 0) + (t.shuffle_read ?? 0), 'ro-b-read'], ['spilled', t.disk_spill ?? 0, 'ro-b-spill'], ['shuffle write', t.shuffle_write ?? 0, 'ro-b-write'], ['written', t.output_bytes ?? 0, 'ro-b-write']] as [string, number, string][])
   ).filter((b) => b[1] > 0) : [];
   const bmax = Math.max(1, ...bars.map((b) => b[1]));
-  if (a.waitShare < 0.2 && !t) return null;
+  if (a.waitShare < 0.2 && !t && a.outsideShare < 0.5) return null;
+  // most of the clock on the driver: that is cause 1, before any query (whose few seconds are not the problem)
+  const driver = a.outsideShare >= 0.5;
+  const n0 = driver ? 1 : 0;
   return (
     <div className="ro-causes" id="ro-causes">
+      {driver && (
+        <section className="ro-card">
+          <div className="ro-card-head"><span className="ro-tag">Cause 1 · driver</span><span className="muted small">{fmtPct(a.outsideShare, 0)} of the run</span></div>
+          <h3>Most of its time no Spark stage ran</h3>
+          <div className="ro-big">{fmtDuration(a.total * a.outsideShare)} <span>with no Spark work</span></div>
+          <p className="small muted">{a.noSparkFinding?.evidence ? truncate(a.noSparkFinding.evidence.replace(/^[^:]*:\s*/, ''), 260) : 'Statements that ran no tasks (DDL, Delta commits), the code between them, or waiting outside Spark. More cores will not shorten it.'}</p>
+        </section>
+      )}
       {a.waitShare >= 0.2 && (
         <section className="ro-card">
-          <div className="ro-card-head"><span className="ro-tag">Cause 1 · {a.otherShare !== null && a.otherShare < 0.5 ? 'its own work' : 'cluster'}</span><span className="muted small">{fmtPct(a.waitShare, 0)} of the run</span></div>
+          <div className="ro-card-head"><span className="ro-tag">Cause {1 + n0} · {a.otherShare !== null && a.otherShare < 0.5 ? 'its own work' : 'cluster'}</span><span className="muted small">{fmtPct(a.waitShare, 0)} of the run</span></div>
           <h3>{a.otherShare !== null && a.otherShare < 0.5 ? 'Its own tasks filled the cores' : 'Cores held by other runs'}</h3>
           {a.otherShare !== null && a.otherShare < 0.5
             ? <div className="ro-big">{fmtDuration(Math.max(a.queuedMs, waitMs))} <span>with tasks queued in waves, every core busy</span></div>
@@ -457,7 +482,7 @@ function Causes({ cid, a, run, execs, burst, toCluster }: { cid: string; a: Anal
       )}
       {t && (
         <section className="ro-card">
-          <div className="ro-card-head"><span className="ro-tag">Cause {a.waitShare >= 0.2 ? 2 : 1} · query</span><span className="muted small mono">{gname(t)} · {fmtTime(t.start).slice(0, 5)} – {fmtTime(t.end).slice(0, 5)}</span></div>
+          <div className="ro-card-head"><span className="ro-tag">Cause {(a.waitShare >= 0.2 ? 2 : 1) + n0} · query</span><span className="muted small mono">{gname(t)} · {fmtTime(t.start).slice(0, 5)} – {fmtTime(t.end).slice(0, 5)}</span></div>
           <h3>{a.merge ? 'The MERGE reads the whole target' : a.topShare >= 0.4 ? `${gname(t)} did most of the work` : `The longest: ${gname(t)}`}</h3>
           {a.merge
             ? <div className="ro-big">{a.merge.read} <span>read of the target · {a.merge.wrote} written</span></div>
@@ -594,38 +619,6 @@ function EndErrors({ cid, e }: { cid: string; e: RunEnd }) {
             })}
           </tbody>
         </table>
-      </div>
-    </section>
-  );
-}
-
-function Problems({ cid, rows, loading, d }: { cid: string; rows: FindingRow[]; loading: boolean; d: RunSteps | null }) {
-  const [all, setAll] = useState(false);
-  const [deep, setDeep] = useState(false);
-  // the plain problems first; GC, memory and log details explain them and are opened on demand
-  const plain = rows.filter((f) => depthOf(f.category) === 0);
-  const detail = rows.filter((f) => depthOf(f.category) > 0);
-  const shown = [...(all ? plain : plain.slice(0, 6)), ...(deep ? detail : [])];
-  // the query a finding is about (itself, or the one its stage ran for): its tables
-  const groupOf = (f: FindingRow) => d?.groups.find((g) => g.kind === 'query' && g.ctx === f.spark_context_id && (
-    (f.sql_execution_id !== null && g.id === f.sql_execution_id) || (f.stage_id !== null && g.stages.some((x) => x.stage_id === f.stage_id))));
-  return (
-    <section className="panel" id="ro-problems">
-      <div className="panel-head">
-        <div><h2>Problems in this run {loading ? null : <span className="ro-count">{rows.length}</span>}</h2><div className="note">Worst first. Each: what we saw, the likely cause, the fix, and the tables its query reads and writes.</div></div>
-        {loading ? null : <Link className="btn small" to={to.findings(cid)}>All {fmtNum(rows.length)} findings</Link>}
-      </div>
-      <div className="panel-body stack" style={{ gap: 10 }}>
-        {loading ? <p className="muted small">Loading…</p> : rows.length ? shown.map((f) => {
-          const g = groupOf(f);
-          const q = g && f.sql_execution_id === null ? <Link className="tchip" to={to.query(cid, g.ctx, g.id!)}>Query {g.id}</Link> : null;
-          return <FindingPoints key={f.finding_id} cid={cid} f={f} reads={g?.tables_read} writes={g?.tables_written} links={q} />;
-        }) : <p className="muted small">No problems found in this run.</p>}
-        <div className="row" style={{ gap: 14 }}>
-          {plain.length > 6 && <button className="linkish small" onClick={() => setAll(!all)}>{all ? 'Fewer ↑' : `${plain.length - 6} more findings ↓`}</button>}
-          {detail.length > 0 && <button className="linkish small" title="Garbage collection, memory, exceptions in the logs and retries: they explain the problems above" onClick={() => setDeep(!deep)}>
-            {deep ? 'Hide the details ↑' : `${detail.length} detailed ${detail.length === 1 ? 'finding' : 'findings'} (GC, memory, logs) ↓`}</button>}
-        </div>
       </div>
     </section>
   );

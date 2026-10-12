@@ -863,7 +863,7 @@ const unitOfFlow = (k: string) => k.replace(/^q:/, 'query:').replace(/^j:/, 'job
 const flowOfUnit = (u: string) => u.replace(/^query:/, 'q:').replace(/^job:/, 'j:');
 
 function ctxCard(n: FlowNode, why: string, depth?: number, link?: string, e?: FlowEdge): FlowCtx {
-  return { unit: unitOfFlow(n.key), label: n.kind === 'query' ? `Query ${n.id}` : `Job ${n.id}`, what: n.what ?? '', status: n.status, why, depth, link,
+  return { unit: unitOfFlow(n.key), label: n.kind === 'query' ? `Query ${n.id}` : `Spark job ${n.id}`, what: n.what ?? '', status: n.status, why, depth, link,
     rows: e?.rows ?? null, bytes: e?.bytes ?? null };
 }
 
@@ -947,7 +947,7 @@ function neighbours(f: Flow | null, unitId: string) {
         .sort((a, b) => (a.start ?? 0) - (b.start ?? 0)).map((n) => ctxCard(n, 'same level'))
     : [];
   const cap = (xs: FlowCtx[]) => xs.slice(0, 8);
-  return { before: cap(before), after: cap(after), seqBefore, seqAfter, siblings, parentLabel: parent ? by.get(parent)!.kind === 'query' ? `Query ${by.get(parent)!.id}` : `Job ${by.get(parent)!.id}` : null };
+  return { before: cap(before), after: cap(after), seqBefore, seqAfter, siblings, parentLabel: parent ? by.get(parent)!.kind === 'query' ? `Query ${by.get(parent)!.id}` : `Spark job ${by.get(parent)!.id}` : null };
 }
 
 function SameLevel({ sib, parent, onPick }: { sib: FlowCtx[]; parent: string | null; onPick: (unit: string) => void }) {

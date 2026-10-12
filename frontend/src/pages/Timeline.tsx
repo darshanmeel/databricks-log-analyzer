@@ -475,7 +475,7 @@ function GanttCanvas({ g, width, onOpenStage, zoomTo }: { g: Gantt; width: numbe
               ctx.beginPath();
               ctx.rect(xa, y, w, lane.barH);
               ctx.clip();
-              ctx.fillText(`Job ${j.spark_job_id}${j.description ? `  ${j.description}` : ''}`, xa + 4, y + lane.barH / 2 + 0.5);
+              ctx.fillText(`Spark job ${j.spark_job_id}${j.description ? `  ${j.description}` : ''}`, xa + 4, y + lane.barH / 2 + 0.5);
               ctx.restore();
             }
           } else {
@@ -828,7 +828,7 @@ function GanttTooltip({ h }: { h: Hover }) {
   let title = '';
   if (it.ref.t === 'job') {
     const j = it.ref.v;
-    title = `Job ${j.spark_job_id}`;
+    title = `Spark job ${j.spark_job_id}`;
     if (j.description) rows.push(['Description', truncate(j.description, 80)]);
     rows.push(['Result', j.result ?? 'running']);
     rows.push(['Stages', String(j.stage_ids?.length ?? 0)]);

@@ -145,7 +145,7 @@ function Waterfall({
   for (const j of jobs) {
     const open = !toggled.has(j.id);
     const stages = stagesByJob.get(j.id) ?? [];
-    rows.push({ key: j.id, depth: base, label: `Job ${j.jobId}`, sub: j.sublabel ?? null, start: j.start ?? null, end: j.end ?? null, color: color(j), kids: stages.length > 0, open });
+    rows.push({ key: j.id, depth: base, label: `Spark job ${j.jobId}`, sub: j.sublabel ?? null, start: j.start ?? null, end: j.end ?? null, color: color(j), kids: stages.length > 0, open });
     if (open) stageRows(stages, base + 1);
   }
 

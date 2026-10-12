@@ -82,7 +82,7 @@ export function rowLinks(cid: string, r: LinkCols): EntityLink[] {
       href: to.stages(cid, ctx, r.stage_id, r.stage_attempt ?? 0),
     });
   if (r.spark_job_id !== null && r.spark_job_id !== undefined)
-    out.push({ type: 'job', label: `Job ${r.spark_job_id}`, href: to.hierarchy(cid, { ctx, job: r.spark_job_id }) });
+    out.push({ type: 'job', label: `Spark job ${r.spark_job_id}`, href: to.hierarchy(cid, { ctx, job: r.spark_job_id }) });
   if (r.sql_execution_id !== null && r.sql_execution_id !== undefined && ctx)
     out.push({ type: 'query', label: `Query ${r.sql_execution_id}`, href: to.query(cid, ctx, r.sql_execution_id) });
   if (r.executor_id !== null && r.executor_id !== undefined && r.executor_id !== '')

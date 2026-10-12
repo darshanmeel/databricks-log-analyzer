@@ -77,7 +77,7 @@ function Kpis({ s }: { s: Summary }) {
     <div className="kpis">
       <Kpi label="Duration" value={fmtDuration(s.duration_ms)} />
       <Kpi label="Spark applications" value={fmtNum(c.apps ?? 0)} />
-      <Kpi label="Jobs failed" value={fmtNum(c.failed_jobs ?? 0)} of={fmtNum(c.spark_jobs ?? 0)} tone={c.failed_jobs ? 'bad' : undefined} />
+      <Kpi label="Spark jobs failed" value={fmtNum(c.failed_jobs ?? 0)} of={fmtNum(c.spark_jobs ?? 0)} tone={c.failed_jobs ? 'bad' : undefined} />
       <Kpi label="Stages" value={fmtNum(c.stages ?? 0)} foot={c.failed_stages ? `${fmtNum(c.failed_stages)} failed` : 'none failed'} tone={c.failed_stages ? 'bad' : undefined} />
       <Kpi label="Task attempts retried" value={fmtNum(c.failed_tasks ?? 0)} of={fmtNum(c.tasks ?? 0)} tone={c.failed_tasks ? 'warn' : undefined} />
       <Kpi label="Spill" value={fmtBytes(spill)} foot={`disk ${fmtBytes(t.disk_spill ?? 0)}`} tone={(t.disk_spill ?? 0) >= 1024 ** 3 ? 'warn' : undefined} />

@@ -416,7 +416,7 @@ function StageDetailView({ cid, d, retries, onClose }: { cid: string; d: StageDe
         )}
         {d.job?.error && (
           <p className="small ink2">
-            <b>Job {d.job.spark_job_id} error:</b> {truncate(d.job.error, 500)}
+            <b>Spark job {d.job.spark_job_id} error:</b> {truncate(d.job.error, 500)}
           </p>
         )}
       </div>
