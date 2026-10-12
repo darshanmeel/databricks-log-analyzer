@@ -110,8 +110,8 @@ export function RunOverview({ run }: { run: RunRow }) {
             foot={run.typical_duration_ms && (run.usual_from === 'history' || (run.same_job_runs ?? 0) >= 3) ? `usual ${fmtDuration(run.typical_duration_ms)}` : 'no usual yet'}
             tone={isSlow(run) ? 'warn' : undefined}
             title={run.typical_duration_ms ? (run.usual_from === 'history' ? `Usual: the median of its last ${run.usual_runs} runs` : 'Usual: the median of this batch') : undefined} />
-          <Tile label="Queries · jobs" value={e ? `${fmtNum(e.queries)} · ${fmtNum(run.spark_jobs)}` : '…'}
-            foot={e ? (e.failed_jobs || e.failed_queries ? `${e.failed_queries} queries, ${e.failed_jobs} jobs failed` : e.replanned_jobs ? `none failed · ${e.replanned_jobs} replanned` : 'none failed') : null}
+          <Tile label="Queries · Spark jobs" value={e ? `${fmtNum(e.queries)} · ${fmtNum(run.spark_jobs)}` : '…'}
+            foot={e ? (e.failed_jobs || e.failed_queries ? `${e.failed_queries} queries, ${e.failed_jobs} Spark jobs failed` : e.replanned_jobs ? `none failed · ${e.replanned_jobs} replanned` : 'none failed') : null}
             tone={e && (e.failed_jobs || e.failed_queries) ? 'bad' : undefined} />
           {run.failed_tasks ? <Tile label="Tasks" value={fmtNum(run.tasks)} foot={`${fmtNum(run.failed_tasks)} ${run.failed_tasks === 1 ? 'attempt' : 'attempts'} failed`} tone="warn" title={`${fmtNum(run.retried_tasks)} retried`} /> : null}
           {(run.disk_spill ?? 0) > 0 && <Tile label="Disk spill" value={fmtBytes(run.disk_spill)} foot="to disk" tone={(run.disk_spill ?? 0) >= GB ? 'warn' : undefined}
@@ -232,7 +232,7 @@ function HowEnded({ cid, e, d }: { cid: string; e: RunEnd; d: RunSteps | null })
     <>
       <ul className="ro-points">
         {bad ? <li className="bad"><b>{bad.text}</b></li>
-          : <li><b>No failure in Spark</b> <span className="muted">· {fmtNum(e.queries)} queries, {fmtNum(e.spark_jobs - e.replanned_jobs)} jobs finished</span></li>}
+          : <li><b>No failure in Spark</b> <span className="muted">· {fmtNum(e.queries)} queries, {fmtNum(e.spark_jobs - e.replanned_jobs)} Spark jobs finished</span></li>}
         {lq && <li>Last: query {lq.sql_execution_id} {lq.status === 'failed' ? 'failed' : 'ended'} at <b className="mono">{fmtTime(lq.end_time)}</b>
           {lg && lg.failed_tasks ? <span className="muted"> · {fmtNum(lg.failed_tasks)} task attempts retried</span> : null}</li>}
         {stopped && <li>Cluster stopped <b>{gapText} later</b>{e.normal_end ? <span className="muted"> · a job cluster stops after its last run</span> : null}</li>}

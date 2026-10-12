@@ -139,7 +139,7 @@ interface Tab {
 
 const TABS: Tab[] = [
   { label: 'Overview', routes: [''] },
-  { label: 'Findings & errors', routes: ['findings', 'errors'], sub: [['findings', 'Findings'], ['errors', 'Errors']],
+  { label: 'Problems', routes: ['findings', 'errors'], sub: [['findings', 'Findings'], ['errors', 'Errors']],
     // one problem count: the run's own list says how many; the tab only counts for the whole cluster
     count: (r, s) => (r ? undefined : s.counts.findings), alert: (r, s) => (r ? r.max_severity === 'high' : (s.findings_by_severity.high ?? 0) > 0) },
   // no count: it counted Spark jobs under a tab named for queries; the page's first line gives both
@@ -338,7 +338,7 @@ function RunRail({ runs, run, choose }: { runs: RunRow[]; run: string | null; ch
             </div>
             {!isOpen ? (
               <button className="rail-more" onClick={() => setOpen((o) => ({ ...o, [g]: true }))}>
-                all {rs.length} ≈ usual{usual ? ` · ${fmtDuration(usual)}` : ''} ▸
+                all {rs.length} {usual ? `≈ usual · ${fmtDuration(usual)}` : '· none failed'} ▸
               </button>
             ) : (
               <>
@@ -369,8 +369,12 @@ function RunTitle({ r }: { r: RunRow }) {
   const { cid } = useCluster();
   const end = useAsync((s) => api.runEnd(cid, r.run_key, s).catch(() => null), [cid, r.run_key]);
   const v = runVerdict(r, end.data?.executors_gone);
+  const { choose } = useRunScopeCtx();
+  const nav = useNavigate();
+  const toClusterOf = () => { choose(null); nav(`/c/${encodeURIComponent(cid)}`); };
   return (
     <div className="run-title">
+      <div className="level-kicker">Run · <a href={`/c/${encodeURIComponent(cid)}`} onClick={(e) => { e.preventDefault(); toClusterOf(); }}>↑ cluster overview</a></div>
       <div className="run-title-row">
         <h1 className="mono">{runName(r)}</h1>
         {r.status !== 'succeeded' && r.status !== 'failed' ? <StatusBadge status={r.status} />
@@ -393,15 +397,32 @@ function RunTitle({ r }: { r: RunRow }) {
   );
 }
 
-/** The cluster's own tabs: its overview, and the raw pages for the whole cluster. */
-function ClusterTabs({ base, section }: { base: string; section: string }) {
-  const tabs: [string, string][] = [['', 'Overview'], ['findings', 'Findings'], ['errors', 'Errors'], ['executors', 'Executors'], ['logs', 'Logs'], ['data', 'Raw data']];
+/** The cluster's own tabs: the same names as a run's (Overview, Problems, Executors, Logs & raw data), so the level
+ * shows in the title and the breadcrumb, not in a different set of words. */
+const CLUSTER_TABS = TABS.filter((t) => ['', 'findings', 'executors', 'logs'].includes(t.routes[0]));
+function ClusterTabs({ base, section, s }: { base: string; section: string; s?: Summary }) {
+  const tab = CLUSTER_TABS.find((t) => t.routes.includes(section)) ?? CLUSTER_TABS[0];
+  const href = (r: string) => (r ? `${base}/${r}` : base);
   return (
-    <div className="tabs" role="tablist">
-      {tabs.map(([r, l]) => (
-        <Link key={r} to={r ? `${base}/${r}` : base} role="tab" aria-selected={section === r} className={section === r ? 'active' : ''}>{l}</Link>
-      ))}
-    </div>
+    <>
+      <div className="tabs" role="tablist">
+        {CLUSTER_TABS.map((t) => {
+          const c = s ? t.count?.(undefined, s) : undefined;
+          const alert = s ? t.alert?.(undefined, s) ?? false : false;
+          return (
+            <Link key={t.label} to={href(t.routes[0])} role="tab" aria-selected={t === tab} className={t === tab ? 'active' : ''}>
+              {t.label}
+              {c != null && c > 0 && <span className={`cnt ${alert ? 'cnt-crit' : ''}`}>{compact(c)}</span>}
+            </Link>
+          );
+        })}
+      </div>
+      {tab.sub && (
+        <div className="subtabs seg" role="group" aria-label={tab.label}>
+          {tab.sub.map(([r, l]) => <Link key={r} to={href(r)} className={section === r ? 'on' : ''}>{l}</Link>)}
+        </div>
+      )}
+    </>
   );
 }
 
@@ -478,11 +499,12 @@ export function ClusterLayout() {
         {clusterScope && !summary.empty_reason && (
           <div className="run-head">
             <div className="run-title">
+              <div className="level-kicker">Cluster · every run</div>
               <div className="run-title-row"><h1 className="mono">{cid}</h1><ClusterEnd summary={summary} runs={scope.runs} end={summary.end_time} /></div>
               <div className="run-meta mono">{fmtTime(summary.start_time)} → {fmtTime(summary.end_time)}  ·  {fmtDuration(summary.duration_ms)}  ·  {fmtNum(scope.runs.length)} runs</div>
               <Coverage summary={summary} />
             </div>
-            <ClusterTabs base={base} section={EITHER_PAGES.has(section) || CLUSTER_PAGES.has(section) ? section : ''} />
+            <ClusterTabs base={base} section={EITHER_PAGES.has(section) || CLUSTER_PAGES.has(section) ? section : ''} s={summary} />
           </div>
         )}
         {!clusterScope && !summary.empty_reason && (

@@ -59,8 +59,10 @@ function peakOf(runs: RunRow[]) {
 /** The cluster's first screen (why runs were slow, how they ended, the runs that took longest, the top changes) and,
  * folded under "Details", everything else: the numbers, programs, errors, tables, the ranking and `more` (the
  * timeline and the full runs table). */
-export function ClusterTop({ cid, runs, executors, compute, onPick, find, more, atBox, causes, runCauses }: {
+export function ClusterTop({ cid, runs, executors, compute, onPick, find, more, atBox, timeline, causes, runCauses }: {
   cid: string; runs: RunRow[]; executors: TopExecutor[]; compute: ComputeUse | null; onPick: (r: RunRow) => void; find: ReactNode; more?: ReactNode; atBox?: ReactNode;
+  /** What ran when (the cluster's timeline): right under what broke, it answers "what ran at 1 a.m.?" */
+  timeline?: ReactNode;
   causes?: Causes | null; runCauses?: Record<string, Causes | null>;
 }) {
   const progs = useMemo(() => programs(runs), [runs]);
@@ -96,8 +98,9 @@ export function ClusterTop({ cid, runs, executors, compute, onPick, find, more, 
   // the numbers that say little on the first screen: under Details
   const moreTiles = (
     <div className="kpis">
-      <Tile label="At once" value={fmtNum(peak.n)} foot={`at ${fmtTime(peak.at).slice(0, 5)}`} title={`Most runs going at once, on the ${fmtNum(atPeak.length)} executors up then`} />
-      <Tile label="Tasks" value={fmtNum(sum(runs, (r) => r.tasks))} foot={failedTasks ? `${fmtNum(failedTasks)} attempts failed` : 'none failed'} tone={failedTasks ? 'warn' : undefined} />
+      {/* only what the first row does not show */}
+      {peak.n < 10 && <Tile label="At once" value={fmtNum(peak.n)} foot={`at ${fmtTime(peak.at).slice(0, 5)}`} title={`Most runs going at once, on the ${fmtNum(atPeak.length)} executors up then`} />}
+      {!failedTasks && <Tile label="Tasks" value={fmtNum(sum(runs, (r) => r.tasks))} foot="none failed" />}
       <Tile label="Shuffle" value={fmtBytes(Math.max(shufR, shufW))} foot={`read ${fmtBytes(shufR)} · write ${fmtBytes(shufW)}`} />
       <Tile label="Idle compute" value={compute?.idle_share != null ? fmtPct(compute.idle_share, 0) : '–'}
         foot={compute ? `of ${(compute.core_ms_up / 3_600_000).toFixed(1)} core-hours` : 'no tasks'} tone={(compute?.idle_share ?? 0) >= 0.3 ? 'warn' : undefined}
@@ -108,6 +111,7 @@ export function ClusterTop({ cid, runs, executors, compute, onPick, find, more, 
   return (
     <>
       <WhatBroke cid={cid} top={top.data} />
+      {timeline}
       <div className="ro-hero">
         <section className="ro-hero-box">
           <span className={`ro-eyebrow ${slow.length || waitShare >= 0.2 ? 'warn' : ''}`}>{slow.length || waitShare >= 0.2 ? 'Why runs were slow' : 'Where the time went'}</span>

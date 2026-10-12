@@ -118,17 +118,18 @@ function ClusterBody({ d }: { d: ClusterViewData }) {
     <div className="stack" style={{ gap: 16 }}>
       <ClusterTop cid={cid} runs={runs} executors={d.executors} compute={cu ?? null} onPick={(r) => open(r)}
         find={<TopFinder cid={cid} runs={runs} />} causes={d.causes} runCauses={d.run_causes}
-        atBox={<>
-          <div className="row" style={{ gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+        timeline={<Panel title="What ran when" note="Per Spark app: its lifetime, one block per program with a bar per run, its executors, CPU and spill (red: failed, amber outline: took at least twice its usual time). Click a run to open it, anywhere else to see what ran at that time.">
+          <div className="row" style={{ gap: 12, alignItems: 'center', flexWrap: 'wrap', marginBottom: 8 }}>
             <label className="small">
               <b>What ran at (UTC)</b>{' '}
               <input className="input" style={{ width: 80 }} placeholder="01:00" value={atText} onChange={(e) => setAtText(e.target.value)} />
             </label>
-            <span className="small muted">or click a time in the chart below</span>
+            <span className="small muted">or click a time in the chart</span>
             {atText && <button className="btn small ghost" onClick={() => setAtText('')}>Clear</button>}
           </div>
           {at !== null && <AtTime d={d} runs={runs} at={at} />}
-        </>}
+          <ClusterChart d={d} groups={groups} at={at} onAt={(t) => setAtText(hhmm(t))} />
+        </Panel>}
         more={<>
           {(() => {
             // Databricks jobs behind the runs: job (name) -> job run -> task runs
@@ -157,9 +158,6 @@ function ClusterBody({ d }: { d: ClusterViewData }) {
             );
           })()}
           <ExecutorsBusy cid={cid} compute={cu ?? null} heaps={d.executors} />
-          <Panel title="Apps, runs, executors, CPU and spill" note="Per Spark app: its lifetime, one block per program it ran with a bar per run, and its executors (red: failed, amber outline: took at least twice its usual time). Hover for details, click a run to open its story, click anywhere else to see what ran at that time.">
-            <ClusterChart d={d} groups={groups} at={at} onAt={(t) => setAtText(hhmm(t))} />
-          </Panel>
           <div id="cv-runs"><Panel title="All runs" note="Click a row to open that run. Read per task is the storage input plus shuffle read of each task that read data; hover Biggest for the size bands.">
             <RunsTable runs={runs} atText={atText} onAtText={setAtText} />
           </Panel></div>
