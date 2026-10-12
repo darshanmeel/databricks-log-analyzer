@@ -2624,7 +2624,9 @@ def settings_view(store: Store, cid: str) -> dict[str, Any]:
                               exclude=("details", "stage_name", "rdd_names", "rdd_scopes", "parent_ids"))
         qs = store.select(con, cid, "sql_queries", exclude=("final_plan", "initial_plan", "details"))
         info = (store.select(con, cid, "cluster_info", limit=1) or [{}])[0]
-        newer = store.select(con, cid, "findings", "category IN ('cores_full', 'merge_rewrite', 'waited_for_cores')", ())             if store.dataset_path(cid, "findings", required=False) is not None else []
+        newer = store.select(con, cid, "findings", "category IN ('cores_full', 'merge_rewrite', 'waited_for_cores', "
+                             "'count_only', 'no_spark_work', 'tiny_task_stages')", ()) \
+            if store.dataset_path(cid, "findings", required=False) is not None else []
     view = cluster_view(store, cid)
     # one value per setting over the cluster's apps: the first that was set, else the default
     order = {k: i for i, (k, *_r) in enumerate(SETTINGS)}
@@ -2646,6 +2648,8 @@ def settings_view(store: Store, cid: str) -> dict[str, Any]:
 
     MB, GB = 1 << 20, 1 << 30
     advice: list[dict] = []
+    # local mode (spark.master local[N]): one JVM, no workers, no Databricks cluster around it
+    local = (val("spark.master") or "").startswith("local")
 
     labels = {r["run_key"]: r.get("label") or r.get("subject") or r["run_key"] for r in view["runs"] if r.get("run_key")}
 
@@ -2666,11 +2670,13 @@ def settings_view(store: Store, cid: str) -> dict[str, Any]:
     def sev_rank(x):
         return {"high": 0, "medium": 1, "info": 2}.get(x, 3)
 
-    def add(severity, key, title, facts, cause, fixes, stages=None, runs=None, queries=None):
+    def add(severity, key, title, facts, cause, fixes, stages=None, runs=None, queries=None, cost_ms=None):
         """Revision 18: each piece of advice as points: what the data shows, the likely cause, what to change, and
-        links to the stages, runs and queries it is about. evidence / change keep the same as running text."""
+        links to the stages, runs and queries it is about. evidence / change keep the same as running text.
+        `cost_ms`: about how much time the problem cost (the list is ranked by it)."""
         facts = [f for f in facts if f]
         advice.append({"severity": severity, "key": key, "title": title, "facts": facts, "cause": cause, "fixes": fixes,
+                       "cost_ms": int(cost_ms) if cost_ms else None,
                        "evidence": " ".join(f if f.endswith(".") else f + "." for f in facts), "change": " ".join(fixes),
                        "stages": (stages or {}).get("list", []), "stage_count": (stages or {}).get("count", 0),
                        "runs": runs or [], "queries": queries or []})
@@ -2698,11 +2704,12 @@ def settings_view(store: Store, cid: str) -> dict[str, Any]:
                 f"spark.sql.shuffle.partitions = {n} is too few for this much data: each task gets more than fits in its memory.",
                 [f"Set spark.sql.shuffle.partitions ≈ {suggest} for these jobs (biggest shuffle read ÷ 128 MiB)",
                  "or turn on spark.databricks.adaptive.autoOptimizeShuffle.enabled (shuffle.partitions = auto) so Databricks sizes it"],
-                refs(big, lambda x: x.get("shuffle_read")))
+                refs(big, lambda x: x.get("shuffle_read")), cost_ms=sum(x.get("duration_ms") or 0 for x in big))
     # 2. adaptive execution off
     if (val("spark.sql.adaptive.enabled") or "true").lower() == "false":
-        add("high", "spark.sql.adaptive.enabled", "Adaptive query execution is off",
-            ["spark.sql.adaptive.enabled = false"],
+        # a test session on a laptop turns it off on purpose, and at its data sizes it changes nothing
+        add("info" if local else "high", "spark.sql.adaptive.enabled", "Adaptive query execution is off",
+            ["spark.sql.adaptive.enabled = false" + (" (set in a local session: harmless at small data sizes)" if local else "")],
             "Without it Spark can neither merge tiny shuffle partitions nor split skewed join partitions.",
             ["Remove the setting (it is on by default)"])
     skewed = [x for x in stages if (x.get("data_skew") or 0) >= 5 and (x.get("max_task_bytes_in") or 0) >= 256 * MB]
@@ -2748,7 +2755,7 @@ def settings_view(store: Store, cid: str) -> dict[str, Any]:
             "Tasks held more data than their share of executor memory, so they wrote the rest to local disk and read it back.",
             ["First make the tasks smaller: more shuffle partitions",
              "If the data per task is already small: a memory-optimised worker type, or fewer cores per executor"],
-            refs(spilled, lambda x: x.get("disk_spill")))
+            refs(spilled, lambda x: x.get("disk_spill")), cost_ms=sum(x.get("duration_ms") or 0 for x in worst))
     # 4b. a DataFrame cache bigger than memory: the cause of the out-of-memory and GC findings it brings, so it goes
     # first, and the memory findings go under it (its key names memory)
     cache_adv = None
@@ -2841,23 +2848,39 @@ def settings_view(store: Store, cid: str) -> dict[str, Any]:
                  "Job compute bills per core-hour used: more cores for the same work costs about the same and finishes sooner"]
         # FIFO and one long stage with more tasks than the cluster has cores: it holds every core until it is done,
         # and every other run's stages queue behind it (more workers or fewer runs at once do not change that)
-        hog = _core_hog(stages, view["executors"])
-        mode = (val("spark.scheduler.mode") or "FIFO").upper()
-        if hog and mode == "FIFO":
-            st_, cores_ = hog
-            jdbc = not st_.get("input_bytes") and (st_.get("input_records") or 0) > 0
-            facts.insert(0, f"Scheduler mode FIFO: stage {st_['stage_id']} (query {st_.get('sql_execution_id')}"
-                            + (f", run {labels.get(st_.get('run_key'), st_.get('run_key'))}" if st_.get("run_key") else "")
-                            + f") ran {st_.get('tasks'):,} tasks for {_fmt_ms(st_['duration_ms'])}"
-                            + (" reading a database over JDBC" if jdbc else "")
-                            + f", more than the {cores_} cores, so it held every core and the other runs queued behind it")
-            cause = ("One long stage held every core: with the FIFO scheduler a stage with more tasks than cores keeps all "
-                     "of them until it is done, so every other run's stages queue behind it.")
-            fixes = ["Give each run its own FAIR scheduler pool (spark.scheduler.mode FAIR, and spark.scheduler.pool per run) so the runs share the cores",
-                     "or run the long stage on its own job cluster" + (", or read it in fewer JDBC partitions (numPartitions) so it leaves cores free" if jdbc else ""),
-                     *fixes[1:2]]
+        # summed over runs that overlap it reads as days: about the clock time, divided by the runs going at once
+        queued = sum(r.get("waiting_ms") or r.get("queued_full_ms") or 0 for r in runs_) / _at_once(runs_)
         add(f["severity"], TAGS + "clusterWorkers", "The runs waited for cores more than they ran", facts, cause, fixes,
-            runs=run_refs(x.get("run_key") for x in waited))
+            runs=run_refs(x.get("run_key") for x in waited), cost_ms=queued)
+    # FIFO and one long stage with more tasks than the cluster has cores: it holds every core until it is done, and
+    # every other run's stages queue behind it (more workers or fewer runs at once do not change that): its own item
+    hog = _core_hog(stages, view["executors"]) if len(runs_) > 1 else None
+    if hog and (val("spark.scheduler.mode") or "FIFO").upper() == "FIFO":
+        st_, cores_ = hog
+        a_, z_ = _as_ms(st_.get("start_time")), _as_ms(st_.get("end_time"))
+        jdbc = not st_.get("input_bytes") and (st_.get("input_records") or 0) > 0
+        behind = [r for r in runs_ if r.get("run_key") != st_.get("run_key") and a_ is not None and z_ is not None
+                  and (r.get("start_time") or 0) < z_ and (r.get("end_time") or z_) > a_
+                  and (r.get("waiting_ms") or r.get("queued_full_ms") or 0) >= 60_000]
+        most = max(behind, key=lambda r: r.get("waiting_ms") or r.get("queued_full_ms") or 0, default=None)
+        add("high", "spark.scheduler.mode",
+            f"One stage held all {cores_} cores for {_fmt_ms(st_['duration_ms'])} under FIFO",
+            [f"Stage {st_['stage_id']} (query {st_.get('sql_execution_id')}"
+             + (f", run {labels.get(st_.get('run_key'), st_.get('run_key'))}" if st_.get("run_key") else "")
+             + f") ran {st_.get('tasks'):,} tasks for {_fmt_ms(st_['duration_ms'])}"
+             + (" reading a database over JDBC" if jdbc else "") + f": more tasks than the {cores_} cores",
+             "spark.scheduler.mode = FIFO: the first stage keeps every core it can use until it is done",
+             (f"{_plural(len(behind), 'other run')} waited for cores while it ran, up to "
+              f"{_fmt_ms(most.get('waiting_ms') or most.get('queued_full_ms'))} ({labels.get(most['run_key'], most['run_key'])})")
+             if most else None],
+            "One long stage held every core: small jobs of other runs queued behind it, often to run for seconds after "
+            "waiting for many minutes. More workers or fewer runs at once do not change that.",
+            ["Give each run its own FAIR pool: spark.scheduler.mode FAIR and spark.scheduler.pool set per run, so the runs share the cores",
+             "or run this stage on its own job cluster"
+             + (", or read it in fewer JDBC partitions (numPartitions) so it leaves cores free" if jdbc else "")],
+            refs([st_], lambda x: x.get("duration_ms")), runs=run_refs(r["run_key"] for r in behind),
+            cost_ms=st_["duration_ms"])
+        advice[-1]["fifo"] = True
     merges = [x for x in newer if x["category"] == "merge_rewrite"]
     merge_info: dict[tuple, dict] = {}  # (ctx, query) -> merge_facts: one number per MERGE on every page
     if merges:
@@ -2903,18 +2926,18 @@ def settings_view(store: Store, cid: str) -> dict[str, Any]:
     # 6. Photon
     eng = (info.get("runtime_engine") or val(TAGS + "runtimeEngine") or "").upper()
     ph = [q.get("photon_share") for q in qs if q.get("photon_share") is not None]
-    if eng != "PHOTON" and (not ph or max(ph) == 0):
-        heavy = [q for q in qs if any(w in (q.get("description") or "").upper() for w in ("MERGE", "JOIN"))
-                 or (q.get("input_bytes") or 0) + (q.get("shuffle_read") or 0) >= 10 * GB]
+    if eng != "PHOTON" and (not ph or max(ph) == 0) and not local:
+        # a MERGE or join is worth Photon only with data behind it
+        heavy = [q for q in qs if (q.get("input_bytes") or 0) + (q.get("shuffle_read") or 0) >= 10 * GB]
         if heavy:
             add("info", TAGS + "runtimeEngine", "Photon was not used",
                 [f"No query plan has a Photon operator ({eng.lower() or 'standard'} runtime)",
-                 f"{len(heavy)} queries were MERGEs or joins or read 10 GiB or more"],
+                 f"{len(heavy)} queries read or shuffled 10 GiB or more"],
                 "The job runs on the standard engine.",
                 ["Try the job on a Photon runtime: MERGE, joins and aggregations often run 2–3× faster, at a higher DBU rate"])
     # 7. paying for executors that ran nothing
     cu = view.get("compute")
-    if cu and cu["idle_share"] is not None and cu["idle_share"] >= 0.3:
+    if cu and cu["idle_share"] is not None and cu["idle_share"] >= 0.3 and not local:
         fixed = val(TAGS + "clusterMaxWorkers") is None or val(TAGS + "clusterMinWorkers") == val(TAGS + "clusterMaxWorkers")
         lead = (cu["first_task"] - cu["executors_from"]) if cu["first_task"] else None
         tail = (cu["executors_to"] - cu["last_task"]) if cu["last_task"] else None
@@ -2932,12 +2955,16 @@ def settings_view(store: Store, cid: str) -> dict[str, Any]:
         if (info.get("workload_type") or "").upper() != "AUTOMATED" and at and at.isdigit() and int(at) > 20:
             fixes.append(f"Auto-termination is {at} minutes: lower it for an all-purpose cluster")
         add("high" if cu["idle_share"] >= 0.5 else "medium", TAGS + "clusterWorkers", "Paying for executors that ran nothing",
-            facts, "More workers were up than the work needed, or they stayed up after it.", fixes)
+            facts, "More workers were up than the work needed, or they stayed up after it.", fixes,
+            cost_ms=(cu["core_ms_up"] - cu["core_ms_used"]) / max(1, sum(e.get("cores") or 0 for e in workers) or 1))
     # 8. stragglers that did not have more data: a slow node, not skew
     strag = [x for x in stages if (x.get("max_task_ms") or 0) >= 300_000 and (x.get("p50_task_ms") or 0) > 0
              and x["max_task_ms"] >= 10 * x["p50_task_ms"]
              and (not x.get("max_task_bytes_in") or not x.get("p50_task_bytes_in")
-                  or x["max_task_bytes_in"] < 2 * x["p50_task_bytes_in"])]
+                  or x["max_task_bytes_in"] < 2 * x["p50_task_bytes_in"])
+             # a JDBC read has no bytes in: its slow task had more rows (an uneven partition column), not a slow node
+             and not (not x.get("input_bytes") and not x.get("shuffle_read") and (x.get("input_records") or 0) > 0)
+             and not ((x.get("max_task_rows_in") or 0) >= 2 * max(1, x.get("p50_task_rows_in") or 0))]
     if strag and (val("spark.speculation") or "false").lower() == "false":
         add("info", "spark.speculation", f"{len(strag)} stages waited on a slow task that did not have more data",
             ["The slowest task took 10× the median and over 5 minutes", "It read at most twice the median data"],
@@ -2973,10 +3000,27 @@ def settings_view(store: Store, cid: str) -> dict[str, Any]:
                       "run_key": q.get("run_key"), "label": labels.get(q.get("run_key"))} for q in rq[:ADVICE_STAGES]])
         if len([a for a in advice if a["title"].endswith(" again")]) >= 3:
             break
+    for cat, key, cause in (
+            ("no_spark_work", None, "The time went to the driver: statements that run no tasks, the code between "
+                                    "them, or waiting outside Spark. More cores will not shorten it."),
+            ("count_only", None, "Each count() runs the whole query again (over JDBC: reads the source table again)."),
+            ("tiny_task_stages", "spark.databricks.delta.snapshotPartitions", "Many stages cut almost no data into the "
+                                 "same number of tasks: scheduling the tasks costs more than their work.")):
+        fs_ = sorted((x for x in newer if x["category"] == cat), key=lambda x: sev_rank(x["severity"]))
+        if not fs_:
+            continue
+        x = fs_[0]
+        sents = [s.strip().rstrip(".") for s in re.split(r"(?<=\.)\s+", x.get("evidence") or "") if s.strip()]
+        add(x["severity"], key if cat != "tiny_task_stages" or "snapshotPartitions" in (x.get("fix") or "") else
+            "spark.sql.shuffle.partitions", _clause(sents[0]) if len(_clause(sents[0])) <= 140 else x.get("entity") or cat,
+            sents + [f"and {len(fs_) - 1} more like it" if len(fs_) > 1 else None], cause,
+            [s.strip() for s in re.split(r"(?<=\.)\s+", x.get("fix") or "") if s.strip()][:3],
+            runs=run_refs(y.get("run_key") for y in fs_),
+            cost_ms=sum(_words_ms(y.get("evidence")) for y in fs_))
     # one concurrency item per cluster: the bursts and the sharing are the same story as "waited for cores"
     cores = next((a for a in advice if a["key"] == TAGS + "clusterWorkers"), None)
     if cores is not None:
-        for a in [a for a in advice if a is not cores and (a["key"] == "spark.scheduler.mode"
+        for a in [a for a in advice if a is not cores and not a.get("fifo") and (a["key"] == "spark.scheduler.mode"
                                                            or re.match(r"\d+ runs started within", a["title"]))]:
             cores["facts"].append(a["title"])
             cores["runs"] = (cores["runs"] + [r for r in a["runs"] if r not in cores["runs"]])[:ADVICE_STAGES]
@@ -3003,13 +3047,50 @@ def settings_view(store: Store, cid: str) -> dict[str, Any]:
                     a["facts"].append(f"CDF on the target adds {m['change_rows']:,} change rows to the write shuffle; turn it "
                                       "off only if nothing reads the table's change feed")
             a["evidence"] = " ".join(f if f.endswith(".") else f + "." for f in a["facts"])
-    first = lambda a: 0 if a["title"].endswith("than they merged") else 1 if a is cores else 2  # noqa: E731
-    advice.sort(key=lambda a: (sev_rank(a["severity"]), first(a)))
+    # ranked by about how much time each cost (the notes last); a MERGE that reads too much before the spill it causes
+    first = lambda a: 0 if a.get("fifo") or a["title"].endswith("than they merged") else 1  # noqa: E731
+    advice.sort(key=lambda a: (a["severity"] == "info", first(a), -(a.get("cost_ms") or 0), sev_rank(a["severity"])))
     if cache_adv is not None:  # the root cause of the memory findings ranks first
         advice.insert(0, advice.pop(advice.index(cache_adv)))
     envs = val(TAGS + "clusterNumSparkEnvVars")
     return {"settings": settings, "advice": advice, "env_vars": int(envs) if envs and envs.isdigit() else None,
             "has_settings": bool(rows), "compute": cu}
+
+
+def _clause(s: str) -> str:
+    """A finding's first sentence cut at its first colon or semicolon (outside brackets): a title."""
+    depth = 0
+    for i, ch in enumerate(s):
+        depth += ch == "(" and 1 or ch == ")" and -1 or 0
+        if depth == 0 and ch in ":;" and s[i + 1:i + 2] == " ":
+            return s[:i]
+    return s
+
+
+def _at_once(runs: list[dict]) -> float:
+    """Runs going at once on average: their summed time over the wall-clock time with at least one going."""
+    iv = sorted((r["start_time"], r.get("end_time") or r["start_time"]) for r in runs if r.get("start_time"))
+    busy, s0, e0 = 0, None, None
+    for a, z in iv:
+        if e0 is None or a > e0:
+            busy += (e0 - s0) if e0 is not None else 0
+            s0, e0 = a, z
+        else:
+            e0 = max(e0, z)
+    busy += (e0 - s0) if e0 is not None else 0
+    took = sum((z - a) for a, z in iv)
+    return max(1.0, took / busy) if busy else 1.0
+
+
+_WORDS_RE = re.compile(r"(\d+) (h|m|s)\b")
+
+
+def _words_ms(text: str | None) -> int:
+    """The first duration written in words in a finding's text ("6 h 11 m", "3 m 44 s"), in ms."""
+    m = re.search(r"\d+ [hms]\b(?: \d+ [hms]\b)*", text or "")
+    if not m:
+        return 0
+    return sum(int(n) * {"h": 3_600_000, "m": 60_000, "s": 1000}[u] for n, u in _WORDS_RE.findall(m.group(0)))
 
 
 def _fmt_dur(ms) -> str:
