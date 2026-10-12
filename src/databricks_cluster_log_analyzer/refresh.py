@@ -29,8 +29,8 @@ from .analysis.combined import spill_shuffle_timeline
 from .analysis.incidents import build_incidents
 from .analysis.contention import CATEGORIES, add_findings, contention_findings, first_tasks, recount_queries, to_ms
 from .analysis.diagnosis import build_summary
-from .analysis.findings import calibrate, demote_orphan_failures, summarize_errors
-from .analysis.workload import CATEGORIES as WORKLOAD_CATEGORIES, read_split, workload_findings
+from .analysis.findings import calibrate, demote_orphan_failures, recheck_gc, summarize_errors
+from .analysis.workload import CATEGORIES as WORKLOAD_CATEGORIES, driver_findings, read_split, workload_findings
 from .config import Rules
 from .parsing.eventlog import _BENIGN_KILL
 from .store import write_parquet
@@ -115,6 +115,8 @@ def refresh_findings(out_dir: str | os.PathLike, rules: Rules) -> dict:
     new += [f for f in contention_findings(cid, stages, first_tasks(tasks), runs, executors, queries, info, rules, nodes)
             if not (f["category"] == "waited_for_cores" and f.get("run_key") in bound)]
     new += workload_findings(cid, queries, runs, executors, signals, _rows(d / "event_counts.parquet"), rules, stages)
+    new += driver_findings(cid, _rows(d / "apps.parquet"), runs, queries, stages, _rows(d / "settings.parquet"), rules)
+    recheck_gc(findings, stages, rules)
     calibrate(findings, rules)
     demote_orphan_failures(findings, queries)
     allf = add_findings(findings, runs, new, replace=(*CATEGORIES, *WORKLOAD_CATEGORIES, *CAPACITY_CATEGORIES))

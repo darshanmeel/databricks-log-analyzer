@@ -16,5 +16,5 @@ def test_executor_busy_merges_overlapping_and_close_tasks():
     e0 = b[b.executor_id == "0"].sort_values("busy_start")
     # 0-1000 and 500-2000 overlap, 2500 starts within the 2 s gap: one stretch; 60 s later a second one
     assert list(zip(e0.busy_start, e0.busy_end, e0.tasks)) == [(0, 3_000, 3), (60_000, 61_000, 1)]
-    assert "driver" not in set(b.executor_id)
-    assert busy_wall(b) == {("x", "0"): 4_000, ("x", "1"): 60_000}
+    # tasks run on "driver" only in local mode, where the driver is the executor: it counts
+    assert busy_wall(b) == {("x", "0"): 4_000, ("x", "1"): 60_000, ("x", "driver"): 5}

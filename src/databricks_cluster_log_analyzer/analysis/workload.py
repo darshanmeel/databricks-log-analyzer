@@ -6,6 +6,10 @@
   count_only        per run: queries that only counted rows (an ungrouped count, no write) took a large share of it.
   ddl_loop          per run: the same ALTER statement ran many times, one Delta commit each.
   disk_cache        per Spark context: the Databricks disk cache wrote much more than it served.
+  no_spark_work     per run (and per Spark app): most of its time no stage ran, so the time went to the driver
+                    (statements that run no tasks, Python, waiting), which more cores cannot shorten.
+  tiny_task_stages  per Spark app: many stages cut almost no data into the same number of tasks (Delta's 50 log
+                    partitions, a shuffle partition count set for big data), so task overhead is most of their time.
 
 read_split() adds per query: storage_read (files), cache_read (a DataFrame cache) and the disk cache numbers.
 """
@@ -17,7 +21,7 @@ import re
 from collections.abc import Mapping
 
 from ..config import Rules
-from ..util import fmt_bytes, fmt_words
+from ..util import fmt_bytes, fmt_words, is_worker
 from .aggregate import storage_bytes
 from .contention import _run_name, to_ms
 
@@ -37,6 +41,15 @@ FIX = {
     "ddl_loop": (
         "Set the comments or properties in one statement (or in the CREATE TABLE): each ALTER is a separate Delta "
         "commit, and every tenth one writes a checkpoint."),
+    "no_spark_work": (
+        "This time is on the driver, not in Spark tasks: more cores or workers will not shorten it. Look at what ran "
+        "between and inside the statements: DDL and table re-creation (CREATE, REPLACE, DROP: each one a Delta "
+        "commit), Delta log reads, collect() and Python code, sleeps and waits on other systems. Do them once instead "
+        "of per table or per test, or keep the tables between runs."),
+    "tiny_task_stages": (
+        "Give these stages fewer partitions: lower spark.sql.shuffle.partitions (or let adaptive execution coalesce "
+        "them), or coalesce() small DataFrames before the action. Each task costs a few milliseconds of scheduling "
+        "even when it has nothing to do."),
     "disk_cache": (
         "The disk cache wrote far more than it served: this job reads each file about once. Turn it off for the job "
         "(spark.databricks.io.cache.enabled false) so the local disks keep their room for spill and shuffle."),
@@ -177,7 +190,7 @@ def workload_findings(cid: str, queries: list[dict], runs: list[dict], executors
     for ctx, qs in by_ctx.items():
         sizes = [(cache_size(_plan(q)), q) for q in qs]
         big, bq = max(sizes, key=lambda x: x[0])
-        ex = [e for e in executors if e.get("spark_context_id") == ctx and e.get("executor_id") not in (None, "driver")]
+        ex = [e for e in executors if e.get("spark_context_id") == ctx and is_worker(e, executors)]
         # a cache can take all of the unified memory (Spark's MemoryStore capacity) while tasks do not need it, not only
         # the storage fraction of it
         per = max((e.get("unified_memory") or e.get("storage_memory") or 0 for e in ex), default=0)
@@ -308,4 +321,191 @@ def _max_alive(ex: list[dict]) -> int:
     return best or len(ex)
 
 
-CATEGORIES = ("dataframe_cache", "count_only", "ddl_loop", "disk_cache", "dedup_noop")
+CATEGORIES = ("dataframe_cache", "count_only", "ddl_loop", "disk_cache", "dedup_noop", "no_spark_work",
+              "tiny_task_stages")
+
+DELTA_LOG_FIX = (
+    "These are Delta reading a table's transaction log (its state), split into spark.databricks.delta.snapshotPartitions "
+    "parts (open source Delta: 50). For small tables (tests, local runs, a laptop) set it to 1 or 2 in the session: "
+    "each part is a task of a few milliseconds, and on few cores they run one after another.")
+
+
+def _merge(iv: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    out: list[list[int]] = []
+    for a, z in sorted(iv):
+        if out and a <= out[-1][1]:
+            out[-1][1] = max(out[-1][1], z)
+        else:
+            out.append([a, z])
+    return [(a, z) for a, z in out]
+
+
+def _within(iv: list[tuple[int, int]], lo: int, hi: int) -> list[tuple[int, int]]:
+    return [(max(a, lo), min(z, hi)) for a, z in iv if min(z, hi) > max(a, lo)]
+
+
+def _length(iv: list[tuple[int, int]]) -> int:
+    return sum(z - a for a, z in iv)
+
+
+def _minus(a_iv: list[tuple[int, int]], b_iv: list[tuple[int, int]]) -> int:
+    """Length of the merged intervals a_iv outside the merged intervals b_iv."""
+    tot = 0
+    for a, z in a_iv:
+        cur = a
+        for b0, b1 in b_iv:
+            if b1 <= cur:
+                continue
+            if b0 >= z:
+                break
+            if b0 > cur:
+                tot += b0 - cur
+            cur = max(cur, b1)
+            if cur >= z:
+                break
+        if cur < z:
+            tot += z - cur
+    return tot
+
+
+_DIGITS_RE = re.compile(r"\b(?=[0-9a-f]*\d)[0-9a-f]{6,}\b|\d+")  # numbers and hex ids
+
+
+_CALL_SITE_RE = re.compile(r"^\S+ at \S+:\d+$")
+_WRAPPERS = {"CommandResult", "AdaptiveSparkPlan", "ExecutedCommand", "ResultQueryStage", "WholeStageCodegen"}
+
+
+def _shape(q: Mapping) -> str:
+    """What a statement was, for a list: its description, or its plan's command (DROP TABLE, CREATE TABLE) when the
+    description is only a call site (sql at <unknown>:0, from PySpark)."""
+    d = (q.get("description") or "").strip().splitlines()
+    d = d[0].strip() if d else ""
+    if not d or _CALL_SITE_RE.match(d):
+        op = next((str(o) for o in (q.get("operators") if q.get("operators") is not None else []) if str(o) not in _WRAPPERS), None)
+        if op:
+            return re.sub(r"([a-z])([A-Z])", r"\1 \2", op).upper() if op.endswith("Table") else op
+    return _DIGITS_RE.sub("N", d)[:60] or "no description"
+
+
+def _clip(iv: list[tuple[int, int]], up: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    return _merge([x for a, z in up for x in _within(iv, a, z)])
+
+
+def _no_spark(spans_q: list[dict], stage_iv: list[tuple[int, int]], up: list[tuple[int, int]]):
+    """Over the merged intervals `up` (when its Spark app was running): (wall ms, ms with no stage running, of it inside
+    SQL statements, the statement shapes with the most of that time)."""
+    wall = _length(up)
+    st = _clip(stage_iv, up)
+    none = wall - _length(st)
+    q_iv = _clip([(to_ms(q["start_time"]), to_ms(q["end_time"])) for q in spans_q], up)
+    in_q = _minus(q_iv, st)
+    shapes: dict[str, list] = {}
+    for q in spans_q:
+        own = _minus(_clip([(to_ms(q["start_time"]), to_ms(q["end_time"]))], up), st)
+        if own >= 1000:
+            s = shapes.setdefault(_shape(q), [0, 0])
+            s[0] += 1
+            s[1] += own
+    top = sorted(shapes.items(), key=lambda kv: -kv[1][1])[:3]
+    return wall, none, in_q, top
+
+
+def driver_findings(cid: str, apps: list[dict], runs: list[dict], queries: list[dict], stages: list[dict],
+                    settings: list[dict], rules: Rules) -> list[dict]:
+    """no_spark_work (per run, and per Spark app when no single run covers most of it) and tiny_task_stages."""
+    from ..settings_catalog import local_contexts
+
+    out: list[dict] = []
+    local = local_contexts(settings)
+    stage_iv: dict = {}
+    run_stage_iv: dict = {}
+    for s in stages:
+        a, z = to_ms(s.get("start_time")), to_ms(s.get("end_time"))
+        if a is None or z is None or z <= a:
+            continue
+        stage_iv.setdefault(s["spark_context_id"], []).append((a, z))
+        if s.get("run_key"):
+            run_stage_iv.setdefault(s["run_key"], []).append((a, z))
+    q_ok = [q for q in queries if to_ms(q.get("start_time")) is not None and to_ms(q.get("end_time")) is not None
+            and to_ms(q["end_time"]) > to_ms(q["start_time"])]
+
+    def text(none, wall, in_q, top, what):
+        ev = f"No Spark stage ran for {fmt_words(none)} of {what} {fmt_words(wall)} ({none / wall:.0%})"
+        bits = []
+        if in_q >= 1000:
+            bits.append(f"{fmt_words(in_q)} inside SQL statements while none of their stages ran"
+                        + (" (" + ", ".join(f"{n} × {sh}" for sh, (n, _ms) in top) + ")" if top else ""))
+        if none - in_q >= 1000:
+            bits.append(f"{fmt_words(none - in_q)} between statements (driver or Python code, session start, waiting)")
+        return ev + (": " + "; ".join(bits) if bits else "") + "."
+
+    # a run counts only while a Spark app of it was up: the gap between two apps (a restart) is not driver code
+    app_span = {a["spark_context_id"]: (to_ms(a.get("start_time")), to_ms(a.get("end_time"))) for a in apps}
+    run_ctx: dict = {}
+    for x in [*stages, *queries]:
+        if x.get("run_key"):
+            run_ctx.setdefault(x["run_key"], set()).add(x["spark_context_id"])
+    covered: dict = {}
+    for r in runs:
+        if r.get("kind") == "app":
+            continue
+        lo, hi = to_ms(r.get("start_time")), to_ms(r.get("end_time"))
+        if lo is None or hi is None or hi - lo < rules.no_spark_min_ms:
+            continue
+        spans = [app_span.get(c) for c in run_ctx.get(r["run_key"], {r["spark_context_id"]})]
+        up = _clip([(a, z) for a, z in (s for s in spans if s) if a is not None and z is not None] or [(lo, hi)], [(lo, hi)])
+        qs = [q for q in q_ok if q.get("run_key") == r["run_key"]]
+        wall, none, in_q, top = _no_spark(qs, run_stage_iv.get(r["run_key"], []), up)
+        if none < rules.no_spark_min_ms or none < rules.no_spark_share_min * wall:
+            continue
+        covered[r["spark_context_id"]] = max(covered.get(r["spark_context_id"], 0), wall)
+        sev = "high" if none >= 0.7 * wall and none >= 600_000 else "medium"
+        out.append(_f(cid, r["spark_context_id"], sev, "no_spark_work", f"run {_run_name(r)}",
+                      text(none, wall, in_q, top, "its"), lo, run_key=r["run_key"]))
+    app_run = {r["spark_context_id"]: r["run_key"] for r in runs if r.get("kind") == "app"}
+    for a in apps:
+        ctx = a["spark_context_id"]
+        lo, hi = to_ms(a.get("start_time")), to_ms(a.get("end_time"))
+        if lo is None or hi is None or hi - lo < rules.no_spark_min_ms or covered.get(ctx, 0) >= 0.8 * (hi - lo):
+            continue
+        qs = [q for q in q_ok if q["spark_context_id"] == ctx]
+        _wall, none, in_q, top = _no_spark(qs, stage_iv.get(ctx, []), [(lo, hi)])
+        if none < rules.no_spark_min_ms or none < rules.no_spark_share_min * (hi - lo):
+            continue
+        sev = "high" if none >= 0.7 * (hi - lo) and (none >= 600_000 or ctx in local) else "medium"
+        out.append(_f(cid, ctx, sev, "no_spark_work", f"Spark app {a.get('app_name') or ctx}",
+                      text(none, hi - lo, in_q, top, "the app's"), lo, run_key=app_run.get(ctx)))
+
+    # ---- many stages that cut almost nothing into the same number of tasks ------------------------------------------
+    by_ctx: dict = {}
+    for s in stages:
+        by_ctx.setdefault(s["spark_context_id"], []).append(s)
+    for ctx, ss in by_ctx.items():
+        all_tasks = sum(s.get("tasks") or 0 for s in ss)
+        groups: dict = {}
+        for s in ss:
+            n, p50 = s.get("tasks") or 0, s.get("p50_task_ms")
+            if n >= 20 and p50 is not None and p50 <= 100 and (s.get("p50_task_bytes_in") or 0) <= 64 << 10:
+                groups.setdefault(n, []).append(s)
+        for n, g in groups.items():
+            tasks = sum(s.get("tasks") or 0 for s in g)
+            if len(g) < 10 or tasks < max(1000, 0.3 * all_tasks):
+                continue
+            ms = sum(s.get("duration_ms") or 0 for s in g)
+            delta = sum(1 for s in g if any("Delta Table State" in str(x) for x in (s.get("rdd_names") or [])))
+            p50s = sorted(s["p50_task_ms"] for s in g)
+            ev = (f"{len(g)} stages ran exactly {n} tasks each ({tasks:,} of the app's {all_tasks:,} tasks, "
+                  f"{tasks / all_tasks:.0%}); their median task took {p50s[len(p50s) // 2]} ms and read almost nothing. "
+                  f"Together they took {fmt_words(ms)} of stage time")
+            if delta:
+                ev += f". {delta} of them read a Delta table's transaction log"
+            app = next((a for a in apps if a["spark_context_id"] == ctx), {})
+            dur = (to_ms(app.get("end_time")) or 0) - (to_ms(app.get("start_time")) or 0)
+            sev = "high" if dur > 0 and ms >= 0.2 * dur else "medium" if ms >= 60_000 else "low"
+            f = _f(cid, ctx, sev, "tiny_task_stages", f"{len(g)} stages of {n} tiny tasks", ev + ".",
+                   to_ms(g[0].get("start_time")), stage_id=g[0]["stage_id"], stage_attempt=g[0]["stage_attempt"],
+                   run_key=app_run.get(ctx))
+            if delta >= len(g) / 2:
+                f["fix"] = DELTA_LOG_FIX
+            out.append(f)
+    return out

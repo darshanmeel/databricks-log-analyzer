@@ -29,7 +29,7 @@ import pyarrow.compute as pc
 
 from ..analysis.merge import SCAN_FILES, cycle_of, files_text, merge_facts, merge_fix, wrote_text
 from ..parsing.plans import jdbc_source, name_paths_in_text, name_tables, table_names
-from ..util import is_null
+from ..util import is_null, is_worker
 
 # ---------------------------------------------------------------------------------------------------------------------
 # Constants
@@ -2571,7 +2571,7 @@ def _core_hog(stages: list[dict], executors: list[dict]) -> tuple[dict, int] | N
     """The longest stage (HOG_MS or more) with more tasks than the most worker cores ever up at once, and those cores."""
     ev = []
     for e in executors:
-        if str(e.get("executor_id")) == "driver" or not e.get("cores"):
+        if not is_worker(e, executors) or not e.get("cores"):
             continue
         ev.append((_as_ms(e.get("added_time")) or 0, int(e["cores"])))
         if e.get("removed_time"):
@@ -2795,7 +2795,7 @@ def settings_view(store: Store, cid: str) -> dict[str, Any]:
             ["For runs whose time matters: give the big ones their own job cluster", "or run fewer at once"])
     # 5b. bursts: many runs started within a couple of minutes (a for-each task at high concurrency), and what the
     # executors did around it (autoscaling that removed executors just before, or added them only minutes later)
-    workers = [e for e in view["executors"] if str(e.get("executor_id")) != "driver" and e.get("cores")]
+    workers = [e for e in view["executors"] if is_worker(e, view["executors"]) and e.get("cores")]
     for b in _start_bursts(runs_):
         t0 = b["first"]
         up = [e for e in workers if (e.get("added_time") or 0) <= t0

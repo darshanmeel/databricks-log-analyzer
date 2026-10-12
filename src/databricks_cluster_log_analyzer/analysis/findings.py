@@ -8,7 +8,7 @@ from collections.abc import Mapping
 import pandas as pd
 
 from ..config import SEVERITY_RANK, Rules
-from ..util import fmt_words, round_half_up, spark_double_str
+from ..util import fmt_words, round_half_up, spark_double_str, is_worker
 from ..parsing.oom import SITE_FIX, SITE_TEXT, is_oom, oom_site
 from .aggregate import storage_bytes
 from .retries import category_text, stage_retry_summary
@@ -62,7 +62,7 @@ def _idle_findings(cid: str, profile: list[dict], rules: Rules) -> list[dict]:
     """Revision 12: per Spark context, executor core time paid for but not used by any task."""
     by_ctx: dict[str, list[dict]] = {}
     for e in profile:
-        if e.get("executor_id") not in (None, "driver") and e.get("lifetime_ms") and e.get("cores"):
+        if is_worker(e, profile) and e.get("lifetime_ms") and e.get("cores"):
             by_ctx.setdefault(e["spark_context_id"], []).append(e)
     out = []
     for ctx, ex in by_ctx.items():
@@ -519,6 +519,23 @@ def calibrate(findings: list[dict], rules: Rules) -> None:
             m = re.match(r"slowest task ([\d.]+)s", f.get("evidence") or "")
             if m and float(m.group(1)) * 1000 < SKEW_HIGH_MS:
                 f["severity"] = "medium"
+
+
+def recheck_gc(findings: list[dict], stages: list[dict], rules: Rules) -> None:
+    """Refresh: the GC pressure findings of an older output again, with the stages' GC share over task time and the
+    minimum GC time (drops the ones a short stage made: 40% of 50 ms is not a problem)."""
+    by = {(s["spark_context_id"], s["stage_id"], s["stage_attempt"]): s for s in stages}
+    keep = []
+    for f in findings:
+        if f["category"] == "gc_pressure" and f.get("stage_id") is not None:
+            s = by.get((f["spark_context_id"], f["stage_id"], f["stage_attempt"]))
+            if s is not None:
+                if not (s.get("gc_share") is not None and s["gc_share"] >= rules.gc_share
+                        and stage_gc_ms(s) >= rules.gc_min_ms):
+                    continue
+                f["evidence"] = f"{spark_double_str(round_half_up(s['gc_share'] * 100))}% of task time in GC"
+        keep.append(f)
+    findings[:] = keep
 
 
 def demote_orphan_failures(findings: list[dict], queries: list[dict]) -> None:

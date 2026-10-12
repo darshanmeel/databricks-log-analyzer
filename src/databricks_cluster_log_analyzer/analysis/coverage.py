@@ -101,7 +101,7 @@ def coverage(classified: Mapping[str, list[Path]], cluster_dir: Path, apps: list
             add("event_log_no_start", "The start of the event log is missing (no environment / settings).",
                 "Settings, the cluster's node types and its memory per executor: unknown.")
         added = {(e.get("spark_context_id"), str(e.get("executor_id"))) for e in executors if e.get("added_time") is not None}
-        orphan = sorted({ex for ctx, ex in tasks_executors if ex and ex != "driver" and (ctx, ex) not in added},
+        orphan = sorted({ex for ctx, ex in tasks_executors if ex and (ctx, ex) not in added},
                         key=lambda x: (len(x), x))
         if orphan:
             add("executors_no_start", f"Executor{'s' if len(orphan) > 1 else ''} {', '.join(orphan[:8])} ran tasks "

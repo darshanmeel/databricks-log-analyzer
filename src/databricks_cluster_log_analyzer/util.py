@@ -132,3 +132,16 @@ def walk_files(root):
         for fn in files:
             rel = fn if rel_dir in (".", "") else os.path.join(rel_dir, fn)
             yield rel.replace(os.sep, "/"), fn
+
+
+def is_worker(e: dict, executors: list[dict]) -> bool:
+    """An executor that runs tasks: every one but the driver, and the driver too in local mode (local[N]), where it is
+    the only executor of its Spark context and runs every task."""
+    ex = e.get("executor_id")
+    if ex is None:
+        return False
+    if str(ex) != "driver":
+        return True
+    ctx = e.get("spark_context_id")
+    return not any(o is not e and o.get("spark_context_id") == ctx and o.get("executor_id") not in (None, "driver")
+                   for o in executors)

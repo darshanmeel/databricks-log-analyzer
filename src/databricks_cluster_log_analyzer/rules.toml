@@ -21,6 +21,10 @@ spill_high_bytes = 53687091200    # 50 GB
 # noise on a short stage: 40% of 50 ms is not a problem)
 gc_share = 0.2
 gc_min_seconds = 10
+# no_spark_work: a run (or a Spark app) with no stage running for at least no_spark_share_min of its time and at
+# least no_spark_min_seconds: the time went to the driver
+no_spark_share_min = 0.5
+no_spark_min_seconds = 120
 # tiny_tasks: >= tiny_tasks_min tasks with a median below tiny_tasks_p50_ms
 tiny_tasks_min = 2000
 tiny_tasks_p50_ms = 200

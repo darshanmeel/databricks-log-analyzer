@@ -31,6 +31,8 @@ class Rules:
     spill_high_bytes: int = 50 << 30
     gc_share: float = 0.2
     gc_min_ms: int = 10_000
+    no_spark_share_min: float = 0.5
+    no_spark_min_ms: int = 120_000
     tiny_tasks_min: int = 2000
     tiny_tasks_p50_ms: int = 200
     full_gc_min: int = 3
@@ -191,6 +193,8 @@ def load_rules(path: str | os.PathLike | None = None) -> Rules:
         spill_high_bytes=int(th.get("spill_high_bytes", d.spill_high_bytes)),
         gc_share=float(th.get("gc_share", d.gc_share)),
         gc_min_ms=int(float(th.get("gc_min_seconds", d.gc_min_ms / 1000)) * 1000),
+        no_spark_share_min=float(th.get("no_spark_share_min", d.no_spark_share_min)),
+        no_spark_min_ms=int(float(th.get("no_spark_min_seconds", d.no_spark_min_ms / 1000)) * 1000),
         tiny_tasks_min=int(th.get("tiny_tasks_min", d.tiny_tasks_min)),
         tiny_tasks_p50_ms=int(th.get("tiny_tasks_p50_ms", d.tiny_tasks_p50_ms)),
         story_max_log_rows=int(data.get("story", {}).get("story_max_log_rows", d.story_max_log_rows)),

@@ -18,7 +18,7 @@ from collections.abc import Callable, Iterable, Mapping
 from typing import Any
 
 from ..config import SEVERITY_RANK, Rules
-from ..util import fmt_bytes, fmt_words
+from ..util import fmt_bytes, fmt_words, is_worker
 from .merge import files_text, merge_facts, merge_fix, wrote_text
 
 GB = 1 << 30
@@ -212,7 +212,7 @@ def contention_findings(cid: str, stages: list[dict], firsts: Mapping[tuple, int
             n += d
             if n > peak:
                 peak, peak_at = n, t
-        ex = [e for e in executors if e.get("spark_context_id") == ctx and e.get("executor_id") not in (None, "driver")]
+        ex = [e for e in executors if e.get("spark_context_id") == ctx and is_worker(e, executors)]
 
         def cores_at(t: int) -> tuple[int, int]:
             up = [e for e in ex if (to_ms(e.get("added_time")) or 0) <= t and (to_ms(e.get("removed_time")) or 1 << 62) > t]

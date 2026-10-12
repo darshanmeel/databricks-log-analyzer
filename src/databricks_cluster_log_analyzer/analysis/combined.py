@@ -187,8 +187,8 @@ def executor_busy(tdf: pd.DataFrame, cluster_id: str, merge_gap_ms: int = 2000) 
     Everything outside these stretches, between the executor's added and removed time, it was up and idle."""
     if tdf.empty:
         return pd.DataFrame(columns=BUSY_COLS)
-    t = tdf[tdf["launch_time"].notna() & tdf["finish_time"].notna() & tdf["executor_id"].notna()
-            & (tdf["executor_id"] != "driver")]
+    # an executor "driver" runs tasks only in local mode, where it is the only one: it counts
+    t = tdf[tdf["launch_time"].notna() & tdf["finish_time"].notna() & tdf["executor_id"].notna()]
     if t.empty:
         return pd.DataFrame(columns=BUSY_COLS)
     t = t[["spark_context_id", "executor_id", "launch_time", "finish_time", "task_ms"]].sort_values(
@@ -336,7 +336,7 @@ def executor_profile(executors: list[dict], apps: list[dict], tdf: pd.DataFrame,
     # executors seen only in tasks (no ExecutorAdded/Removed event)
     seen = {(e["spark_context_id"], e["executor_id"]) for e in executors}
     for (ctx, ex) in task_agg:
-        if (ctx, ex) not in seen and ex != "driver":
+        if (ctx, ex) not in seen:
             seen.add((ctx, ex))
             make(ctx, ctx_app.get(ctx), ex, None)
     # executor log folders with no matching executor in the event log

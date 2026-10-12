@@ -30,6 +30,7 @@ SETTINGS: tuple[tuple[str, str, str | None, str], ...] = (
     ("spark.memory.offHeap.enabled", "Memory and cores", "false", "memory outside the JVM heap for Spark"),
     ("spark.memory.offHeap.size", "Memory and cores", None, "its size"),
     ("spark.driver.maxResultSize", "Memory and cores", None, "the most a collect() may bring to the driver"),
+    ("spark.master", "Sharing and scheduling", None, "where tasks run: local[N] is one JVM (the driver) with N task threads"),
     ("spark.scheduler.mode", "Sharing and scheduling", "FIFO", "FAIR lets runs on the same cluster share the cores"),
     ("spark.databricks.preemption.enabled", "Sharing and scheduling", None, "take cores back from a run that holds too many"),
     ("spark.speculation", "Sharing and scheduling", "false", "start a copy of a very slow task elsewhere"),
@@ -39,6 +40,8 @@ SETTINGS: tuple[tuple[str, str, str | None, str], ...] = (
     ("spark.databricks.io.cache.enabled", "Engine and storage", None, "the local disk cache for files read again"),
     ("spark.databricks.delta.optimizeWrite.enabled", "Engine and storage", None, "write fewer, bigger files"),
     ("spark.databricks.delta.autoCompact.enabled", "Engine and storage", None, "compact small files after a write"),
+    ("spark.databricks.delta.snapshotPartitions", "Engine and storage", None,
+     "tasks Delta uses to read a table's transaction log (open source Delta: 50)"),
     (TAGS + "runtimeEngine", "Cluster", None, "STANDARD or PHOTON"),
     (TAGS + "effectiveSparkVersion", "Cluster", None, "Databricks runtime"),
     (TAGS + "clusterNodeType", "Cluster", None, "worker VM type"),
@@ -73,3 +76,23 @@ def size_bytes(v: str | None) -> int | None:
     if not m:
         return None
     return int(float(m.group(1)) * {"": 1, "k": 1 << 10, "m": 1 << 20, "g": 1 << 30, "t": 1 << 40}[m.group(2)])
+
+
+def local_contexts(settings: list[dict]) -> set[str]:
+    """Spark contexts that ran in local mode (spark.master local, local[N], local[*]): the driver JVM is the only
+    executor, so there are no workers to add or remove and no Databricks cluster around it."""
+    out = set()
+    for r in settings or []:
+        if r.get("key") == "spark.master" and str(r.get("value") or r.get("cluster_value") or "").startswith("local"):
+            out.add(r["spark_context_id"])
+    return out
+
+
+def local_threads(master: str | None) -> int | None:
+    """N of local[N] (None for local[*] or anything else)."""
+    import re
+
+    m = re.fullmatch(r"local(?:\[(\d+)(?:,\s*\d+)?\])?", str(master or "").strip())
+    if not m:
+        return None
+    return int(m.group(1)) if m.group(1) else 1

@@ -22,7 +22,7 @@ from collections.abc import Mapping
 import pandas as pd
 
 from ..config import Rules
-from ..util import fmt_words
+from ..util import fmt_words, is_worker
 from .contention import _run_name, to_ms
 
 FIX = {
@@ -103,7 +103,7 @@ def sweep(tdf: pd.DataFrame, stages: list[dict], executors: list[dict]) -> dict[
             ev.append((lt, 0, 1, 0, run))
             ev.append((ft, 0, -1, 0, run))
         for e in executors:
-            if e.get("spark_context_id") != ctx or e.get("executor_id") in (None, "driver"):
+            if e.get("spark_context_id") != ctx or not is_worker(e, executors):
                 continue
             a, b, c = to_ms(e.get("added_time")), to_ms(e.get("removed_time")), int(e.get("cores") or 0)
             if a is not None and c:
@@ -185,7 +185,7 @@ def capacity_findings(cid: str, tdf: pd.DataFrame, stages: list[dict], executors
     info = {c.get("spark_context_id"): c for c in cluster_info or []}
     for ctx, st in sw.items():
         ci = info.get(ctx) or {}
-        ex = [e for e in executors if e.get("spark_context_id") == ctx and e.get("executor_id") not in (None, "driver")]
+        ex = [e for e in executors if e.get("spark_context_id") == ctx and is_worker(e, executors)]
         per = max((int(e.get("cores") or 0) for e in ex), default=0)
         maxc = max(st["max_cores"], (int(ci["max_workers"]) * per) if ci.get("max_workers") and per else 0)
         if not maxc:
@@ -313,7 +313,7 @@ def core_use(tdf: pd.DataFrame, executors: list[dict], apps: list[dict]) -> dict
     end = {a["spark_context_id"]: to_ms(a.get("end_time")) for a in apps}
     paid = 0.0
     for e in executors:
-        if e.get("executor_id") in (None, "driver"):
+        if not is_worker(e, executors):
             continue
         a = to_ms(e.get("added_time"))
         z = to_ms(e.get("removed_time")) or end.get(e.get("spark_context_id"))
