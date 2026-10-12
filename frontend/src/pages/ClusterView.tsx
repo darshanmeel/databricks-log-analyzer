@@ -158,9 +158,7 @@ function ClusterBody({ d }: { d: ClusterViewData }) {
             );
           })()}
           <ExecutorsBusy cid={cid} compute={cu ?? null} heaps={d.executors} />
-          <div id="cv-runs"><Panel title="All runs" note="Click a row to open that run. Read per task is the storage input plus shuffle read of each task that read data; hover Biggest for the size bands.">
-            <RunsTable runs={runs} atText={atText} onAtText={setAtText} />
-          </Panel></div>
+          {/* the full runs table (every column) is raw material: Logs & raw data has the runs dataset */}
         </>} />
     </div>
   );

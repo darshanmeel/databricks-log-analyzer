@@ -293,7 +293,16 @@ function RunRail({ runs, run, choose }: { runs: RunRow[]; run: string | null; ch
   const [by, setBy] = useState<RailSort>(readRailSort);
   const pickSort = (v: RailSort) => { setBy(v); try { localStorage.setItem('rail:sort', v); } catch { /* private window */ } };
   const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
-  const shown = words.length ? runs.filter((r) => { const h = runHaystack(r); return words.every((w) => h.includes(w)); }) : runs;
+  // a time ("1:05", "13:05") lists the runs going then (UTC), the way a 2 a.m. question starts
+  const at = /^(\d{1,2}):(\d{2})$/.exec(q.trim());
+  const going = (r: RunRow) => {
+    if (!at || r.start_time == null) return false;
+    const d = new Date(r.start_time);
+    const t = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), Number(at[1]), Number(at[2]));
+    const end = r.end_time ?? r.start_time;
+    return [t - 86_400_000, t, t + 86_400_000].some((x) => x >= r.start_time! - 30_000 && x <= end + 30_000);
+  };
+  const shown = at ? runs.filter(going) : words.length ? runs.filter((r) => { const h = runHaystack(r); return words.every((w) => h.includes(w)); }) : runs;
   const groups = useMemo(() => {
     const m = new Map<string, RunRow[]>();
     for (const r of shown) m.set(runGroup(r), [...(m.get(runGroup(r)) ?? []), r]);
@@ -312,7 +321,7 @@ function RunRail({ runs, run, choose }: { runs: RunRow[]; run: string | null; ch
       {/* phones: one line with the run picked; the list opens on tap */}
       <button className="rail-toggle" aria-expanded={openRail} onClick={() => setOpenRail(!openRail)}>{cur ? railName(cur) : 'Pick a run'} <span aria-hidden>{openRail ? '▴' : '▾'}</span></button>
       <div className="rail-body">
-      <input className="input rail-search" placeholder="Name, table, id or 13:05" value={q} aria-label="Search runs"
+      <input className="input rail-search" placeholder="Name, table, id, or a time: 13:05" value={q} aria-label="Search runs"
         onChange={(e) => setQ(e.target.value)}
         onKeyDown={(e) => { if (e.key === 'Enter' && shown[0]) choose(shown[0].run_key); if (e.key === 'Escape') setQ(''); }} />
       <div className="rail-sort">
@@ -481,11 +490,25 @@ export function ClusterLayout() {
   const toCluster = (e: React.MouseEvent) => { e.preventDefault(); scope.choose(null); nav(base); };
   const sectionForCluster = (sec: string) => { scope.choose(null); nav(sec ? `${base}/${sec}` : base); };
 
+  const [crumbQ] = useSearchParams();
+  const unitP = section === 'hierarchy' ? crumbQ.get('unit') ?? '' : '';
+  const nodeP = section === 'hierarchy' ? crumbQ.get('node') ?? '' : '';
+  const qm = /^query:(.+):(\d+)$/.exec(unitP);
+  const jm = /^job:(.+):(\d+)$/.exec(unitP) ?? /^job:(.+):(\d+)$/.exec(nodeP);
+  const sm = /^stage:(.+):(\d+):(\d+)$/.exec(nodeP);
+  const runQ = cur ? `run=${encodeURIComponent(cur.run_key)}&` : '';
   const crumbs = slot && createPortal(
     <>
       <span className="sep">/</span>
       {cur ? <a href={base} className="mono" onClick={toCluster}>{cid}</a> : <span className="mono cur">{cid}</span>}
-      {cur && <><span className="sep">/</span><span className="mono cur">{runName(cur)}</span></>}
+      {cur && <><span className="sep">/</span>{qm || jm || sm
+        ? <Link className="mono" to={`${base}?run=${encodeURIComponent(cur.run_key)}`}>{runName(cur)}</Link>
+        : <span className="mono cur">{runName(cur)}</span>}</>}
+      {qm && <><span className="sep">/</span>{sm || (jm && nodeP)
+        ? <Link className="mono" to={`${base}/hierarchy?${runQ}ctx=${encodeURIComponent(qm[1])}&unit=${encodeURIComponent(unitP)}`}>Query {qm[2]}</Link>
+        : <span className="mono cur">Query {qm[2]}</span>}</>}
+      {jm && !qm && <><span className="sep">/</span><span className="mono cur">Spark job {jm[2]}</span></>}
+      {sm && <><span className="sep">/</span><span className="mono cur">Stage {sm[2]}{sm[3] !== '0' ? `.${sm[3]}` : ''}</span></>}
     </>,
     slot,
   );

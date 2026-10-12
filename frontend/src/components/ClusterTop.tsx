@@ -19,6 +19,17 @@ import { CauseBar, CauseHeadline, CauseLegend, causeOf, causeParts, type CauseKe
 import { WhatBroke, useTopFailure } from './WhatBroke';
 
 const TOP = 5;
+type Preset = 'longest' | 'usual' | 'waited' | 'failed' | 'spilled';
+/** The ways the one run list ranks the runs. */
+const PRESETS: [Preset, string, (rs: RunRow[]) => RunRow[]][] = [
+  ['longest', 'Longest', (rs) => [...rs].sort((a, b) => (b.duration_ms ?? 0) - (a.duration_ms ?? 0))],
+  ['usual', 'Most over usual', (rs) => rs.filter((r) => usualX(r) !== null).sort((a, b) =>
+    ((b.duration_ms ?? 0) - (b.typical_duration_ms ?? 0)) - ((a.duration_ms ?? 0) - (a.typical_duration_ms ?? 0)))],
+  ['waited', 'Waited', (rs) => rs.filter((r) => waitOf(r) > 0).sort((a, b) => waitOf(b) - waitOf(a))],
+  ['failed', 'Failed or retried', (rs) => rs.filter((r) => r.status === 'failed' || (r.failed_tasks ?? 0) > 0)
+    .sort((a, b) => Number(b.status === 'failed') - Number(a.status === 'failed') || (b.failed_tasks ?? 0) - (a.failed_tasks ?? 0))],
+  ['spilled', 'Spilled', (rs) => rs.filter((r) => (r.disk_spill ?? 0) > 0).sort((a, b) => (b.disk_spill ?? 0) - (a.disk_spill ?? 0))],
+];
 const GB = 1024 ** 3;
 const BAD_GONE = ['oom', 'lost', 'killed'];
 
@@ -141,15 +152,12 @@ export function ClusterTop({ cid, runs, executors, compute, onPick, find, more, 
 
       <ClusterTables cid={cid} />
 
-      <Fold name="cluster" title="Details" ids={['cv-find', 'cv-runs', 'cv-errors']}
-        hint={`more numbers, find, programs, ${errs.data?.length ? fmtNum(errs.data.length) + ' ' : ''}errors, all ${fmtNum(runs.length)} runs`}>
+      <Fold name="cluster" title="Details" ids={['cv-find', 'cv-errors']}
+        hint={`more numbers, find a stage, query or task, ${errs.data?.length ? fmtNum(errs.data.length) + ' ' : ''}errors`}>
         {moreTiles}
         {atBox}
         <div id="cv-find">{find}</div>
-        <div className="ro-two">
-          <Programs cid={cid} progs={progs} />
-          <Errors cid={cid} rows={errs.data ?? null} runs={runs} />
-        </div>
+        <Errors cid={cid} rows={errs.data ?? null} runs={runs} />
         {more}
       </Fold>
     </>
@@ -175,7 +183,7 @@ function WhySlow({ cid, progs, waiting, took, running, peak, execs, cores, slow,
       <div className="ro-links">
         <a href="#cv-time">Where the time went ↓</a>
         <a href="#cv-change">What to change ↓</a>
-        <a href="#cv-runs">All runs ↓</a>
+        <a href="#cv-time">All runs ↓</a>
       </div>
     </>
   );
@@ -250,10 +258,14 @@ function TimeWent({ cid, runs, took, waiting, running, t0, t1, compute, peak, ca
   const width = (x: number, y: number) => `${Math.max(0.6, ((Math.min(y, t1) - Math.max(x, t0)) / span) * 100)}%`;
   const out = Math.max(0, took - waiting - running);
   const [by, setBy] = useState<CauseKey | null>(null);
+  const [preset, setPreset] = useState<Preset>('longest');
+  const [showAll, setShowAll] = useState(false);
+  const [grouped, setGrouped] = useState(false);
   const parts = causeParts(waiting, running, out, causes);
   const rc = (r: RunRow, k: CauseKey) => causeOf(runCauses[r.run_key], r.waiting_ms ?? 0, k);
-  const top = (by ? [...runs].sort((a, b) => rc(b, by) - rc(a, by)).filter((r) => rc(r, by) > 0)
-    : [...runs].sort((a, b) => (b.duration_ms ?? 0) - (a.duration_ms ?? 0))).slice(0, TOP);
+  const ranked = by ? [...runs].sort((a, b) => rc(b, by) - rc(a, by)).filter((r) => rc(r, by) > 0)
+    : PRESETS.find((p) => p[0] === preset)![2](runs);
+  const top = showAll ? ranked : ranked.slice(0, TOP);
   const maxT = Math.max(1, ...top.map((r) => r.duration_ms ?? 0));
   return (
     <section className="panel" id="cv-time">
@@ -268,6 +280,15 @@ function TimeWent({ cid, runs, took, waiting, running, t0, t1, compute, peak, ca
       <div className="panel-body">
         <CauseBar parts={parts} total={took} by={by} onBy={setBy} />
         {by && <p className="small" style={{ margin: '0 0 8px' }}>The runs with the most <b>{parts.find((p) => p.key === by)?.label}</b> · <button className="linkish" onClick={() => setBy(null)}>back to longest first</button></p>}
+        {/* the one list of runs on this page: ranked one way or another, all of them on demand, or by program */}
+        <div className="row small" style={{ gap: 6, margin: '0 0 8px', flexWrap: 'wrap', alignItems: 'center' }}>
+          <span className="muted">Rank by</span>
+          <div className="seg" role="group" aria-label="Rank the runs">
+            {PRESETS.map(([k, l]) => <button key={k} className={!by && !grouped && preset === k ? 'on' : ''} aria-pressed={!by && !grouped && preset === k} onClick={() => { setBy(null); setGrouped(false); setPreset(k); }}>{l}</button>)}
+            <button className={grouped ? 'on' : ''} aria-pressed={grouped} onClick={() => setGrouped(!grouped)}>By program</button>
+          </div>
+        </div>
+        {grouped ? <Programs cid={cid} progs={programs(runs)} /> : <>
         <div className="table-wrap" style={{ overflowX: 'auto' }}>
           <table className="ro-find ro-time-table">
             <thead>
@@ -316,9 +337,12 @@ function TimeWent({ cid, runs, took, waiting, running, t0, t1, compute, peak, ca
             </tbody>
           </table>
         </div>
-        <p className="small" style={{ margin: '8px 0 0' }}>
-          <a href="#cv-find">Rank the runs another way ↓</a> · <a href="#cv-runs">All {fmtNum(runs.length)} runs ↓</a>
-        </p>
+        {ranked.length > TOP && (
+          <p className="small" style={{ margin: '8px 0 0' }}>
+            <button className="linkish" onClick={() => setShowAll(!showAll)}>{showAll ? `Only the top ${TOP} ↑` : `All ${fmtNum(ranked.length)} runs ↓`}</button>
+          </p>
+        )}
+        </>}
       </div>
     </section>
   );

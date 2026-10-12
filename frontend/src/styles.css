@@ -1818,3 +1818,9 @@ details.sub[open] > summary { margin-bottom: 4px; }
 .tables-read.flagged { border-left-color: var(--border); }
 /* a cause card's own fix, under its numbers */
 .ro-card-fix { margin: 6px 0 0; padding-top: 6px; border-top: 1px solid var(--line-soft, var(--border)); }
+
+/* Queries page: the list of queries folds away for a full-width query or stage */
+.focus-layout { position: relative; }
+.focus-toggle { grid-column: 1 / -1; justify-self: start; }
+.focus-layout.no-side { grid-template-columns: minmax(0, 1fr); }
+.focus-layout.no-side .focus-side { display: none; }

@@ -173,7 +173,7 @@ function buildModel(g: Gantt): Model {
     const gap = 1;
     const ex = execMap.get(id);
     const busyIv = g.busy?.filter((b) => b.executor_id === id).map((b) => ({ s: b.busy_start, e: b.busy_end }));
-    const idle = id === 'driver' || (g.sampled && !g.busy) ? undefined : idleOf(busyIv ?? byExec.get(id) ?? [], ex?.added ?? t0, ex?.removed ?? t1);
+    const idle = id === 'driver' || (g.sampled && !g.busy) ? undefined : idleOf(busyIv ?? byExec.get(id) ?? [], Math.max(ex?.added ?? t0, t0), Math.min(ex?.removed ?? t1, t1));  // inside the window shown (the run's), not the executor's whole life
     push({
       kind: 'exec',
       label: id === 'driver' ? 'driver' : `exec ${id}`,

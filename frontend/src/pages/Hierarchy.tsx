@@ -645,6 +645,9 @@ export default function HierarchyPage() {
     } else pickUnit(u);
   }, [nb, chain, pickUnit]);
   const isQuery = unit?.node?.type === 'query' && unit.node.execId !== null;
+  // the list of queries folds away so a query or stage gets the page's width (remembered in this browser)
+  const [listHidden, setListHiddenState] = useState<boolean>(() => { try { return localStorage.getItem('q:list') === 'hidden'; } catch { return false; } });
+  const setListHidden = (v: boolean) => { setListHiddenState(v); try { localStorage.setItem('q:list', v ? 'hidden' : 'shown'); } catch { /* private window */ } };
   const tabQ = sp.get('tab');
   const tab = isQuery && tabQ === 'plan' ? 'plan' : tabQ === 'trace' && unit?.kind !== 'orphans' ? 'trace' : 'stages';
   const stageIds = useMemo(() => new Set((unit?.stages ?? []).map((s) => s.stageId).filter((v): v is number => v !== null)), [unit]);
@@ -755,7 +758,10 @@ export default function HierarchyPage() {
           <Empty title="No Spark jobs">No event logs were found for this cluster, so there are no queries or jobs to draw.</Empty>
         </div>
       ) : (
-        <div className="focus-layout">
+        <div className={`focus-layout ${listHidden ? 'no-side' : ''}`}>
+          <button className="btn small ghost focus-toggle" onClick={() => setListHidden(!listHidden)} title="Show or hide the list of queries and Spark jobs">
+            {listHidden ? '☰ All queries' : '⇤ Hide the list'}
+          </button>
           <div className="focus-side">
             {counts && (
               <p className="small ink2" style={{ margin: '0 0 8px' }}>
