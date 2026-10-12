@@ -120,7 +120,7 @@ export function RunOverview({ run }: { run: RunRow }) {
           {badGone.length > 0 && <Tile label="Executors lost" value={fmtNum(badGone.length)} foot={<Link to={to.executors(cid)}>out of memory, lost or killed</Link>} tone="bad" title={goneTitle} />}
         </div>
 
-        {a && <Causes cid={cid} a={a} run={run} execs={execs} burst={burst}
+        {a && <Causes cid={cid} a={a} run={run} execs={execs} burst={burst} fixes={fixItems(run, a, spill, findings, top.data)}
           toCluster={() => scope.choose(null)} />}
 
         {a && <Fixes run={run} a={a} spill={spill} findings={findings} failure={top.data} />}
@@ -364,15 +364,17 @@ function TimeWent({ cid, d, a, allSteps, setAllSteps }: { cid: string; d: RunSte
 
 /** At most three changes, in order, each with what it wins: the cluster's concurrency when the run mostly waited, the
  * query that did most of the work, then the worst other problems that carry a fix. */
-function Fixes({ run, a, spill, findings, failure }: { run: RunRow; a: Analysis; spill: number; findings: FindingRow[]; failure: TopFailure | null }) {
-  const [copied, setCopied] = useState(false);
+type FixItem = { who: string; text: ReactNode; plain: string; wins?: string; card?: 'driver' | 'cluster' | 'query' };
+
+/** The changes for this run, in order; the ones that belong to a cause card carry its name (they show in the card). */
+function fixItems(run: RunRow, a: Analysis, spill: number, findings: FindingRow[], failure: TopFailure | null): FixItem[] {
   const waitMs = a.total * a.waitShare;
   const t = a.top;
-  const fixes: { who: string; text: ReactNode; plain: string; wins?: string }[] = [];
+  const fixes: FixItem[] = [];
   const done = new Set<string>();
   // the driver's time first when it is most of the run: its finding's fix
   if (a.outsideShare >= 0.5 && a.noSparkFinding?.fix) {
-    fixes.push({ who: 'Driver', plain: a.noSparkFinding.fix, text: firstSentences(a.noSparkFinding.fix) });
+    fixes.push({ who: 'Driver', plain: a.noSparkFinding.fix, text: firstSentences(a.noSparkFinding.fix), card: 'driver' });
     done.add('no_spark_work');
   }
   // what broke comes first: the fix of the failure's most likely root cause
@@ -390,20 +392,20 @@ function Fixes({ run, a, spill, findings, failure }: { run: RunRow; a: Analysis;
     // behind its own tasks: the wave fix (spill, skew) is the run's own, and the time it wins is not the whole queue
     const own = a.otherShare !== null && a.otherShare < 0.5;
     fixes.push({ who: own ? (t ? gname(t) : 'This run') : 'Cluster', plain: bound.fix, text: firstSentences(bound.fix),
-      wins: own ? undefined : `up to ${fmtDuration(waitMs * (a.otherShare ?? 1))} of queueing` });
+      wins: own ? undefined : `up to ${fmtDuration(waitMs * (a.otherShare ?? 1))} of queueing`, card: 'cluster' });
     done.add('capacity_bound');
     done.add('waited_for_cores');
   } else if (a.waitShare >= 0.2) {
     const plain = `Lower the for-each concurrency to about the cores available, or raise min_workers before the ${fmtTime(run.start_time).slice(0, 5)} schedule.`;
-    fixes.push({ who: 'Cluster', plain, text: plain, wins: `up to ${fmtDuration(waitMs)} of waiting` });
+    fixes.push({ who: 'Cluster', plain, text: plain, wins: `up to ${fmtDuration(waitMs)} of waiting`, card: 'cluster' });
     done.add('waited_for_cores');
   }
   if (t && a.mergeFinding?.fix) {
     // the finding's own fix: built from the evidence (partition or clustering, deletion vectors, the key's range)
-    fixes.push({ who: gname(t), plain: a.mergeFinding.fix, text: firstSentences(a.mergeFinding.fix) });
+    fixes.push({ who: gname(t), plain: a.mergeFinding.fix, text: firstSentences(a.mergeFinding.fix), card: 'query' });
     done.add('merge_rewrite'); done.add('disk_spill');
   } else if (t && (t.disk_spill ?? 0) >= GB) {
-    fixes.push({ who: gname(t), plain: 'More shuffle partitions (or let AQE split them) so each task holds less and stops spilling.', text: <>More shuffle partitions (<code>spark.sql.shuffle.partitions</code>, or let AQE split them) so each task holds less and stops spilling.</> });
+    fixes.push({ who: gname(t), plain: 'More shuffle partitions (or let AQE split them) so each task holds less and stops spilling.', text: <>More shuffle partitions (<code>spark.sql.shuffle.partitions</code>, or let AQE split them) so each task holds less and stops spilling.</>, card: 'query' });
     done.add('disk_spill');
   }
   // then the worst other problems that carry a fix, one per kind
@@ -415,15 +417,24 @@ function Fixes({ run, a, spill, findings, failure }: { run: RunRow; a: Analysis;
     fixes.push({ who, plain: f.fix, text: firstSentences(f.fix) });
   }
   if (fixes.length < 3 && spill >= GB && !done.has('disk_spill')) fixes.push({ who: 'Still spilling', plain: 'Memory-optimised workers.', text: 'Memory-optimised workers.' });
+  return fixes;
+}
+
+/** One list to copy: every change in order. On the page, only the ones no cause card above shows. */
+function Fixes({ run, a, spill, findings, failure }: { run: RunRow; a: Analysis; spill: number; findings: FindingRow[]; failure: TopFailure | null }) {
+  const [copied, setCopied] = useState(false);
+  const all = fixItems(run, a, spill, findings, failure);
+  const fixes = all.filter((f) => !f.card);
+  const inCards = all.length - fixes.length;
   const copy = () => {
-    const text = fixes.map((f, i) => `${i + 1}. ${f.who}: ${f.plain}`).join('\n');
+    const text = all.map((f, i) => `${i + 1}. ${f.who}: ${f.plain}`).join('\n');
     navigator.clipboard?.writeText(text).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); }, () => {});
   };
   if (!fixes.length) return null;
   return (
     <section className="ro-card ro-fix" id="ro-fix">
       <div className="ro-card-head"><span className="ro-tag fix">Fix</span><button className="btn small" onClick={copy}>{copied ? 'Copied' : 'Copy'}</button></div>
-      <h3>{fixes.length === 1 ? 'One change' : `${['', 'One', 'Two', 'Three'][fixes.length]} changes, in this order`}</h3>
+      <h3>{inCards ? (fixes.length === 1 ? 'Also change' : 'Also change, in this order') : fixes.length === 1 ? 'One change' : `${['', 'One', 'Two', 'Three'][fixes.length]} changes, in this order`}</h3>
       <ol className="small">
         {fixes.map((f, i) => <li key={i}><b>{f.who}:</b> {f.text}{f.wins ? <span className="muted"> Wins {f.wins}.</span> : null}</li>)}
       </ol>
@@ -431,7 +442,12 @@ function Fixes({ run, a, spill, findings, failure }: { run: RunRow; a: Analysis;
   );
 }
 
-function Causes({ cid, a, run, execs, burst, toCluster }: { cid: string; a: Analysis; run: RunRow; execs: number; burst: number; toCluster: () => void }) {
+function Causes({ cid, a, run, execs, burst, toCluster, fixes }: { cid: string; a: Analysis; run: RunRow; execs: number; burst: number; toCluster: () => void; fixes: FixItem[] }) {
+  // each cause with its own fix, so a cause is said once, with what to do about it
+  const fixOf = (k: FixItem['card']) => {
+    const f = fixes.find((x) => x.card === k);
+    return f ? <p className="small ro-card-fix"><b>Fix:</b> {f.text}{f.wins ? <span className="muted"> Wins {f.wins}.</span> : null}</p> : null;
+  };
   const nav = useNavigate();
   const waitMs = a.total * a.waitShare;
   const t = a.top;
@@ -453,6 +469,7 @@ function Causes({ cid, a, run, execs, burst, toCluster }: { cid: string; a: Anal
           <h3>Most of its time no Spark stage ran</h3>
           <div className="ro-big">{fmtDuration(a.total * a.outsideShare)} <span>with no Spark work</span></div>
           <p className="small muted">{a.noSparkFinding?.evidence ? truncate(a.noSparkFinding.evidence.replace(/^[^:]*:\s*/, ''), 260) : 'Statements that ran no tasks (DDL, Delta commits), the code between them, or waiting outside Spark. More cores will not shorten it.'}</p>
+          {fixOf('driver')}
         </section>
       )}
       {a.waitShare >= 0.2 && (
@@ -477,6 +494,7 @@ function Causes({ cid, a, run, execs, burst, toCluster }: { cid: string; a: Anal
             {run.overlapping_runs?.length ? `shared ${execs ? `${execs} executors` : 'its executors'} with ${fmtNum(run.overlapping_runs.length)} other runs.` : ''}
             {a.mostWaited ? ` ${gname(a.mostWaited)} waited ${fmtDuration(a.mostWaited.waiting_ms)} to run ${fmtDuration(a.mostWaited.running_ms)}.` : ''}
           </p>
+          {fixOf('cluster')}
           <button className="linkish small" style={{ alignSelf: 'flex-start' }} onClick={() => { toCluster(); nav(to.overview(cid)); }}>The cluster's runs and settings ↗</button>
         </section>
       )}
@@ -505,6 +523,7 @@ function Causes({ cid, a, run, execs, burst, toCluster }: { cid: string; a: Anal
               ))}.
             </p>
           )}
+          {fixOf('query')}
         </section>
       )}
     </div>

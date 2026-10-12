@@ -1816,3 +1816,5 @@ details.sub[open] > summary { margin-bottom: 4px; }
 }
 /* data cards stay neutral: amber is for fixes, red for failures (the flags inside a card keep their colour) */
 .tables-read.flagged { border-left-color: var(--border); }
+/* a cause card's own fix, under its numbers */
+.ro-card-fix { margin: 6px 0 0; padding-top: 6px; border-top: 1px solid var(--line-soft, var(--border)); }

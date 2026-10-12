@@ -137,17 +137,19 @@ interface Tab {
   alert?: (r: RunRow | undefined, s: Summary) => boolean;
 }
 
+// the run's tabs, in the order a 2 a.m. engineer goes: its overview, then its queries (drill down), its problems, its
+// timeline, and the raw material (log lines, the event list, the datasets) last
 const TABS: Tab[] = [
   { label: 'Overview', routes: [''] },
+  // no count: it counted Spark jobs under a tab named for queries; the page's first line gives both
+  { label: 'Queries', routes: ['hierarchy', 'stages', 'queries'],
+    alert: (r, s) => (r ? r.status === 'failed' : (s.counts.failed_jobs ?? 0) > 0) },
   { label: 'Problems', routes: ['findings', 'errors'], sub: [['findings', 'Findings'], ['errors', 'Errors']],
     // one problem count: the run's own list says how many; the tab only counts for the whole cluster
     count: (r, s) => (r ? undefined : s.counts.findings), alert: (r, s) => (r ? r.max_severity === 'high' : (s.findings_by_severity.high ?? 0) > 0) },
-  // no count: it counted Spark jobs under a tab named for queries; the page's first line gives both
-  { label: 'Queries & stages', routes: ['hierarchy', 'stages', 'queries'],
-    alert: (r, s) => (r ? r.status === 'failed' : (s.counts.failed_jobs ?? 0) > 0) },
-  { label: 'Events & timeline', routes: ['story', 'timeline'], sub: [['story', 'Events'], ['timeline', 'Timeline']] },
+  { label: 'Timeline', routes: ['timeline'] },
   { label: 'Executors', routes: ['executors'], count: (r, s) => (r ? undefined : s.counts.executors), alert: (r, s) => { const c = s.counts as Summary['counts'] & { executors_oom?: number; executors_killed?: number }; return !r && (c.executors_lost ?? 0) + (c.executors_oom ?? 0) + (c.executors_killed ?? 0) > 0; } },
-  { label: 'Logs & raw data', routes: ['logs', 'data'], sub: [['logs', 'Logs'], ['data', 'Raw data']] },
+  { label: 'Logs & raw data', routes: ['logs', 'story', 'data'], sub: [['logs', 'Logs'], ['story', 'Events'], ['data', 'Raw data']] },
 ];
 
 function compact(n: number): string {
@@ -419,7 +421,7 @@ function ClusterTabs({ base, section, s }: { base: string; section: string; s?: 
       </div>
       {tab.sub && (
         <div className="subtabs seg" role="group" aria-label={tab.label}>
-          {tab.sub.map(([r, l]) => <Link key={r} to={href(r)} className={section === r ? 'on' : ''}>{l}</Link>)}
+          {tab.sub.filter(([r]) => !RUN_PAGES.has(r)).map(([r, l]) => <Link key={r} to={href(r)} className={section === r ? 'on' : ''}>{l}</Link>)}
         </div>
       )}
     </>
