@@ -81,7 +81,6 @@ function ClustersTable({ clusters, reload }: { clusters: ClusterListItem[]; relo
             <th>Started (UTC)</th>
             <th className="num">Duration</th>
             <th className="num" title="Spark jobs (not Databricks jobs) that failed, of all">Spark jobs failed</th>
-            <th className="num" title="Task attempts that failed. Spark runs a failed task again, so these do not fail the cluster unless a job or query failed too.">Task attempts retried</th>
             <th>Findings</th>
             <th>Analyzed</th>
             <th />
@@ -103,9 +102,6 @@ function ClustersTable({ clusters, reload }: { clusters: ClusterListItem[]; relo
               <td className="num">{fmtDuration(c.duration_ms)}</td>
               <td className="num">
                 {fmtNum(c.counts?.failed_jobs ?? 0)} / {fmtNum(c.counts?.spark_jobs ?? 0)}
-              </td>
-              <td className="num">
-                {fmtNum(c.counts?.failed_tasks ?? 0)} / {fmtNum(c.counts?.tasks ?? 0)}
               </td>
               <td>
                 <FindingsCell c={c} />

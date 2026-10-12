@@ -1799,3 +1799,20 @@ details.sub[open] > summary { margin-bottom: 4px; }
 .incident.folded { gap: 4px; }
 /* the title and tabs stay in view while a long page scrolls */
 .run-head { position: sticky; top: 0; z-index: 6; background: var(--bg); }
+
+/* "no Spark work" stays visible on a dark background: an outline and a light hatch */
+.ro-seg-out { box-shadow: inset 0 0 0 1px var(--border); background-image: repeating-linear-gradient(135deg, transparent 0 5px, color-mix(in srgb, var(--text-3) 18%, transparent) 5px 6px); }
+
+/* phones: one page scroll (no scroll area inside the page), tabs that wrap, a shorter run header */
+@media (max-width: 700px) {
+  .shell { height: auto; min-height: 100vh; }
+  .body { overflow: visible; }
+  .main { overflow: visible; }
+  .tabs { flex-wrap: wrap; overflow-x: visible; }
+  .tabs a { padding: 6px 10px; }
+  .run-head { position: static; padding: 10px 16px 0; }
+  .run-meta { font-size: 11px; max-height: 3.2em; overflow: hidden; }
+  .level-kicker { margin-bottom: 0; }
+}
+/* data cards stay neutral: amber is for fixes, red for failures (the flags inside a card keep their colour) */
+.tables-read.flagged { border-left-color: var(--border); }
