@@ -46,11 +46,14 @@ function StatusPill({ n, x, y }: { n: GNode; x: number; y: number }) {
 }
 
 /** Two thin meters (e.g. disk + memory spill) sharing one group max, with the group total. */
-function MeterGroup({ x, y, w, label, a, b, max }: { x: number; y: number; w: number; label: string; a: [keyof typeof METRIC_META, number]; b: [keyof typeof METRIC_META, number]; max: number }) {
-  const total = a[1] + b[1];
+function MeterGroup({ x, y, w, label, a, b, max, value, tip }: { x: number; y: number; w: number; label: string; a: [keyof typeof METRIC_META, number]; b: [keyof typeof METRIC_META, number]; max: number;
+  /** The number to show (default: both added); spill shows the disk figure: memory and disk are the same bytes twice. */
+  value?: number; tip?: string }) {
+  const total = value ?? a[1] + b[1];
   const bar = (v: number) => (v > 0 && max > 0 ? Math.max(2, (v / max) * w) : 0);
   return (
     <g transform={`translate(${x},${y})`}>
+      {tip ? <title>{tip}</title> : null}
       <text y={0} className="g-meter-label">
         {label}{' '}
         <tspan className={total > 0 ? 'g-meter-val' : 'g-faint'}>{total > 0 ? fmtBytes(total) : 'none'}</tspan>
@@ -134,7 +137,8 @@ function StageCard({ n, r, max, selected, dim, focusable, onKey }: { n: GNode; r
           {rf.grew ? <tspan className="g-grew">{` ${fmtGrow(rf.grew)}`}</tspan> : null}</>}
         <title>{rowsTitle}</title>
       </text>
-      <MeterGroup x={14} y={89} w={gw} label="Spill" a={['disk_spill', n.metrics?.disk_spill ?? 0]} b={['mem_spill', n.metrics?.mem_spill ?? 0]} max={spillMax} />
+      <MeterGroup x={14} y={89} w={gw} label="Spill to disk" a={['disk_spill', n.metrics?.disk_spill ?? 0]} b={['mem_spill', n.metrics?.mem_spill ?? 0]} max={spillMax}
+        value={n.metrics?.disk_spill ?? 0} tip={`Spilled to disk ${fmtBytes(n.metrics?.disk_spill ?? 0)}; the same data in memory before it was written out ${fmtBytes(n.metrics?.mem_spill ?? 0)}`} />
       <MeterGroup x={14 + gw + 14} y={89} w={gw} label="Shuffle" a={['shuffle_read', n.metrics?.shuffle_read ?? 0]} b={['shuffle_write', n.metrics?.shuffle_write ?? 0]} max={shufMax} />
     </g>
   );

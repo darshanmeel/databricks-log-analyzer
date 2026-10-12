@@ -576,7 +576,8 @@ type SlowRow = { task: number | null; stage: number; attempt: number; mine: bool
 
 /** Section 4: the slowest tasks on these executors while the stage ran, any stage, with why each took so long. */
 function SlowestTasks({ c, sh, stage, cid, ctx }: { c: TaskColumns; sh: StageSharing | null; stage: { id: number; attempt: number }; cid: string; ctx: string }) {
-  const [only, setOnly] = useState(false);
+  // this stage's own tasks first; its neighbours on the same executors on demand
+  const [only, setOnly] = useState(true);
   const [all, setAll] = useState(false);
   const t = col(c, 'task_ms');
   const read = (i: number) => (col(c, 'input_bytes')[i] ?? 0) + (col(c, 'shuffle_read')[i] ?? 0);
@@ -611,12 +612,12 @@ function SlowestTasks({ c, sh, stage, cid, ctx }: { c: TaskColumns; sh: StageSha
   const su = { ms: unitFor('ms', shown.map((r) => r.ms)), read: unitFor('b', shown.map((r) => r.read)), spill: unitFor('b', shown.map((r) => r.spill)), gc: unitFor('ms', shown.map((r) => r.gc)) };
   return (
     <div className="ts-section">
-      <h3 className="ts-h"><span className="ts-num">4</span> The 20 slowest tasks on these executors while the stage ran</h3>
-      {sh && <p className="muted small" style={{ margin: 0 }}>{fmtTime(sh.start)} → {fmtTime(sh.end)} · any stage, any run, slowest first. "Why" compares each task with the typical task of its own stage.</p>}
+      <h3 className="ts-h"><span className="ts-num">4</span> {only ? 'Its slowest tasks' : 'The slowest tasks on these executors while the stage ran'}</h3>
+      {sh && <p className="muted small" style={{ margin: 0 }}>{fmtTime(sh.start)} → {fmtTime(sh.end)} · {only ? 'this stage' : 'any stage, any run'}, slowest first. "Why" compares each task with the typical task of its own stage.</p>}
       <div className="row small" style={{ gap: 6, margin: '6px 0' }}>
         <div className="seg" role="group" aria-label="Which tasks">
+          <button className={only ? 'on' : ''} aria-pressed={only} onClick={() => setOnly(true)}>This stage</button>
           <button className={!only ? 'on' : ''} aria-pressed={!only} onClick={() => setOnly(false)}>Everything on these executors</button>
-          <button className={only ? 'on' : ''} aria-pressed={only} onClick={() => setOnly(true)}>This stage only</button>
         </div>
       </div>
       <div className="table-wrap">

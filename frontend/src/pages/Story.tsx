@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, optional, STORY_KINDS, type AppRow, type Severity, type StoryRow } from '../api';
 import { LogLines } from '../components/LogLines';
-import { useCluster } from '../components/Shell';
+import { useRunScopeCtx, useCluster } from '../components/Shell';
 import { DataLink, Drawer, Empty, EntityChips, ErrorState, Loading, Pager, SeverityBadge, ToggleChips, sevColor, Async } from '../components/ui';
 import { fmtNum, fmtOffset, fmtTime, fmtTs } from '../format';
 import { useAsync, useDebounced, useQueryState } from '../hooks';
@@ -59,6 +59,9 @@ function splitList(v: string | null): string[] {
 
 export default function Story() {
   const { cid, summary } = useCluster();
+  // on a run's page, times count from the run's start, not the cluster's
+  const { runs: scopeRuns, run: scopeRun } = useRunScopeCtx();
+  const origin = scopeRuns.find((r) => r.run_key === scopeRun)?.start_time ?? summary.start_time;
   const [sp, setQ] = useQueryState();
   const kindParam = sp.get('kind');
   const sevs = splitList(sp.get('severity')) as Severity[];
@@ -188,7 +191,7 @@ export default function Story() {
           <>
             <VirtualStory
               rows={rows}
-              start={summary.start_time}
+              start={origin}
               selected={selected}
               loading={st.loading}
               onSelect={(r) => setQ({ step: String(r.story_seq) }, true)}
@@ -203,7 +206,7 @@ export default function Story() {
         )}
       </div>
 
-      <StepDrawer row={selRow} cid={cid} start={summary.start_time} onClose={() => setQ({ step: null }, true)} />
+      <StepDrawer row={selRow} cid={cid} start={origin} onClose={() => setQ({ step: null }, true)} />
     </div>
   );
 }

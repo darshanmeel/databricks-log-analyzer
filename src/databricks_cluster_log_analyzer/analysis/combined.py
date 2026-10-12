@@ -126,9 +126,10 @@ def stage_executor_profile(tdf: pd.DataFrame, cluster_id: str) -> pd.DataFrame:
 
 SPILL_SHUFFLE_COLS = ["cluster_id", "spark_context_id", "minute", "executor_id", "stage_id", "stage_attempt",
                       "tasks", "mem_spill", "disk_spill", "shuffle_read", "shuffle_write", "input_bytes",
-                      "output_bytes", "gc_ms", "run_ms"]
+                      "output_bytes", "gc_ms", "run_ms", "task_ms"]
+# task_ms: the task's whole time (what busy means everywhere else); run_ms is only its executor run time
 _SPILL_SHUFFLE_SUMS = ["mem_spill", "disk_spill", "shuffle_read", "shuffle_write", "input_bytes", "output_bytes",
-                       "gc_ms", "run_ms"]
+                       "gc_ms", "run_ms", "task_ms"]
 
 
 def spill_shuffle_timeline(tdf: pd.DataFrame, cluster_id: str, rules: Rules) -> pd.DataFrame:
@@ -142,6 +143,7 @@ def spill_shuffle_timeline(tdf: pd.DataFrame, cluster_id: str, rules: Rules) -> 
     end = tdf["finish_time"].where(tdf["finish_time"].notna(), tdf["launch_time"])
     start = tdf["launch_time"].where(tdf["launch_time"].notna(), end)
     keep = end.notna()
+    tdf = tdf.assign(**{c: np.nan for c in _SPILL_SHUFFLE_SUMS if c not in tdf})  # an older task frame
     t = tdf.loc[keep, ["spark_context_id", "executor_id", "stage_id", "stage_attempt"] + _SPILL_SHUFFLE_SUMS].copy()
     if t.empty:
         return pd.DataFrame(columns=SPILL_SHUFFLE_COLS)

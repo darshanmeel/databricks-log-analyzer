@@ -337,6 +337,24 @@ function StageDetailView({ cid, d, retries, onClose }: { cid: string; d: StageDe
         </div>
       </div>
       <div className="panel-body stack">
+        {/* what was found comes first: the numbers below explain it */}
+        {d.findings.length > 0 && (
+          <div>
+            <h3 style={{ marginBottom: 8 }}>Findings for this stage</h3>
+            <div className="stack" style={{ gap: 8 }}>
+              {d.findings.map((f) => (
+                <div key={f.finding_id} className="row" style={{ gap: 10, alignItems: 'baseline' }}>
+                  <SeverityBadge sev={f.severity} />
+                  <Link to={to.findings(cid, f.finding_id)}>
+                    <b>{f.category.replace(/_/g, ' ')}</b>
+                  </Link>
+                  <span className="ink2 grow wrap-any">{f.evidence}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* 1. what happened, in words */}
         <StageVerdict s={s} d={d} execs={execs} />
         {s.failure_reason && s.failure_reason.length > 200 && (
@@ -398,22 +416,6 @@ function StageDetailView({ cid, d, retries, onClose }: { cid: string; d: StageDe
 
         <StageRetries s={s} rows={retries} />
 
-        {d.findings.length > 0 && (
-          <div>
-            <h3 style={{ marginBottom: 8 }}>Findings for this stage</h3>
-            <div className="stack" style={{ gap: 8 }}>
-              {d.findings.map((f) => (
-                <div key={f.finding_id} className="row" style={{ gap: 10, alignItems: 'baseline' }}>
-                  <SeverityBadge sev={f.severity} />
-                  <Link to={to.findings(cid, f.finding_id)}>
-                    <b>{f.category.replace(/_/g, ' ')}</b>
-                  </Link>
-                  <span className="ink2 grow wrap-any">{f.evidence}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
         {d.job?.error && (
           <p className="small ink2">
             <b>Spark job {d.job.spark_job_id} error:</b> {truncate(d.job.error, 500)}

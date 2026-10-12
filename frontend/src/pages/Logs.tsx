@@ -57,7 +57,19 @@ export default function Logs() {
   const [sp] = useQueryState();
   const fp = sp.get('file_path');
   const seq = sp.get('seq');
+  const { summary } = useCluster();
   if (fp && seq !== null && seq !== '') return <ContextView filePath={fp} seq={Number(seq)} />;
+  // no driver or executor log lines in this analysis: say so, without a filter form over nothing
+  if ((summary.counts?.log_lines ?? 1) === 0) {
+    return (
+      <div className="page">
+        <div className="panel"><Empty title="No log lines in this analysis">
+          Only the event log was analyzed: there are no driver or executor log files (log4j, stdout, stderr) to search. Exceptions and
+          GC lines come from those files; put them in the cluster folder's driver/ and executor/ folders and analyze again.
+        </Empty></div>
+      </div>
+    );
+  }
   return <SearchView />;
 }
 

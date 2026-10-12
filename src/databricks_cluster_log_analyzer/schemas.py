@@ -217,6 +217,7 @@ SCHEMAS: dict[str, pa.Schema] = {
         ("cluster_id", S), ("spark_context_id", S), ("minute", TS), ("executor_id", S), ("stage_id", I),
         ("stage_attempt", I), ("tasks", I), ("mem_spill", I), ("disk_spill", I), ("shuffle_read", I),
         ("shuffle_write", I), ("input_bytes", I), ("output_bytes", I), ("gc_ms", I), ("run_ms", I),
+        ("task_ms", I),
     ),
     # ---- Revision 5 -------------------------------------------------------------------------------------------
     "hotspots": _schema(

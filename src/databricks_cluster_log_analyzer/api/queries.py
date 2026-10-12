@@ -2177,7 +2177,9 @@ def cluster_view(store: Store, cid: str) -> dict[str, Any]:
         minutes: list[dict] = []
         p = store.dataset_path(cid, "spill_shuffle_timeline", required=False)
         if p is not None:
-            minutes = store.rows(con, f"SELECT minute, sum(run_ms) AS run_ms, sum(disk_spill) AS disk_spill, "
+            # busy is task time (older outputs: run time only)
+            used = "sum(coalesce(task_ms, run_ms))" if "task_ms" in store.schema(con, p) else "sum(run_ms)"
+            minutes = store.rows(con, f"SELECT minute, {used} AS run_ms, sum(disk_spill) AS disk_spill, "
                                       f"sum(mem_spill) AS mem_spill, sum(tasks) AS tasks, "
                                       f"count(DISTINCT executor_id) AS executors_busy "
                                       f"FROM {store.src(p)} GROUP BY minute ORDER BY minute", [])
