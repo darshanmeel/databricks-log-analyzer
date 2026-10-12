@@ -444,7 +444,9 @@ function StageTime({ s, d }: { s: StageRow; d: StageDetail }) {
   const run = Math.max(0, s.duration_ms - wait - tail);
   const tot = wait + run + tail || 1;
   // its own waves: most tasks at once, and how many rounds of that the stage needed (its own queue, not other work)
-  const evs = tl.flatMap((x) => (x.launch_time == null ? [] : [[x.launch_time, 1], [x.launch_time + (x.task_ms ?? 0), -1]] as [number, number][]))
+  // a task ends at its finish time (launch + task time can run past it and count one task twice at a handover)
+  const endOf = (x: (typeof tl)[number]) => (x as { finish_time?: number | null }).finish_time ?? (x.launch_time ?? 0) + (x.task_ms ?? 0);
+  const evs = tl.flatMap((x) => (x.launch_time == null ? [] : [[x.launch_time, 1], [endOf(x), -1]] as [number, number][]))
     .sort((a, b) => a[0] - b[0] || a[1] - b[1]);
   let cur = 0, most = 0;
   for (const [, dlt] of evs) { cur += dlt; most = Math.max(most, cur); }

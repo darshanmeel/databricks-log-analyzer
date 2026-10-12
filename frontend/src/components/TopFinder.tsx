@@ -144,13 +144,16 @@ export function WaitRanBar({ took: t, wait, ran, max }: { took: number; wait: nu
   const w = Math.max(4, (t / Math.max(1, max)) * 100);
   const ws = Math.min(1, wait / Math.max(1, t));
   const rs = Math.min(1 - ws, ran / Math.max(1, t));
+  const rest = Math.max(0, t - wait - ran);
   return (
     <div className="ro-wr">
       <div className="ro-wr-bar" style={{ width: `${w}%` }}>
         <span className="ro-wr-wait" style={{ width: `${ws * 100}%` }} />
         <span className="ro-wr-run" style={{ width: `${rs * 100}%` }} />
       </div>
-      <div className="ro-wr-nums"><b>{shortD(t)}</b><span className="muted">{wait >= 500 ? shortD(wait) : '–'} | {shortD(ran)}</span></div>
+      {/* what is left of its time: neither waiting for a core nor running (the driver, other queries it waited on) */}
+      <div className="ro-wr-nums" title={rest >= 1000 ? `${shortD(rest)} with neither: open while the driver or another query worked` : undefined}>
+        <b>{shortD(t)}</b><span className="muted">{wait >= 500 ? shortD(wait) : '–'} | {shortD(ran)}{rest >= Math.max(1000, 0.05 * t) ? ` | ${shortD(rest)} other` : ''}</span></div>
     </div>
   );
 }

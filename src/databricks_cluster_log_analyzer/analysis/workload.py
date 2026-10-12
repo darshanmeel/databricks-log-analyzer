@@ -480,7 +480,9 @@ def driver_findings(cid: str, apps: list[dict], runs: list[dict], queries: list[
         out.append(_f(cid, r["spark_context_id"], sev, "no_spark_work",
                       f"run {_run_name(r)}" + (f" and {len(hs) - 1} more like it" if len(hs) > 1 else ""),
                       ev, lo, run_key=r["run_key"]))
-    app_run = {r["spark_context_id"]: r["run_key"] for r in runs if r.get("kind") == "app"}
+    # the app's own run only when it is the whole app (no named runs in it): else the finding is the app's, not a run's
+    named = {r["spark_context_id"] for r in runs if r.get("kind") != "app"}
+    app_run = {r["spark_context_id"]: r["run_key"] for r in runs if r.get("kind") == "app" and r["spark_context_id"] not in named}
     for a in apps:
         ctx = a["spark_context_id"]
         lo, hi = to_ms(a.get("start_time")), to_ms(a.get("end_time"))

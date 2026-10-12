@@ -84,14 +84,14 @@ def _idle_findings(cid: str, profile: list[dict], rules: Rules) -> list[dict]:
 
 
 def _spill_ratio(s) -> str:
-    """" (119.8 GiB in memory first, 2.03 GiB spilled per GB of shuffle read)": how hard memory was squeezed."""
+    """" (119.8 GiB in memory first, 2.03 GiB spilled per GiB of shuffle read)": how hard memory was squeezed."""
     GB = 1 << 30
     mem, sr = s.get("mem_spill") or 0, s.get("shuffle_read") or 0
     bits = []
     if mem:
         bits.append(f"{mem / GB:,.1f} GiB in memory first")
     if mem and sr >= GB:
-        bits.append(f"{mem / sr:.2f} GiB spilled per GB of shuffle read")
+        bits.append(f"{mem / sr:.2f} GiB spilled per GiB of shuffle read")
     return f" ({', '.join(bits)})" if bits else ""
 
 
@@ -197,6 +197,7 @@ def _big_read_findings(cid: str, stages: list[dict], queries: list[dict], rules:
     reads = {(q.get("spark_context_id"), q.get("sql_execution_id")): [t for t in (q.get("tables_read") or [])
                                                                         if not str(t).startswith("jdbc:")]
              for q in queries}
+    qby = {(q.get("spark_context_id"), q.get("sql_execution_id")): q for q in queries}
     out = []
     for s in stages:
         b = storage_bytes(s)  # not what came from a DataFrame cache
@@ -226,6 +227,13 @@ def _big_read_findings(cid: str, stages: list[dict], queries: list[dict], rules:
             fix = ("The read is not the problem here: the stage spilled more than it read. Fix the spill first (more "
                    "shuffle partitions for its sort or window, or memory-optimised workers); a table the job must "
                    "read in full, such as a first load, cannot be read less.")
+        q = qby.get((s.get("spark_context_id"), s.get("sql_execution_id"))) or {}
+        if str(q.get("description") or "").startswith("Streaming batch") and spill <= b:
+            # a stream reads the new files of each batch: there is no filter to add; a big batch is a backlog
+            ev += "; it is one micro-batch of a stream reading the files that came in since the last batch"
+            fix = ("A stream reads every new file: no filter skips them. A batch this big is a backlog (a first run, or "
+                   "the stream was stopped): cap each batch (maxBytesPerTrigger or maxFilesPerTrigger) so it fits the "
+                   "cluster, or raise the shuffle partitions for the batch so it does not spill.")
         entity = f"Stage {s['stage_id']}.{s['stage_attempt']}" + (f": {what}" if what else "")
         out.append(_f(cid, s["spark_context_id"], sev, "big_read", entity, ev, fix, s.get("start_time"),
                       stage_id=s["stage_id"], stage_attempt=s["stage_attempt"], spark_job_id=s.get("spark_job_id"),

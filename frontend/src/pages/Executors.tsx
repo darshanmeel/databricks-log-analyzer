@@ -148,6 +148,7 @@ function Lifetimes({ rows, end, selected, onSelect, gantt }: { rows: ExecutorPro
 
 /** Who left early, when and why, in words; then one row per executor. */
 function ExecSummary({ rows, selected, onPick, probs }: { rows: ExecutorProfileRow[]; selected: string | null; onPick: (r: ExecutorProfileRow) => void; probs: Map<string, IncidentRow[]> }) {
+  const { summary } = useCluster();
   const bad = rows.filter((r) => isProblemRemoval(r.removal_category)).sort((a, b) => (a.removed_time ?? 0) - (b.removed_time ?? 0));
   const sorted = [...rows].sort(
     (a, b) => Number(isProblemRemoval(b.removal_category)) - Number(isProblemRemoval(a.removal_category)) || a.executor_id.localeCompare(b.executor_id, undefined, { numeric: true }),
@@ -179,7 +180,9 @@ function ExecSummary({ rows, selected, onPick, probs }: { rows: ExecutorProfileR
           const perCore = g.unified_memory && g.cores ? g.unified_memory / g.cores : null;
           return (
             <li>
-              Each executor was given <b>{g.cores ?? '?'} cores</b>
+              {rows.length === 1 && rows[0].executor_id === 'driver'
+                ? <>Local mode: the driver JVM ran every task, on <b>{g.cores ?? '?'} {g.cores === 1 ? 'thread' : 'threads'}</b></>
+                : <>Each executor was given <b>{g.cores ?? '?'} {g.cores === 1 ? 'core' : 'cores'}</b></>}
               {g.heap_mb ? <>, <b>{fmtBytes(g.heap_mb * MB)}</b> of heap</> : null}
               {g.overhead_mb ? <> (+{fmtBytes(g.overhead_mb * MB)} overhead)</> : null}
               {g.offheap_mb ? <> and {fmtBytes(g.offheap_mb * MB)} off-heap</> : null}
@@ -246,7 +249,7 @@ function ExecSummary({ rows, selected, onPick, probs }: { rows: ExecutorProfileR
                     {r.host && <div className="muted small">{r.host}</div>}
                   </td>
                   <td className="small nowrap">
-                    {r.cores ?? '?'} cores
+                    {r.cores ?? '?'} {r.cores === 1 ? 'core' : 'cores'}
                     {r.heap_mb ? <div>{fmtBytes(r.heap_mb * 1048576)} heap{r.overhead_mb ? ` +${fmtBytes(r.overhead_mb * 1048576)}` : ''}</div> : null}
                     {r.unified_memory ? <div className="muted" title="Execution + storage memory (spark.memory.fraction of the heap)">{fmtBytes(r.unified_memory)} for tasks + cache</div> : null}
                   </td>
@@ -256,7 +259,7 @@ function ExecSummary({ rows, selected, onPick, probs }: { rows: ExecutorProfileR
                   </td>
                   <td>
                     {r.removed_time === null && !r.removal_category ? (
-                      <span className="muted small">still running at the end</span>
+                      <span className="muted small">{summary.end_time ? 'up until the app ended' : 'still running at the end of the logs'}</span>
                     ) : (
                       <RemovalBadge category={r.removal_category} reason={r.removed_reason} />
                     )}

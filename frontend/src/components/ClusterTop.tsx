@@ -272,7 +272,7 @@ function TimeWent({ cid, runs, took, waiting, running, t0, t1, compute, peak, ca
           <table className="ro-find ro-time-table">
             <thead>
               <tr>
-                <th>Run</th><th>Started</th><th style={{ width: '20%', minWidth: 160 }}>Took · waited | ran</th><th className="num">× usual</th><th className="num">Tasks</th>
+                <th>Run</th><th>Started</th><th style={{ width: '20%', minWidth: 160 }} title="Took: its whole time. Waited: none of its tasks could start (every core busy). Ran: tasks running. Other: the rest (driver code, waiting on another query)">Took · waited | ran | other</th><th className="num">× usual</th><th className="num">Tasks</th>
                 <th className="num" title="From storage (files and tables); shuffle on hover; rows for JDBC">Read from storage</th><th style={{ width: '18%', minWidth: 140 }}>On the cluster's clock</th><th>Flags</th>
               </tr>
             </thead>

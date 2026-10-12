@@ -136,7 +136,7 @@ BECAUSE = {
 
 _SOURCE_DB_RE = re.compile(r"connection timed out|connect timed out|sockettimeoutexception|read timed out|"
                            r"data receive failed|connection reset|cannot open socket|communications link failure|"
-                           r"socket timeout|cannot connect to|timeoutexception|connection refused")
+                           r"socket timeout|cannot connect to|timeoutexception|connection refused|cannot_open_socket")
 _JDBC_VENDOR_RE = re.compile(r"com\.sap\.db|oracle\.jdbc|com\.microsoft\.sqlserver|org\.postgresql|com\.mysql|"
                              r"org\.mariadb|com\.ibm\.db2|net\.snowflake|com\.teradata")
 
@@ -633,6 +633,16 @@ def build_incidents(cid: str, findings: list[dict], stages: list[dict], executor
     comps: dict[int, list[dict]] = {}
     for i, p in enumerate(problems):
         comps.setdefault(pfind(i), []).append(p)
+    # one cause, many stages: tasks too big and the spill they bring (the same partition setting) are one incident,
+    # not one per query, each with the same fix
+    same: dict[frozenset, list[dict]] = {}
+    for k in list(comps):
+        kinds = frozenset(p["kind"] for p in comps[k])
+        # the same source database dropping connections in several stages is one problem too
+        if kinds and (kinds <= {"large", "spill"} or kinds <= {"big_read", "spill"} or kinds <= {"source_db", "retries"}):
+            same.setdefault(kinds, []).extend(comps.pop(k))
+    for n, ps in enumerate(same.values()):
+        comps[-1 - n] = ps
 
     q_desc = {(q["spark_context_id"], q["sql_execution_id"]): q.get("description") for q in queries}
     retries_wasted: dict[tuple, int] = {}
@@ -699,11 +709,16 @@ def build_incidents(cid: str, findings: list[dict], stages: list[dict], executor
         if top["lead"]["f"].get("category") in ("no_spark_work", "tiny_task_stages", "count_only"):
             ent = top["lead"]["f"].get("entity") or ""
             return f"{ent[0].upper()}{ent[1:]}: {top['label']}" if ent else top["label"].capitalize()
+        if all(p["kind"] in ("large", "spill", "big_read") for p in inc["ps"]) and len(inc["sc"].queries) > 1:
+            n_st = len({(k[0], k[1]) for k in inc["sc"].stages})
+            return f"{n_st} stages in {len(inc['sc'].queries)} queries: {', '.join(kinds)}"
         if all(p["kind"] in PERF_KINDS for p in inc["ps"]) and len(inc["sc"].queries) == 1:
             q = next(iter(inc["sc"].queries))
             return f"Query {q[1]} ran slow: {', '.join(kinds)}"
         if top["sc"].stages:
-            sid = sorted({k[1] for k in top["sc"].stages})
+            # merged repeats of one cause (a source database in several stages): every stage of it
+            scs = inc["sc"] if all(p["kind"] in ("source_db", "retries") for p in inc["ps"]) else top["sc"]
+            sid = sorted({k[1] for k in scs.stages})
             return f"Stage {', '.join(map(str, sid[:3]))}: {', '.join(kinds)}"
         if top["kind"] in ERROR_KINDS:
             ent = top["lead"]["f"].get("entity")

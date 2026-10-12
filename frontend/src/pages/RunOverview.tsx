@@ -311,7 +311,7 @@ function TimeWent({ cid, d, a, allSteps, setAllSteps }: { cid: string; d: RunSte
           <table className="ro-find ro-time-table">
             <thead>
               <tr>
-                <th>Query</th><th>Started</th><th style={{ width: '18%', minWidth: 150 }}>Took · waited | ran</th><th className="num">Stages</th><th className="num">Tasks</th>
+                <th>Query</th><th>Started</th><th style={{ width: '18%', minWidth: 150 }} title="Took: its whole time. Waited: none of its tasks could start (every core busy). Ran: tasks running. Other: the rest (driver code, waiting on another query)">Took · waited | ran | other</th><th className="num">Stages</th><th className="num">Tasks</th>
                 <th className="num">Rows in</th><th style={{ width: '16%', minWidth: 140 }}>On the run's clock</th><th>Flags</th>
               </tr>
             </thead>

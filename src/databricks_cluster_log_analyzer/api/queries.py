@@ -1989,6 +1989,10 @@ def flow(store: Store, cid: str, run: str | None = None) -> dict[str, Any]:
                     WHERE {"run_key = ?" if by_run else "TRUE"} GROUP BY 1, 2, 3""", [run] if by_run else []):
                 firsts[(r["spark_context_id"], r["stage_id"], r["stage_attempt"])] = _as_ms(r["first"])
     waits_of = _query_waits(stages, firsts)
+    # a Spark job without SQL waits for a free core too: draw its wait like a query's
+    jkey = (lambda st: (st["spark_context_id"], st["spark_job_id"])
+            if st.get("sql_execution_id") is None and st.get("spark_job_id") is not None else None)
+    job_waits = {k: [[a, b] for a, b in w if b - a >= 1000] for k, (w, _) in _wait_and_run(stages, firsts, jkey).items()}
     jobs_of: dict[tuple, list] = {}
     for j in jobs:
         jobs_of.setdefault((j["spark_context_id"], j.get("sql_execution_id")), []).append(j)
@@ -2030,6 +2034,7 @@ def flow(store: Store, cid: str, run: str | None = None) -> dict[str, Any]:
                       "start": j.get("start_time"), "end": j.get("end_time"), "status": st,
                       "what": j.get("description") or j.get("call_site"), "error": j.get("error"),
                       "jobs": [j["spark_job_id"]], "tables_read": [], "tables_written": [],
+                      "waits": job_waits.get((j["spark_context_id"], j["spark_job_id"]), []),
                       **{c: j.get(c) for c in keep}})
     nodes.sort(key=lambda n: (n["start"] is None, n["start"] or 0, n["key"]))
     truncated = len(nodes) > FLOW_MAX_NODES

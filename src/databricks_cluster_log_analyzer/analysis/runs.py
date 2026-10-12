@@ -244,6 +244,8 @@ def _runs_rows(cid: str, meta: dict, d: dict, tdf: pd.DataFrame) -> list[dict]:
         a = agg[j["run_key"]]
         a["spark_jobs"] += 1
         span(a, j.get("start_time"), j.get("end_time"))
+        if not is_null(j.get("start_time")) and not is_null(j.get("end_time")):
+            a.setdefault("iv", []).append((j["start_time"], j["end_time"]))
         if j.get("result") == "JobFailed":
             a["failed"] = True
         elif j.get("result") is None:
@@ -278,17 +280,33 @@ def _runs_rows(cid: str, meta: dict, d: dict, tdf: pd.DataFrame) -> list[dict]:
             a["max_severity"] = f["severity"]
 
     rows = []
+    # the app's jobs outside any named run, when the app has named runs too: a catch-all, not a run that spans the app
+    named = {meta[k]["spark_context_id"] for k in meta if meta[k].get("kind") != "app"}
     for k, m in meta.items():
         a = agg[k]
         status = "failed" if a["failed"] else ("incomplete" if a["open"] else "succeeded")
         dur = a["end"] - a["start"] if a["start"] is not None and a["end"] is not None else None
+        if m.get("kind") == "app" and m.get("spark_context_id") in named and a.get("iv"):
+            # its own time: the jobs' spans merged, not first job to last (that would overlap every named run)
+            tot, cs, ce = 0, None, None
+            for x0, x1 in sorted(a["iv"]):
+                if ce is None or x0 > ce:
+                    tot += (ce - cs) if ce is not None else 0
+                    cs, ce = x0, x1
+                else:
+                    ce = max(ce, x1)
+            dur = tot + ((ce - cs) if ce is not None else 0)
+            m = {**m, "label": f"Outside any run ({a['spark_jobs']} Spark jobs)", "_catchall": True}
         rows.append({**m, "start_time": a["start"], "end_time": a["end"], "duration_ms": dur, "status": status,
                      **{c: a[c] for c in ("spark_jobs", "stages", "tasks", "failed_tasks", "retried_tasks",
                                           "disk_spill", "mem_spill", "shuffle_read", "shuffle_write", "findings",
                                           "max_severity")},
                      "overlapping_runs": None})
     for r in rows:
+        if r.pop("_catchall", False):
+            continue  # the catch-all spans the app between the runs: it overlaps nothing
         ov = [o["run_key"] for o in rows if o is not r and o["spark_context_id"] == r["spark_context_id"]
+              and not str(o.get("label") or "").startswith("Outside any run")
               and None not in (r["start_time"], r["end_time"], o["start_time"], o["end_time"])
               and o["start_time"] < r["end_time"] and r["start_time"] < o["end_time"]]
         r["overlapping_runs"] = ov or None
@@ -296,6 +314,8 @@ def _runs_rows(cid: str, meta: dict, d: dict, tdf: pd.DataFrame) -> list[dict]:
     names = run_names(d)
     for r in rows:
         r["program"], r["subject"] = names.get(r["run_key"], (None, None))
+        if str(r.get("label") or "").startswith("Outside any run"):
+            r["program"], r["subject"] = None, None  # not one test or table: its label says what it is
     from .aggregate import DIST_COLS, dist_rows
 
     data = dist_rows(tdf, ["run_key"], ("input_bytes", "input_records", "output_bytes", "output_records")) \
