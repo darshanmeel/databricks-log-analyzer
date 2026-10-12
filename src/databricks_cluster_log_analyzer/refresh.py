@@ -28,6 +28,7 @@ from .analysis.aggregate import mark_replanned, restage
 from .analysis.capacity import CATEGORIES as CAPACITY_CATEGORIES, capacity_findings
 from .analysis.combined import spill_shuffle_timeline
 from .analysis.incidents import build_incidents
+from .analysis.runs import set_typical
 from .analysis.contention import CATEGORIES, add_findings, contention_findings, first_tasks, recount_queries, to_ms
 from .analysis.diagnosis import build_summary
 from .analysis.findings import (_real_losses, _signal_findings, calibrate, confirmed_signals, demote_orphan_failures,
@@ -120,6 +121,8 @@ def refresh_findings(out_dir: str | os.PathLike, rules: Rules) -> dict:
     jobs = _rows(d / "spark_jobs.parquet")
     tasks = _rows(d / "tasks.parquet", ["spark_context_id", "stage_id", "stage_attempt", "launch_time"])
     runs = _rows(d / "runs.parquet")
+    # "usual" from runs on the same subject (one notebook over 30 tables is not the same work 30 times)
+    set_typical(runs)
     executors = _rows(d / "executors.parquet")
     queries = _rows(d / "sql_queries.parquet")
     info = _rows(d / "cluster_info.parquet")

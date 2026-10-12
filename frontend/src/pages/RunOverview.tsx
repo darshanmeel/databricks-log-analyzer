@@ -159,6 +159,17 @@ interface Analysis {
   total: number; running: number; waitShare: number; queued: boolean; byTook: RunStepGroup[]; top: RunStepGroup | null; topShare: number;
   merge: ReturnType<typeof mergeOf>; mergeFinding?: FindingRow; mostWaited: RunStepGroup | null;
   waitedFinding?: FindingRow; spillFindings: FindingRow[];
+  /** Of its queueing, the share behind other runs' tasks (the rest behind its own); null when not known. */
+  otherShare: number | null;
+  /** Time with its tasks queued on a full cluster, also behind its own (it ran in waves). */
+  queuedMs: number;
+}
+
+/** "…, 19% of it behind other runs)" / "…, behind its own tasks)" in the capacity finding. */
+function otherShareOf(f?: FindingRow): number | null {
+  const e = f?.evidence ?? '';
+  const m = /(\d+)% of it behind other runs/.exec(e);
+  return m ? Number(m[1]) / 100 : /behind its own tasks/.test(e) ? 0 : null;
 }
 
 function analyse(d: RunSteps, fs: FindingRow[]): Analysis {
@@ -173,6 +184,8 @@ function analyse(d: RunSteps, fs: FindingRow[]): Analysis {
     merge: mergeOf(mergeFinding), mergeFinding, mostWaited,
     waitedFinding: fs.find((f) => f.category === 'waited_for_cores'),
     spillFindings: fs.filter((f) => f.category === 'disk_spill'),
+    otherShare: otherShareOf(fs.find((f) => f.category === 'capacity_bound')),
+    queuedMs: d.queued_full_ms ?? 0,
   };
 }
 
@@ -184,7 +197,7 @@ function WhySlow({ cid, run, a, execs }: { cid: string; run: RunRow; a: Analysis
   return (
     <>
       <ul className="ro-points">
-        {waited && <li><b>{fmtDuration(d)} {a.queued ? 'with its tasks queued on a full cluster' : 'waiting for a free core'}</b> <span className="muted">· {fmtPct(a.waitShare, 0)} of {fmtDuration(a.total)}</span>
+        {waited && <li><b>{fmtDuration(d)} waiting for a free core</b> <span className="muted">· none of its tasks could start, {fmtPct(a.waitShare, 0)} of {fmtDuration(a.total)}</span>
           {others ? <span className="muted"> · {fmtNum(others)} other runs on the same {execs || ''} executors</span> : null}</li>}
         {/* one line: the cause card below has the detail */}
         {t && <li><b>{gname(t)}{a.merge ? ' (MERGE)' : ''}</b> {a.topShare >= 0.4 ? 'did most of the work' : 'ran longest'}
@@ -360,7 +373,10 @@ function Fixes({ run, a, spill, findings, failure }: { run: RunRow; a: Analysis;
   const bound = findings.find((f) => f.category === 'capacity_bound');
   if (a.waitShare >= 0.2 && a.queued && bound?.fix) {
     // queued behind its own tasks (or other runs) on a full cluster: the capacity finding's fix, not the concurrency one
-    fixes.push({ who: 'Cluster', plain: bound.fix, text: firstSentences(bound.fix), wins: `up to ${fmtDuration(waitMs)} of queueing` });
+    // behind its own tasks: the wave fix (spill, skew) is the run's own, and the time it wins is not the whole queue
+    const own = a.otherShare !== null && a.otherShare < 0.5;
+    fixes.push({ who: own ? (t ? gname(t) : 'This run') : 'Cluster', plain: bound.fix, text: firstSentences(bound.fix),
+      wins: own ? undefined : `up to ${fmtDuration(waitMs * (a.otherShare ?? 1))} of queueing` });
     done.add('capacity_bound');
     done.add('waited_for_cores');
   } else if (a.waitShare >= 0.2) {
@@ -416,9 +432,21 @@ function Causes({ cid, a, run, execs, burst, toCluster }: { cid: string; a: Anal
     <div className="ro-causes" id="ro-causes">
       {a.waitShare >= 0.2 && (
         <section className="ro-card">
-          <div className="ro-card-head"><span className="ro-tag">Cause 1 · cluster</span><span className="muted small">{fmtPct(a.waitShare, 0)} of the run</span></div>
-          <h3>Cores held by other runs</h3>
-          <div className="ro-big">{fmtDuration(waitMs)} <span>waiting for a free core</span></div>
+          <div className="ro-card-head"><span className="ro-tag">Cause 1 · {a.otherShare !== null && a.otherShare < 0.5 ? 'its own work' : 'cluster'}</span><span className="muted small">{fmtPct(a.waitShare, 0)} of the run</span></div>
+          <h3>{a.otherShare !== null && a.otherShare < 0.5 ? 'Its own tasks filled the cores' : 'Cores held by other runs'}</h3>
+          {a.otherShare !== null && a.otherShare < 0.5
+            ? <div className="ro-big">{fmtDuration(Math.max(a.queuedMs, waitMs))} <span>with tasks queued in waves, every core busy</span></div>
+            : <div className="ro-big">{fmtDuration(waitMs)} <span>waiting for a free core</span></div>}
+          {a.otherShare !== null && (
+            <div className="ro-bars small" title="Whose tasks held the cores while this run's tasks queued">
+              <span className="muted">its own tasks</span>
+              <span className="ro-bar"><i className="ro-b-read" style={{ width: `${(1 - a.otherShare) * 100}%` }} /></span>
+              <span className="num">{fmtPct(1 - a.otherShare, 0)}</span>
+              <span className="muted">other runs</span>
+              <span className="ro-bar"><i className="ro-b-spill" style={{ width: `${a.otherShare * 100}%` }} /></span>
+              <span className="num">{fmtPct(a.otherShare, 0)}</span>
+            </div>
+          )}
           <p className="small muted">
             {burst ? `Started with ${fmtNum(burst)} other runs within two minutes of it; ` : ''}
             {run.overlapping_runs?.length ? `shared ${execs ? `${execs} executors` : 'its executors'} with ${fmtNum(run.overlapping_runs.length)} other runs.` : ''}

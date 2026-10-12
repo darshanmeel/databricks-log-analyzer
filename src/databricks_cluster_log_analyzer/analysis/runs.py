@@ -304,6 +304,12 @@ def _runs_rows(cid: str, meta: dict, d: dict, tdf: pd.DataFrame) -> list[dict]:
         got = data.get(r["run_key"], {})
         r.update({c: got.get(c) for c in (*DIST_COLS, "input_bytes", "input_records", "output_bytes",
                                           "output_records")})
+    set_typical(rows)
+    return rows
+
+
+def set_typical(rows: list[dict]) -> None:
+    """The same job's other runs: is this one unusually slow? (typical_duration_ms, vs_typical, same_job_runs)"""
     # the same job's other runs: is this one unusually slow?
     # the same code over different tables (one notebook loading 30 tables) is not the same work: within a family,
     # runs are compared only with runs on the same subject; with fewer than 3 of those there is no usual yet
@@ -327,7 +333,6 @@ def _runs_rows(cid: str, meta: dict, d: dict, tdf: pd.DataFrame) -> list[dict]:
             r["same_job_runs"] = len(rs)
             r["typical_duration_ms"] = typ
             r["vs_typical"] = round(r["duration_ms"] / typ, 2) if typ and r["duration_ms"] is not None else None
-    return rows
 
 
 def run_family(r: dict) -> str:

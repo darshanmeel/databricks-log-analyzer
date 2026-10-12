@@ -1012,8 +1012,10 @@ export interface JdbcStep {
 
 /** What a run waited for cores: before its stages could start, or with its tasks queued on a full cluster wave after
  * wave (behind other runs or its own tasks), whichever is longer. Older analyses have only the first. */
+/** Waiting for a core, one meaning everywhere: time when none of the run's tasks could start because every core was
+ * busy (the cause bar's "waiting"). Its tasks queuing behind its own while others ran is "ran in waves", apart. */
 export const waitOf = (r: { waiting_ms?: number | null; queued_full_ms?: number | null }) =>
-  Math.max(r.waiting_ms ?? 0, r.queued_full_ms ?? 0);
+  r.waiting_ms ?? r.queued_full_ms ?? 0;
 
 /** No driver or executor logs at all: "no errors" would be a claim the logs cannot make. */
 export const noLogs = (s: { coverage?: CoverageItem[] }) => (s.coverage ?? []).some((c) => c.kind === 'no_logs');

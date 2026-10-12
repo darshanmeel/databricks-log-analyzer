@@ -39,6 +39,11 @@ FIX = {
         "rddBlocks.enabled), raise the minimum workers for this job, or avoid caches that autoscaling can throw away."),
 }
 
+OWN_WAVES_FIX = (
+    "Its own tasks filled every core, so it ran in waves: normal for a big job. Make each wave faster first: tasks too "
+    "big for their memory spill to disk (more shuffle partitions, or spark.sql.shuffle.partitions = auto), and one slow "
+    "task holds up its wave (skew). More or bigger workers shorten it after that.")
+
 _EXEC_RE = re.compile(r"(?:executor[ :]+|BlockManagerId\()(\d+)", re.I)
 
 
@@ -178,8 +183,13 @@ def capacity_findings(cid: str, tdf: pd.DataFrame, stages: list[dict], executors
         ev += ", behind its own tasks)" if own >= 0.95 else f", {1 - own:.0%} of it behind other runs)"
         # high only when the run queued behind its own tasks: queueing behind other runs is the cluster's one
         # cores_full story, not a high finding on every run
-        out.append(_f(cid, r.get("spark_context_id"), "high" if w >= 0.5 * dur and own >= 0.5 else "medium", "capacity_bound",
-                      f"run {_run_name(r)}", ev, r0, run_key=r["run_key"]))
+        f = _f(cid, r.get("spark_context_id"), "high" if w >= 0.5 * dur and own >= 0.5 else "medium", "capacity_bound",
+               f"run {_run_name(r)}", ev, r0, run_key=r["run_key"])
+        if own >= 0.5:
+            # it queued behind its own tasks: it ran in waves, as any big job does; what made each wave slow (tasks too
+            # big for their memory, so they spilled; skew) is the thing to fix first
+            f["fix"] = OWN_WAVES_FIX
+        out.append(f)
 
     # ---- per Spark context: autoscaling ----------------------------------------------------------------------
     info = {c.get("spark_context_id"): c for c in cluster_info or []}

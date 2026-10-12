@@ -216,18 +216,28 @@ function useRunScope(cid: string, section: string) {
   useEffect(() => setPicked(null), [cid, urlRun]);
   const data = runsSt.data;
   const runs = data?.runs ?? [];
-  let run: string | null = picked ?? urlRun ?? readStoredRun(cid) ?? null;
+  // the URL says which run a page is about (a shared link must not depend on this browser's last choice); only the
+  // run-only pages fall back to the run picked last in this tab
+  let run: string | null = picked ?? urlRun ?? (RUN_PAGES.has(section) ? readStoredRun(cid) : null) ?? null;
   if (run === ALL_RUNS || runs.length <= 1 || (run && !runs.some((r) => r.run_key === run))) run = null;
   // a run's page never shows the whole cluster: open the worst run
   if (!run && runs.length > 1 && RUN_PAGES.has(section)) run = [...runs].sort(worstFirst)[0].run_key;
   if (runs.length > 1 && CLUSTER_PAGES.has(section)) run = null;
   setRunScope(run); // read by the API client before the pages below fetch
   const nav = useNavigate();
+  const loc = useLocation();
   const choose = (next: string | null) => {
     storeRun(cid, next ?? ALL_RUNS);
     setPicked(next ?? ALL_RUNS);
     // the executors page is always the cluster's: picking a run there opens that run
     if (next && runs.length > 1 && CLUSTER_PAGES.has(section)) nav(`/c/${encodeURIComponent(cid)}?run=${encodeURIComponent(next)}`);
+    else {
+      // the pick goes into the URL, so a reload or a shared link shows the same run
+      const q = new URLSearchParams(loc.search);
+      if (next) q.set('run', next); else q.delete('run');
+      const qs = q.toString();
+      nav(`${loc.pathname}${qs ? `?${qs}` : ''}`, { replace: true });
+    }
   };
   return { runs, run, choose, loaded: !runsSt.loading, clock: data?.clock ?? null };
 }
@@ -289,6 +299,8 @@ function RunRail({ runs, run, choose }: { runs: RunRow[]; run: string | null; ch
     return [...m].map(([g, rs]) => ({ g, rs: [...rs].sort(order) })).sort((a, b) => order(a.rs[0], b.rs[0]));
   }, [shown, by]);
   const longest = Math.max(1, ...runs.map((r) => railValue(r, by)));
+  // the cluster's longest run, and runs with failed task attempts, are never folded away
+  const longestRun = useMemo(() => [...runs].sort((a, b) => (b.duration_ms ?? 0) - (a.duration_ms ?? 0))[0]?.run_key, [runs]);
   return (
     <aside className={`rail ${openRail ? 'open' : ''}`} aria-label="Runs on this cluster" title="Amber: a run that took 2× its usual time or more">
       <div className="rail-head">
@@ -313,7 +325,8 @@ function RunRail({ runs, run, choose }: { runs: RunRow[]; run: string | null; ch
         const slow = rs.filter(isSlow).length;
         const failed = rs.filter((r) => r.status === 'failed').length;
         const usual = rs.find((r) => r.typical_duration_ms)?.typical_duration_ms ?? null;
-        const calm = !failed && !slow && !rs.some((r) => r.run_key === run) && rs.length > 1 && !words.length && by === 'worst';
+        const retried = rs.filter((r) => (r.failed_tasks ?? 0) > 0).length;
+        const calm = !failed && !slow && !retried && !rs.some((r) => r.run_key === run || r.run_key === longestRun) && rs.length > 1 && !words.length && by === 'worst';
         const isOpen = open[g] ?? !calm;
         const all = open[`${g}:all`] || words.length > 0;
         const top = all ? rs : rs.filter((r, i) => i < SHOW_IN_GROUP || r.run_key === run);
@@ -321,7 +334,7 @@ function RunRail({ runs, run, choose }: { runs: RunRow[]; run: string | null; ch
           <div key={g} className="rail-group">
             <div className="rail-group-head">
               <span className="rail-g">{g}</span>
-              <span>{rs.length}{failed ? <b className="st-crit"> · {failed} failed</b> : slow ? <b className="st-warn"> · {slow} slow</b> : ''}</span>
+              <span>{rs.length}{failed ? <b className="st-crit"> · {failed} failed</b> : slow ? <b className="st-warn"> · {slow} slow</b> : retried ? <b className="st-warn"> · {retried} with failed attempts</b> : ''}</span>
             </div>
             {!isOpen ? (
               <button className="rail-more" onClick={() => setOpen((o) => ({ ...o, [g]: true }))}>
@@ -362,7 +375,10 @@ function RunTitle({ r }: { r: RunRow }) {
         <h1 className="mono">{runName(r)}</h1>
         {r.status !== 'succeeded' && r.status !== 'failed' ? <StatusBadge status={r.status} />
           : <VerdictChip v={v} title={v.kind === 'failed' ? undefined : 'Spark saw no failed job; a failure outside Spark (Python, timeout, cancel) is not in the event log'} />}
-        {x !== null && isSlow(r) && <span className="chip warn">{x.toFixed(1)}× slower than usual</span>}
+        {/* slow only because it waited for cores: say so, there is nothing to find inside the run */}
+        {x !== null && isSlow(r) && (waitOf(r) >= 0.8 * (r.duration_ms ?? 0)
+          ? <span className="chip warn" title="Its own work took about its usual time: it waited for a free core">{x.toFixed(1)}× usual · {Math.round((waitOf(r) / Math.max(1, r.duration_ms ?? 1)) * 100)}% waiting for a core</span>
+          : <span className="chip warn">{x.toFixed(1)}× slower than usual</span>)}
       </div>
       <div className="run-meta mono">
         {[

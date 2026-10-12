@@ -75,8 +75,9 @@ export function ClusterTop({ cid, runs, executors, compute, onPick, find, more, 
   const spill = sum(runs, (r) => r.disk_spill);
   const shufR = sum(runs, (r) => r.shuffle_read), shufW = sum(runs, (r) => r.shuffle_write);
   const lost = executors.filter((e) => BAD_GONE.includes(e.removal_category ?? ''));
-  // the executors (and their cores) up when the most runs went at once, not every executor the cluster ever had
-  const atPeak = executors.filter((e) => (e.added_time == null || e.added_time <= peak.at) && (e.removed_time == null || e.removed_time >= peak.at));
+  // the executors (and their cores) up around the time the most runs went at once (an executor that joined a minute
+  // after a burst started counts), not every executor the cluster ever had
+  const atPeak = executors.filter((e) => (e.added_time == null || e.added_time <= peak.at + 10 * 60_000) && (e.removed_time == null || e.removed_time >= peak.at));
   const cores = atPeak.reduce((a, e) => a + (e.cores ?? 0), 0);
   const t0 = Math.min(...runs.map((r) => r.start_time ?? Infinity));
   const t1 = Math.max(...runs.map((r) => r.end_time ?? r.start_time ?? 0));
@@ -110,7 +111,7 @@ export function ClusterTop({ cid, runs, executors, compute, onPick, find, more, 
       <div className="ro-hero">
         <section className="ro-hero-box">
           <span className={`ro-eyebrow ${slow.length || waitShare >= 0.2 ? 'warn' : ''}`}>{slow.length || waitShare >= 0.2 ? 'Why runs were slow' : 'Where the time went'}</span>
-          <WhySlow cid={cid} progs={progs} waiting={waiting} took={took} running={running} peak={peak.n} execs={atPeak.length} cores={cores} slow={slow} />
+          <WhySlow cid={cid} progs={progs} waiting={waiting} took={took} running={running} peak={peak.n} execs={atPeak.length} cores={cores} slow={slow} avg={busy ? took / busy : 0} />
         </section>
         <section className="ro-hero-box">
           <span className={`ro-eyebrow ${failed.length || lost.length ? 'bad' : ''}`}>How the runs ended</span>
@@ -125,7 +126,7 @@ export function ClusterTop({ cid, runs, executors, compute, onPick, find, more, 
           foot={[failed.length ? `${fmtNum(failed.length)} failed` : '', slow.length ? `${fmtNum(slow.length)} slow` : '', !failed.length && !slow.length ? (retried.length ? `${fmtNum(retried.length)} after retries` : 'none failed') : ''].filter(Boolean).join(' · ')}
           tone={failed.length ? 'bad' : slow.length ? 'warn' : undefined} title={slow.length ? `${fmtNum(slow.length)} took 2× their usual or more` : undefined} />
         {waitShare >= 0.05 && <Tile label="Waiting for cores" value={fmtPct(waitShare, 0)} foot={`${fmtDuration(waiting)} added up`} tone={waitShare >= 0.2 ? 'warn' : undefined} title={waitTitle} />}
-        {peak.n >= 10 && <Tile label="At once" value={fmtNum(peak.n)} foot={`runs, on ${fmtNum(atPeak.length)} ${atPeak.length === 1 ? 'executor' : 'executors'}`} tone="warn" />}
+        {peak.n >= 10 && <Tile label="At once" value={fmtNum(peak.n)} foot={`runs, on ${cores ? `${fmtNum(cores)} cores` : `${fmtNum(atPeak.length)} ${atPeak.length === 1 ? 'executor' : 'executors'}`}`} tone="warn" />}
         {spill > 0 && <Tile label="Disk spill" value={fmtBytes(spill)} foot="all runs" tone={spill >= GB ? 'warn' : undefined} />}
         {failedTasks > 0 && <Tile label="Tasks" value={fmtNum(sum(runs, (r) => r.tasks))} foot={`${fmtNum(failedTasks)} ${failedTasks === 1 ? 'attempt' : 'attempts'} failed`} tone="warn" />}
       </div>
@@ -151,8 +152,8 @@ export function ClusterTop({ cid, runs, executors, compute, onPick, find, more, 
   );
 }
 
-function WhySlow({ cid, progs, waiting, took, running, peak, execs, cores, slow }: {
-  cid: string; progs: Program[]; waiting: number; took: number; running: number; peak: number; execs: number; cores: number; slow: RunRow[];
+function WhySlow({ cid, progs, waiting, took, running, peak, execs, cores, slow, avg }: {
+  cid: string; progs: Program[]; waiting: number; took: number; running: number; peak: number; execs: number; cores: number; slow: RunRow[]; avg: number;
 }) {
   const share = waiting / Math.max(1, took);
   const top = progs[0];
@@ -162,7 +163,7 @@ function WhySlow({ cid, progs, waiting, took, running, peak, execs, cores, slow 
     <>
       <ul className="ro-points">
         {share >= 0.1 && <li><b>{fmtDuration(waiting)} waiting for a free core</b> <span className="muted">· added up over runs, {fmtPct(share, 0)} of their {fmtDuration(took)}</span></li>}
-        {share >= 0.1 && <li>Up to <b>{fmtNum(peak)} runs at once</b> <span className="muted">on {fmtNum(execs)} {execs === 1 ? 'executor' : 'executors'}{cores ? ` (${fmtNum(cores)} cores)` : ''}</span></li>}
+        {share >= 0.1 && <li>Up to <b>{fmtNum(peak)} runs at once</b> <span className="muted">on {cores ? `${fmtNum(cores)} cores (${fmtNum(execs)} ${execs === 1 ? 'executor' : 'executors'})` : `${fmtNum(execs)} ${execs === 1 ? 'executor' : 'executors'}`}{avg >= 1.05 ? `; ${avg.toFixed(1)} at once on average` : ''}</span></li>}
         {top && <li><b>{top.name}</b> {topShare >= 0.4 ? 'did most of the work' : 'did the most work'} <span className="muted">· {fmtDuration(top.running)} running tasks, added up over {fmtNum(top.runs.length)} runs{top.spill >= GB ? `, spilled ${fmtBytes(top.spill)}` : ''}</span></li>}
         {worst && <li><b>{slow.length === 1 ? 'One run' : `${fmtNum(slow.length)} runs`} 2× usual or more</b>; worst <Link to={inRun(to.overview(cid), worst.run_key)}>{runName(worst)}</Link> <span className="muted">· {fmtDuration(worst.duration_ms)}, {usualX(worst)!.toFixed(1)}×</span></li>}
         {!top && !worst && share < 0.1 ? <li>No run was slow: none waited long for cores, none took twice its usual time</li> : null}
