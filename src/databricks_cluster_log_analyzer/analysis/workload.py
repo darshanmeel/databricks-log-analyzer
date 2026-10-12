@@ -446,6 +446,7 @@ def driver_findings(cid: str, apps: list[dict], runs: list[dict], queries: list[
         if x.get("run_key"):
             run_ctx.setdefault(x["run_key"], set()).add(x["spark_context_id"])
     covered: dict = {}
+    hits: dict = {}
     for r in runs:
         if r.get("kind") == "app":
             continue
@@ -459,9 +460,26 @@ def driver_findings(cid: str, apps: list[dict], runs: list[dict], queries: list[
         if none < rules.no_spark_min_ms or none < rules.no_spark_share_min * wall:
             continue
         covered[r["spark_context_id"]] = max(covered.get(r["spark_context_id"], 0), wall)
+        jdbc = any("JDBCRelation" in (q.get("final_plan") or q.get("initial_plan") or "") for q in qs)
+        hits.setdefault(r.get("program") or r["run_key"], []).append((none, wall, in_q, top, lo, r, jdbc))
+    # one finding per program (the runs of the same notebook or task): its longest case, and how many runs were alike
+    for _prog, hs in hits.items():
+        hs.sort(key=lambda h: -h[0])
+        none, wall, in_q, top, lo, r, jdbc = hs[0]
         sev = "high" if none >= 0.7 * wall and none >= 600_000 else "medium"
-        out.append(_f(cid, r["spark_context_id"], sev, "no_spark_work", f"run {_run_name(r)}",
-                      text(none, wall, in_q, top, "its"), lo, run_key=r["run_key"]))
+        ev = text(none, wall, in_q, top, "its")
+        if jdbc:
+            ev += (" It reads over JDBC: the driver connects to the source database itself (to read each table's "
+                   "schema, and for any plain JDBC calls in the code) before Spark runs anything, so a slow or "
+                   "unreachable database waits here.")
+        if len(hs) > 1:
+            same = sum(1 for x in runs if x.get("program") and x.get("program") == r.get("program"))
+            lo_n, hi_n = min(h[0] for h in hs), max(h[0] for h in hs)
+            ev = (f"{len(hs)} of the {same} runs of {r.get('program')} spent {fmt_words(lo_n)} to {fmt_words(hi_n)} "
+                  f"with no Spark stage running. The longest: " + ev[0].lower() + ev[1:])
+        out.append(_f(cid, r["spark_context_id"], sev, "no_spark_work",
+                      f"run {_run_name(r)}" + (f" and {len(hs) - 1} more like it" if len(hs) > 1 else ""),
+                      ev, lo, run_key=r["run_key"]))
     app_run = {r["spark_context_id"]: r["run_key"] for r in runs if r.get("kind") == "app"}
     for a in apps:
         ctx = a["spark_context_id"]

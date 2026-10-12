@@ -29,7 +29,8 @@ from .analysis.combined import spill_shuffle_timeline
 from .analysis.incidents import build_incidents
 from .analysis.contention import CATEGORIES, add_findings, contention_findings, first_tasks, recount_queries, to_ms
 from .analysis.diagnosis import build_summary
-from .analysis.findings import calibrate, demote_orphan_failures, recheck_gc, summarize_errors
+from .analysis.findings import (_real_losses, _signal_findings, calibrate, confirmed_signals, demote_orphan_failures,
+                                recheck_gc, summarize_errors, summarize_signals)
 from .analysis.workload import CATEGORIES as WORKLOAD_CATEGORIES, driver_findings, read_split, workload_findings
 from .config import Rules
 from .parsing.eventlog import _BENIGN_KILL
@@ -117,9 +118,14 @@ def refresh_findings(out_dir: str | os.PathLike, rules: Rules) -> dict:
     new += workload_findings(cid, queries, runs, executors, signals, _rows(d / "event_counts.parquet"), rules, stages)
     new += driver_findings(cid, _rows(d / "apps.parquet"), runs, queries, stages, _rows(d / "settings.parquet"), rules)
     recheck_gc(findings, stages, rules)
+    # the log signal findings again, without the lines the event log does not back (a fetch failure no task had, an
+    # executor lost as the cluster stopped)
+    sig_rows = confirmed_signals(signals, stages, _rows(d / "task_retries.parquet"), _rows(d / "apps.parquet"))
+    new += _signal_findings(cid, summarize_signals(_real_losses(sig_rows, executors, rules)))
+    log_cats = {f"log:{s.name}" for s in rules.signals}
     calibrate(findings, rules)
     demote_orphan_failures(findings, queries)
-    allf = add_findings(findings, runs, new, replace=(*CATEGORIES, *WORKLOAD_CATEGORIES, *CAPACITY_CATEGORIES))
+    allf = add_findings(findings, runs, new, replace=(*CATEGORIES, *WORKLOAD_CATEGORIES, *CAPACITY_CATEGORIES, *log_cats))
     write_parquet(allf, d / "findings.parquet", "findings")
     if (d / "query_profile.parquet").exists():
         qp = _rows(d / "query_profile.parquet")

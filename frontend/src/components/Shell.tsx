@@ -8,7 +8,7 @@ import { ErrorState, Loading, StatusBadge } from './ui';
 import { runGroup, runName, runOption, usualX } from '../runName';
 import { clusterVerdict, runVerdict, type Verdict } from '../status';
 /** The analyzer revision this UI expects (summary.json `analyzer_revision`); older builds lack the newer numbers. */
-const ANALYZER_REVISION = 20;
+const ANALYZER_REVISION = 21;
 
 /* ------------------------------------------------------------ theme */
 
@@ -555,7 +555,9 @@ function ClusterEnd({ summary, runs, end }: { summary: Summary; runs: RunRow[]; 
     <>
       <VerdictChip v={v} />
       {(((summary as Summary & { analyzer_revision?: number }).analyzer_revision ?? 0) < ANALYZER_REVISION) && (
-        <span className="muted small" title="Newer numbers and findings need Analyze again (from the raw logs), or refresh-findings on the command line">built with an older analyzer: Analyze again on Home</span>
+        <span className="chip warn" title="Newer numbers and findings need Analyze again (from the raw logs), or, when the raw logs are gone, refresh-findings on the command line">
+          Built with an older analyzer (revision {(summary as Summary & { analyzer_revision?: number }).analyzer_revision ?? 'unknown'}): findings may be out of date. Analyze again on Home
+        </span>
       )}
       {after !== null && after >= 0 && after < 10 * 60_000 ? <span className="muted small">the cluster stopped {fmtDuration(after)} after the last run ended</span> : null}
     </>

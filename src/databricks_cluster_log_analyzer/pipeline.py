@@ -206,7 +206,7 @@ def build(cluster_dir: str | os.PathLike, output_root: str | os.PathLike, *, clu
     task_ooms = task_oom_rows(tdf)
     findings = build_findings_rows({"cluster_id": cid, "stages": stages, "executors": executors,
                                     "sql_queries": queries, "log_signals": log_signals, "log_errors": log_errors,
-                                    "task_retries": retries, "gc_profile": gcp, "task_ooms": task_ooms,
+                                    "task_retries": retries, "gc_profile": gcp, "task_ooms": task_ooms, "apps": apps,
                                     "executor_profile": ep},
                                    rules)
     timeline = build_timeline(log_signals, cid)

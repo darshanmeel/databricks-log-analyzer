@@ -450,6 +450,47 @@ def _real_losses(log_signals: list[dict], executors: list[dict], rules: Rules) -
     return [r for r in log_signals if r.get("signal") != "executor_lost" or real.search(r.get("line") or "")]
 
 
+SHUTDOWN_MS = 30_000
+SHUTDOWN_SIGNALS = {"executor_lost", "cache_lost", "cache_dropped"}
+
+
+def confirmed_signals(log_signals: list[dict], stages: list[dict], retries: list[dict], apps: list[dict]) -> list[dict]:
+    """The log signal lines that are not noise: a shuffle fetch failure only when the event log shows one (a task that
+    ended FetchFailed, so a retried stage or a fetch-failure retry); executors and cached blocks lost in the last
+    seconds before the app ended are the cluster stopping, not a loss. Without an event log every line stays."""
+    if not stages:
+        return log_signals
+    fetch = (any((s.get("stage_attempt") or 0) > 0 or "FetchFailed" in str(s.get("failure_reason") or "") for s in stages)
+             or any(r.get("first_failure_category") == "fetch_failed" for r in retries or []))
+    ends = [e for e in ((a.get("end_time") for a in apps or [])) if e is not None]
+    end = max(_ms(e) for e in ends) if ends else None
+    out = []
+    for r in log_signals:
+        sig = r.get("signal")
+        if sig == "fetch_failure" and not fetch:
+            continue
+        ts = _ms(r.get("ts"))
+        if sig in SHUTDOWN_SIGNALS and end is not None and ts is not None and ts >= end - SHUTDOWN_MS:
+            continue
+        out.append(r)
+    return out
+
+
+def _ms(v):
+    """Epoch ms of a timestamp (int, pandas Timestamp or datetime; a naive one is UTC)."""
+    if v is None:
+        return None
+    if isinstance(v, (int, float)):
+        return int(v)
+    import datetime as _dt
+
+    if hasattr(v, "to_pydatetime"):
+        v = v.to_pydatetime()
+    if isinstance(v, _dt.datetime):
+        return int((v if v.tzinfo else v.replace(tzinfo=_dt.timezone.utc)).timestamp() * 1000)
+    return None
+
+
 def _signal_findings(cid: str, signal_summary: list[dict]) -> list[dict]:
     return [_f(cid, None, g["severity"], f"log:{g['signal']}", "driver/executor logs",
                f"{g['occurrences']} lines on "
@@ -557,8 +598,9 @@ def build_findings_rows(tables: Mapping, rules: Rules) -> list[dict]:
     cid = tables["cluster_id"]
     sites = {**log_oom_sites(tables.get("log_errors") or []),
              **{t["executor_id"]: t["oom_site"] for t in tables.get("task_ooms") or [] if t.get("executor_id")}}
-    signals = _signal_findings(cid, summarize_signals(_real_losses(tables.get("log_signals") or [],
-                                                                   tables.get("executors") or [], rules)))
+    sig_rows = confirmed_signals(tables.get("log_signals") or [], tables.get("stages") or [],
+                                 tables.get("task_retries") or [], tables.get("apps") or [])
+    signals = _signal_findings(cid, summarize_signals(_real_losses(sig_rows, tables.get("executors") or [], rules)))
     # every out of memory happened while building a DataFrame cache: say so, not the generic "more partitions"
     if sites and set(sites.values()) == {"cache"}:
         for r in signals:
