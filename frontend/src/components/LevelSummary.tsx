@@ -453,14 +453,20 @@ export function QuerySummary({ cid, ctx, id, title, onJob, onQuery, tasks = true
     <section className="panel">
       <div className="panel-head"><h2>{title}</h2><span className="muted small">all {fmtNum(jobs.length)} Spark jobs and {fmtNum(stages.length)} stages together</span></div>
       <div className="panel-body stack">
+        {/* where its time went and why, then the graph below; the step list, numbers, tables and jobs fold away */}
         {tst.data && <QueryTimeBar t={tst.data} onQuery={(qid) => onQuery?.(qid)} />}
-        {tst.data && <QuerySteps t={tst.data} id={id} onJob={onJob} onQuery={(qid) => onQuery?.(qid)} />}
         <WhyLine dur={q?.duration_ms ?? null} stages={stages} why={why} />
-        <TablesRead cid={cid} scope={{ ctx, query: id }} embedded />
         <VCards cards={levelCards(stages, 'query', why)} compact />
-        <Numbers dur={q?.duration_ms ?? null} kids={jobs.length} kidWord="Jobs" stages={stages} />
-        <h3 className="h-sub" style={{ margin: 0 }}>Its {fmtNum(jobs.length)} {jobs.length === 1 ? 'job' : 'jobs'} <span className="muted small">each job's time, wait for cores, stages, tasks and shuffle · click a header to sort, a job for its stages and executors</span></h3>
-        <ChildTable rows={rows} word="Job" why={why} onPick={(jid) => onJob(Number(jid))} />
+        <details className="evidence">
+          <summary className="small">Step by step, its numbers, the tables it read and its {fmtNum(jobs.length)} Spark {jobs.length === 1 ? 'job' : 'jobs'}</summary>
+          <div className="stack" style={{ gap: 12, marginTop: 8 }}>
+            {tst.data && <QuerySteps t={tst.data} id={id} onJob={onJob} onQuery={(qid) => onQuery?.(qid)} />}
+            <Numbers dur={q?.duration_ms ?? null} kids={jobs.length} kidWord="Spark jobs" stages={stages} />
+            <TablesRead cid={cid} scope={{ ctx, query: id }} embedded />
+            <h3 className="h-sub" style={{ margin: 0 }}>Its {fmtNum(jobs.length)} Spark {jobs.length === 1 ? 'job' : 'jobs'} <span className="muted small">each job's time, wait for cores, stages, tasks and shuffle · click a header to sort, a job for its stages and executors</span></h3>
+            <ChildTable rows={rows} word="Spark job" why={why} onPick={(jid) => onJob(Number(jid))} />
+          </div>
+        </details>
         {tasks && <h3 className="h-sub" style={{ margin: '8px 0 0' }}>All its tasks</h3>}
         {tasks && <ScopeTaskSection cid={cid} ctx={ctx} query={id} what={`query ${id}`} />}
       </div>
