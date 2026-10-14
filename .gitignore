@@ -22,3 +22,4 @@ sample_data/
 tests/fixtures/clusters/
 .playwright-mcp/
 .claude/worktrees/
+*.tsbuildinfo
