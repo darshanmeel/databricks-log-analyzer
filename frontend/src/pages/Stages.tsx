@@ -315,7 +315,7 @@ function StageDetailView({ cid, d, retries, onClose }: { cid: string; d: StageDe
               Stage {s.stage_id}
               {s.stage_attempt ? `.${s.stage_attempt}` : ''}
             </h2>
-            <StatusBadge status={s.status} />
+            {s.status === 'succeeded' && (s.failed_tasks ?? 0) > 0 ? <span className="badge warn"><span aria-hidden>✓</span>Succeeded after retries</span> : <StatusBadge status={s.status} />}
             {skewBreach(s.skew, s.max_task_ms) && <SeverityBadge sev="high" />}
           </div>
           <div className="note wrap-any">{s.stage_name}</div>
@@ -540,6 +540,7 @@ function FailedTasks({ cid, s }: { cid: string; s: StageRow }) {
 }
 
 const CAUSE: Record<string, { label: string; sev: 'high' | 'medium' | 'low'; fix: string }> = {
+  jdbc_skew: { label: 'JDBC partition skew', sev: 'high', fix: 'The JDBC read is split by its partitionColumn between lowerBound and upperBound: rows bunched in one range land in one task. Partition on an evenly spread column (or a hash of the key), or give one predicate per range. Salting keys and AQE skew join do not apply to a read.' },
   data_skew: { label: 'Data skew', sev: 'high', fix: 'One key or partition holds far more data: salt or split the hot key, filter nulls before the join, or let AQE split skewed partitions (spark.sql.adaptive.skewJoin.enabled).' },
   slow_executor: { label: 'Slow executor', sev: 'medium', fix: 'The data was normal but this executor is slow everywhere: a bad or overloaded node. Check its GC and logs; spot reclaim or noisy neighbours are common causes.' },
   gc: { label: 'GC pressure', sev: 'medium', fix: 'The task spent much of its time in garbage collection: give executors more memory per core, or reduce cached and broadcast data.' },
@@ -550,7 +551,9 @@ const CAUSE: Record<string, { label: string; sev: 'high' | 'medium' | 'low'; fix
 };
 
 function SkewedTasks({ cid, rows }: { cid: string; rows: Hotspot[] }) {
-  const causes = [...new Set(rows.map((r) => r.cause ?? 'unknown'))];
+  // a JDBC read's skew is its partition column: its own fix, not the join-key one
+  const keyOf = (h: Hotspot) => (h.cause === 'data_skew' && /JDBC/.test(h.detail ?? '') ? 'jdbc_skew' : h.cause ?? 'unknown');
+  const causes = [...new Set(rows.map(keyOf))];
   return (
     <div>
       <h3 style={{ marginBottom: 4 }}>Skewed tasks: which task, where, and why</h3>
@@ -559,7 +562,7 @@ function SkewedTasks({ cid, rows }: { cid: string; rows: Hotspot[] }) {
       </p>
       <ul className="hot-list">
         {rows.map((h) => {
-          const c = CAUSE[h.cause ?? 'unknown'] ?? CAUSE.unknown;
+          const c = CAUSE[keyOf(h)] ?? CAUSE.unknown;
           return (
             <li key={`${h.task_id}-${h.ts_start}`}>
               <SeverityBadge sev={c.sev} label={c.label} />
@@ -636,7 +639,9 @@ function StageVerdict({ s, d, execs }: { s: StageRow; d: StageDetail; execs: Exe
     cards.push({
       tone: 'warn', title: 'Tasks mostly not computing', big: fmtPct(1 - cpu / tms, 0), unit: 'of task time off the CPU',
       chart: <Split parts={[['CPU', cpu, 'var(--series-1)'], ['waiting on I/O, shuffle or GC', tms - cpu, 'var(--wait)']]} fmt={fmtDuration} />,
-      note: `CPU ${fmtDuration(cpu)} of ${fmtDuration(tms)} task time: the tasks spent the rest reading from storage, fetching shuffle data or in GC. ${(s.input_bytes ?? 0) > (s.shuffle_read ?? 0) ? 'Reading less from storage helps more than more CPU.' : 'Shuffling less helps more than more CPU.'}`,
+      note: !s.input_bytes && !s.shuffle_read && (s.input_records ?? 0) > 0
+        ? `CPU ${fmtDuration(cpu)} of ${fmtDuration(tms)} task time: it reads a database over JDBC, so the rest was waiting on the source database to send rows. A faster source query or more, smaller ranges (partitionColumn) helps; more CPU does not.`
+        : `CPU ${fmtDuration(cpu)} of ${fmtDuration(tms)} task time: the tasks spent the rest reading from storage, fetching shuffle data or in GC. ${(s.input_bytes ?? 0) > (s.shuffle_read ?? 0) ? 'Reading less from storage helps more than more CPU.' : 'Shuffling less helps more than more CPU.'}`,
     });
   if (spillBreach(s.disk_spill))
     cards.push({

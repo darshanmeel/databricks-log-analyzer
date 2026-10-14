@@ -77,7 +77,7 @@ def test_contention_findings():
     assert waited["job_run:42-b"]["severity"] == "medium"  # 3x its usual
     # run c is at its usual, but it mostly waited (57 of 60 minutes): flagged whatever its "x usual"
     assert waited["job_run:42-c"]["severity"] == "medium" and "It mostly waited" in waited["job_run:42-c"]["evidence"]
-    assert "Waited 57 m" in waited["job_run:42-b"]["evidence"] and "stages waited longer than they ran" in waited["job_run:42-b"]["evidence"]
+    assert "Waited 57m" in waited["job_run:42-b"]["evidence"] and "stages waited longer than they ran" in waited["job_run:42-b"]["evidence"]
     cf = by["cores_full"][0]
     assert cf["severity"] == "high" and "Up to 3 runs ran at once" in cf["evidence"]
     assert "8 cores" in cf["evidence"] and "16" in cf["evidence"] and "between 1 and 2 workers" in cf["evidence"]

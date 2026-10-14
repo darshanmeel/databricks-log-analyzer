@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, Fragment } from 'react';
 import { api, type FindingRow, type IncidentRow, type Severity } from '../api';
 import { Link } from 'react-router-dom';
 import { useCluster, useRunScopeCtx } from '../components/Shell';
@@ -11,7 +11,7 @@ import { useAsync, useQueryState } from '../hooks';
 import { rowLinks, to } from '../links';
 import { CONF, FAILURE_KINDS, FixTips } from '../problems';
 import { plainFirst } from '../components/FindingPoints';
-import { groupIncidents, isFailure, type Incident, type Joined, type Problem } from '../incidents';
+import { groupIncidents, isFailure, type Incident, type Joined, type Problem, touchesRun } from '../incidents';
 
 const SEVS: Severity[] = ['high', 'medium', 'low'];
 
@@ -93,6 +93,7 @@ function RunOf({ cid, f }: { cid: string; f: Joined }) {
 
 function Incidents({ cid, rows, focus }: { cid: string; rows: Joined[]; focus: string | null }) {
   const incs = useMemo(() => groupIncidents(rows), [rows]);
+  const { runs } = useRunScopeCtx();
   const failed = incs.filter((i) => i.problems.some((p) => FAILURE_KINDS.has(p.lead.inc!.kind)));
   return (
     <>
@@ -105,7 +106,13 @@ function Incidents({ cid, rows, focus }: { cid: string; rows: Joined[]; focus: s
       <div className="incidents">
         {/* one line each: the first one (and the one a link points at) open, the rest on click */}
         {incs.map((inc, i) => (
-          <IncidentCard key={inc.id} cid={cid} inc={inc} focus={focus} first={i === 0} />
+          <Fragment key={inc.id}>
+            {/* the problems that touched no run come last, under their own heading */}
+            {runs.length > 1 && !touchesRun(inc) && (i === 0 || touchesRun(incs[i - 1])) && (
+              <h3 className="small muted" style={{ margin: '14px 0 4px' }}>Touched no run: a platform or tooling query, or a log line no run can be tied to</h3>
+            )}
+            <IncidentCard cid={cid} inc={inc} focus={focus} first={i === 0} />
+          </Fragment>
         ))}
       </div>
       <LooseFindings cid={cid} rows={rows.filter((r) => !r.inc)} focus={focus} />

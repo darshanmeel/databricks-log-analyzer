@@ -233,7 +233,8 @@ def build(cluster_dir: str | os.PathLike, output_root: str | os.PathLike, *, clu
                    set(zip(tdf["spark_context_id"], tdf["executor_id"].astype(str))) if not tdf.empty else set(),
                    len(ds["settings"]), log_stats, len(gc_events), _ms_of(max_ts))
     gaps = [(c["from"], c["to"]) for c in cov if c["kind"] == "event_log_gap"]
-    later = (capacity_findings(cid, tdf, stages, executors, runs, ds["cluster_info"], log_signals, rules)
+    later = (capacity_findings(cid, tdf, stages, executors, runs, ds["cluster_info"], log_signals, rules,
+                               settings=ds["settings"])
              + workload_findings(cid, queries, runs, executors, log_signals, ds["event_counts"], rules, stages)
              + driver_findings(cid, apps, runs, queries, stages, ds["settings"], rules)
              + plan_findings(cid, queries, stages, ds["sql_plan_nodes"], runs, rules))

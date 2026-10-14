@@ -755,8 +755,9 @@ def table_query(
             if name == "incidents" and "finding_id" in sch and store.dataset_path(cid, "findings", required=False):
                 # an incident is a run's through its findings: never by time alone
                 fp = store.dataset_path(cid, "findings")
-                where.append(f"finding_id IN (SELECT finding_id FROM {store.src(fp)} WHERE run_key = ?)")
-                params.append(run)
+                also = " OR list_contains(also_runs, ?)" if "also_runs" in store.schema(con, fp) else ""
+                where.append(f"finding_id IN (SELECT finding_id FROM {store.src(fp)} WHERE run_key = ?{also})")
+                params.extend([run, run] if also else [run])
             elif "run_key" in sch and name in WITH_SHARED_ROWS and win and tcol in sch:
                 # the run's own rows, and the cluster's shared rows (executors, logs) in the run's time; a row tied to
                 # a job, stage or query is never shared, even without a run (a query that ran no Spark job)
@@ -764,6 +765,10 @@ def table_query(
                 where.append(f"(run_key = ? OR (run_key IS NULL{own} AND {qi(tcol)} BETWEEN epoch_ms(CAST(? AS BIGINT)) "
                              f"AND epoch_ms(CAST(? AS BIGINT))))")
                 params.extend([run, *win])
+            elif "run_key" in sch and "also_runs" in sch:
+                # a finding that speaks for several runs ("and 16 more like it") is on each of their pages
+                where.append("(run_key = ? OR list_contains(also_runs, ?))")
+                params.extend([run, run])
             elif "run_key" in sch:
                 where.append("run_key = ?")
                 params.append(run)
@@ -2604,35 +2609,13 @@ BURST_MIN_RUNS = 5
 HOG_MS = 30 * 60_000  # a stage that held every core this long blocks every other run on a FIFO scheduler
 
 
-def _held_ms(s: dict) -> int:
-    """How long a stage held cores: its first task to its end (submission to the first task it waited for one)."""
-    a, z = _as_ms(s.get("first_task_time")) or _as_ms(s.get("start_time")), _as_ms(s.get("end_time"))
-    return z - a if a is not None and z is not None and z > a else 0
+from ..analysis.capacity import core_hog as _core_hog, held_ms as _held_ms  # noqa: E402
 
 
 def _waited(r: dict) -> int:
     """A run's wait for a core (its own measure; the time more of its tasks queued is only for older outputs)."""
     w = r.get("waiting_ms")
     return int(w if w is not None else (r.get("queued_full_ms") or 0))
-
-
-def _core_hog(stages: list[dict], executors: list[dict]) -> tuple[dict, int] | None:
-    """The stage that held cores longest (HOG_MS or more, from its first task) with more tasks than the most worker
-    cores ever up at once, and those cores."""
-    ev = []
-    for e in executors:
-        if not is_worker(e, executors) or not e.get("cores"):
-            continue
-        ev.append((_as_ms(e.get("added_time")) or 0, int(e["cores"])))
-        if e.get("removed_time"):
-            ev.append((_as_ms(e["removed_time"]), -int(e["cores"])))
-    n = most = 0
-    for _, c in sorted(ev, key=lambda x: (x[0], x[1])):
-        n += c
-        most = max(most, n)
-    n_tasks = lambda s: s.get("num_tasks") or ((s.get("tasks") or 0) - (s.get("failed_tasks") or 0))
-    long_ = [s for s in stages if _held_ms(s) >= HOG_MS and most and n_tasks(s) > most]
-    return (max(long_, key=_held_ms), most) if long_ else None
 
 
 def _start_bursts(runs: list[dict]) -> list[dict]:
@@ -2676,7 +2659,7 @@ def settings_view(store: Store, cid: str) -> dict[str, Any]:
         qs = store.select(con, cid, "sql_queries", exclude=("final_plan", "initial_plan", "details"))
         info = (store.select(con, cid, "cluster_info", limit=1) or [{}])[0]
         newer = store.select(con, cid, "findings", "category IN ('cores_full', 'merge_rewrite', 'waited_for_cores', "
-                             "'count_only', 'no_spark_work', 'tiny_task_stages')", ()) \
+                             "'count_only', 'no_spark_work', 'tiny_task_stages', 'jdbc_one_partition', 'empty_input')", ()) \
             if store.dataset_path(cid, "findings", required=False) is not None else []
     view = cluster_view(store, cid)
     # one value per setting over the cluster's apps: the first that was set, else the default
@@ -2702,7 +2685,9 @@ def settings_view(store: Store, cid: str) -> dict[str, Any]:
     # local mode (spark.master local[N]): one JVM, no workers, no Databricks cluster around it
     local = (val("spark.master") or "").startswith("local")
 
-    labels = {r["run_key"]: r.get("label") or r.get("subject") or r["run_key"] for r in view["runs"] if r.get("run_key")}
+    # the name the sidebar shows (program · table), not the job and run ids
+    labels = {r["run_key"]: " · ".join(x for x in (r.get("program"), r.get("subject")) if x) or r.get("label") or r["run_key"]
+              for r in view["runs"] if r.get("run_key")}
 
     def refs(xs, by):
         """Revision 18: the stages behind a piece of advice, biggest first, to open each one."""
@@ -2840,8 +2825,14 @@ def settings_view(store: Store, cid: str) -> dict[str, Any]:
                       "run_key": x.get("run_key"), "label": labels.get(x.get("run_key"))} for x in caches + cache_ooms
                      if x.get("sql_execution_id") is not None])
         cache_adv = advice[-1]
-    # 5. sharing: runs at once on the same executors
+    # 5. sharing: runs at once on the same executors; each run's own wait for a core (as its page has it), not the
+    # time more of its tasks queued in waves
     runs_ = view["runs"]
+    with store.connect() as con:
+        times_ = _run_times(store, con, cid)
+    for r in runs_:
+        if r.get("run_key") in times_ and r.get("waiting_ms") is None:
+            r["waiting_ms"] = times_[r["run_key"]].get("waiting_ms")
     ev = sorted([(r["start_time"], 1) for r in runs_ if r.get("start_time")]
                 + [(r["end_time"], -1) for r in runs_ if r.get("end_time")])
     peak = cur = 0
@@ -2926,7 +2917,8 @@ def settings_view(store: Store, cid: str) -> dict[str, Any]:
             f"One stage held all {cores_} cores for {_fmt_ms(held)} under FIFO",
             [f"Stage {st_['stage_id']} (query {st_.get('sql_execution_id')}"
              + (f", run {labels.get(st_.get('run_key'), st_.get('run_key'))}" if st_.get("run_key") else "")
-             + f") ran {n_:,} tasks for {_fmt_ms(held)}"
+             + f") ran {n_:,} tasks" + (f" ({st_['tasks']:,} attempts)" if (st_.get("tasks") or 0) > n_ else "")
+             + f" for {_fmt_ms(held)}"
              + (" reading a database over JDBC" if jdbc else "") + f": more tasks than the {cores_} cores",
              "spark.scheduler.mode = FIFO: the first stage keeps every core it can use until it is done",
              (f"{_plural(len(behind), 'other run')} waited for cores while it ran, up to "
@@ -3075,7 +3067,9 @@ def settings_view(store: Store, cid: str) -> dict[str, Any]:
         sents = [s.strip().rstrip(".") for s in re.split(r"(?<=\.)\s+", x.get("evidence") or "") if s.strip()]
         add(x["severity"], key if cat != "tiny_task_stages" or "snapshotPartitions" in (x.get("fix") or "") else
             "spark.sql.shuffle.partitions", _clause(sents[0]) if len(_clause(sents[0])) <= 140 else x.get("entity") or cat,
-            sents + [f"and {len(fs_) - 1} more like it" if len(fs_) > 1 else None], cause,
+            # the title is the first sentence when it is short: not twice
+            (sents[1:] if sents and _clause(sents[0]) == sents[0] and len(sents[0]) <= 140 else sents)
+            + [f"and {len(fs_) - 1} more {'finding' if len(fs_) == 2 else 'findings'} like it" if len(fs_) > 1 else None], cause,
             [s.strip() for s in re.split(r"(?<=\.)\s+", x.get("fix") or "") if s.strip()][:3],
             runs=run_refs(y.get("run_key") for y in fs_),
             # summed over runs that overlap it reads as days: about the clock time, over the runs going at once
@@ -3146,12 +3140,12 @@ def _at_once(runs: list[dict]) -> float:
     return max(1.0, took / busy) if busy else 1.0
 
 
-_WORDS_RE = re.compile(r"(\d+) (h|m|s)\b")
+_WORDS_RE = re.compile(r"(\d+) ?(h|m|s)\b")
 
 
 def _words_ms(text: str | None) -> int:
     """The first duration written in words in a finding's text ("6 h 11 m", "3 m 44 s"), in ms."""
-    m = re.search(r"\d+ [hms]\b(?: \d+ [hms]\b)*", text or "")
+    m = re.search(r"\d+ ?[hms]\b(?: \d+ ?[hms]\b)*", text or "")
     if not m:
         return 0
     return sum(int(n) * {"h": 3_600_000, "m": 60_000, "s": 1000}[u] for n, u in _WORDS_RE.findall(m.group(0)))
@@ -3172,8 +3166,8 @@ def _fmt_bytes(v) -> str:
 
 
 def _fmt_ms(ms) -> str:
-    m = int((ms or 0) // 60_000)
-    return f"{m // 60} h {m % 60} min" if m >= 60 else f"{m} min"
+    m = int(round((ms or 0) / 60_000))  # rounded, as the pages and the findings show it
+    return f"{m // 60}h {m % 60}m" if m >= 60 else f"{m}m"
 
 
 # Task metrics sent with each Gantt task: the UI spreads them over the task's run time to show
@@ -4136,15 +4130,41 @@ def run_tables(store: Store, cid: str, run: str) -> dict[str, Any]:
                           "target_filters": (sc["partition_filters"] + sc["data_filters"]) if sc else []}
     with store.connect() as con:
         stats = table_stats(store, con, cid, run)
+        held = held_by_query(store, con, cid)
     for t in tables.values():
         t["stats"] = stats.get(t["table"])
     # in time order: the first table it touched first
     first = lambda t: min(x for x in (t["first_read"], t["first_write"]) if x is not None) if (t["first_read"] or t["first_write"]) else float("inf")
     return {"run_key": run, "tables": sorted(tables.values(), key=lambda t: (first(t), t["table"])), "queries": queries,
-            "merges": merge_cycles(queries), "jdbc": jdbc_steps(qs)}
+            "merges": merge_cycles(queries), "jdbc": jdbc_steps(qs, held)}
 
 
-def jdbc_steps(qs: list[dict]) -> list[dict[str, Any]]:
+def held_by_query(store: Store, con, cid: str) -> dict[tuple, int]:
+    """(ctx, query) -> the time its stages held cores: from each stage's first task to its end, overlaps once. A query's
+    own duration also counts the wait for a core, which is no part of a read's speed."""
+    spath = store.dataset_path(cid, "stages", required=False)
+    if spath is None:
+        return {}
+    first = "first_task_time" if "first_task_time" in store.schema(con, spath) else "start_time"
+    iv: dict[tuple, list] = {}
+    for r in store.rows(con, f"SELECT spark_context_id, sql_execution_id, epoch_ms(coalesce({first}, start_time)) AS a, "
+                             f"epoch_ms(end_time) AS z FROM {store.src(spath)} WHERE sql_execution_id IS NOT NULL "
+                             "AND end_time IS NOT NULL"):
+        if r["a"] is not None and r["z"] is not None and r["z"] > r["a"]:
+            iv.setdefault((r["spark_context_id"], int(r["sql_execution_id"])), []).append((r["a"], r["z"]))
+    out = {}
+    for k, xs in iv.items():
+        tot, ce = 0, None
+        for a, z in sorted(xs):
+            if ce is None or a > ce:
+                tot, ce = tot + z - a, z
+            elif z > ce:
+                tot, ce = tot + z - ce, z
+        out[k] = tot
+    return out
+
+
+def jdbc_steps(qs: list[dict], held: dict[tuple, int] | None = None) -> list[dict[str, Any]]:
     """The queries of one run that read from a database over JDBC, in start order: what each asked the database
     (count, probe, key ranges, read), its rows (JDBC reports rows, not bytes), partitions and time, and whether the same
     source query already ran earlier in the run (a re-read the database answers again)."""
@@ -4161,6 +4181,8 @@ def jdbc_steps(qs: list[dict]) -> list[dict[str, Any]]:
         out.append({"query": q["sql_execution_id"], "ctx": q.get("spark_context_id"), "kind": j["kind"],
                     "source": j["source"], "partitions": j["partitions"], "sql": j["sql"][:400],
                     "rows": q.get("input_records"), "took_ms": q.get("duration_ms"),
+                    # the time its stages held cores: rows per second over this, not over the wait for a core
+                    "ran_ms": (held or {}).get((q.get("spark_context_id"), q["sql_execution_id"])),
                     "wrote_rows": q.get("output_records"), "wrote_bytes": q.get("output_bytes"),
                     "written": [t for t in (q.get("tables_written") or [])][:3], "same_as": same,
                     # how even the partitions were: rows and time of the median and the biggest task
@@ -4635,6 +4657,7 @@ def jdbc_reads(store: Store, con, cid: str, run: str | None = None, query: tuple
     cols = [c for c in ("spark_context_id", "sql_execution_id", "run_key", "final_plan", "initial_plan", "input_records",
                         "duration_ms", "p50_task_rows_in", "max_task_rows_in") if c in sch]
     rows = store.rows(con, f"SELECT {', '.join(cols)} FROM {store.src(qpath)} WHERE {' AND '.join(where)}", params)
+    held = held_by_query(store, con, cid) if rows else {}
     by: dict[str, dict[str, Any]] = {}
     for q in rows:
         j = jdbc_source(q.get("final_plan")) or jdbc_source(q.get("initial_plan"))
@@ -4643,13 +4666,14 @@ def jdbc_reads(store: Store, con, cid: str, run: str | None = None, query: tuple
         # the source without credentials or host details: the table or query it read
         src = re.sub(r"(?i)(password|user)=[^;&\s]+", r"\1=…", str(j["source"]))[:120]
         b = by.setdefault(src, {"source": src, "rows": 0, "queries": 0, "runs": set(), "partitions": 0, "took_ms": 0,
-                                "max_task_rows": 0, "p50_task_rows": None})
+                                "ran_ms": 0, "max_task_rows": 0, "p50_task_rows": None})
         b["rows"] += int(q.get("input_records") or 0)
         b["queries"] += 1
         if q.get("run_key"):
             b["runs"].add(q["run_key"])
         b["partitions"] = max(b["partitions"], int(j.get("partitions") or 0))
         b["took_ms"] += int(q.get("duration_ms") or 0)
+        b["ran_ms"] += int(held.get((q.get("spark_context_id"), q.get("sql_execution_id")), 0))
         if (q.get("max_task_rows_in") or 0) > b["max_task_rows"]:
             b["max_task_rows"], b["p50_task_rows"] = int(q["max_task_rows_in"]), q.get("p50_task_rows_in")
     out = [{**b, "runs": len(b["runs"])} for b in by.values()]

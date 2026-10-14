@@ -36,7 +36,7 @@ def test_app_mostly_on_the_driver_is_one_high_finding():
     out = driver_findings("c", apps, [], queries, stages, settings, Rules())
     f = [x for x in out if x["category"] == "no_spark_work"]
     assert len(f) == 1 and f[0]["severity"] == "high"
-    assert "19 m 10 s of the app's 20 m 0 s (96%)" in f[0]["evidence"]
+    assert "19m 10s of the app's 20m (96%)" in f[0]["evidence"]
     assert "10 × DROP TABLE" in f[0]["evidence"]  # the plan's command, not "sql at <unknown>"
 
 

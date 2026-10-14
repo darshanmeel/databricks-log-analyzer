@@ -150,11 +150,13 @@ def _skew_tasks(tdf, stage_info, query_info, rules: Rules, cid: str, stuck=froze
         hot = g[g["task_ms"] >= thr].sort_values("task_ms", ascending=False).head(rules.hotspot_top_per_stage)
         if hot.empty:
             continue
-        nbytes = g["shuffle_read"].fillna(0) + g["input_bytes"].fillna(0)
+        # the medians of the successful attempts, as the stage's own (one median per stage on every screen)
+        base = okg if not okg.empty else g
+        nbytes = base["shuffle_read"].fillna(0) + base["input_bytes"].fillna(0)
         med_bytes = lower_median(nbytes.tolist()) or 0
         # rows, for a read with no bytes recorded (a JDBC source reports rows only)
-        nrows = (g["input_records"].fillna(0) if "input_records" in g else 0) + (
-            g["shuffle_read_records"].fillna(0) if "shuffle_read_records" in g else 0)
+        nrows = (base["input_records"].fillna(0) if "input_records" in base else 0) + (
+            base["shuffle_read_records"].fillna(0) if "shuffle_read_records" in base else 0)
         med_rows = lower_median(nrows.tolist()) if hasattr(nrows, "tolist") else None
         jdbc = not nbytes.any() and hasattr(nrows, "any") and bool(nrows.any())
         st = stage_info.get((ctx, int(sid), att))

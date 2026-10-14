@@ -559,8 +559,10 @@ export function ClusterLayout() {
   return (
     <div className={`body ${many ? 'with-rail' : 'no-nav'}`}>
       {crumbs}
+      {/* keyboard users jump past the run list to the page */}
+      <a className="skip-link" href="#main">Skip to the page</a>
       {many && <RunRail runs={scope.runs} run={scope.run} choose={(k) => scope.choose(k)} />}
-      <main className="main">
+      <main className="main" id="main" tabIndex={-1}>
         {st.error ? (
           <div className="page">
             <ErrorState error={st.error} onRetry={st.reload} />

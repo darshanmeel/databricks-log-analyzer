@@ -122,7 +122,7 @@ function ClusterBody({ d }: { d: ClusterViewData }) {
           <div className="row" style={{ gap: 12, alignItems: 'center', flexWrap: 'wrap', marginBottom: 8 }}>
             <label className="small">
               <b>What ran at (UTC)</b>{' '}
-              <input className="input" style={{ width: 80 }} placeholder="01:00" value={atText} onChange={(e) => setAtText(e.target.value)} />
+              <input className="input" style={{ width: 80 }} placeholder={d.compute?.cluster_start ? fmtTime(d.compute.cluster_start).slice(0, 5) : 'hh:mm'} value={atText} onChange={(e) => setAtText(e.target.value)} />
             </label>
             <span className="small muted">or click a time in the chart</span>
             {atText && <button className="btn small ghost" onClick={() => setAtText('')}>Clear</button>}

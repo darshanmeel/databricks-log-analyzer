@@ -477,6 +477,8 @@ def plan_findings(cid: str, queries: list[dict], stages: list[dict], nodes: list
         root = q.get("root_execution_id") if q else None
         if not q or (root is not None and root != q["sql_execution_id"] and (k[0], root) in empty):
             continue  # counted once, at its root
+        if (q.get("input_records") or 0) >= 1_000_000 or (q.get("input_bytes") or 0) >= 64 << 20:
+            continue  # one branch pruned (a MERGE with nothing to update), but the query read data: not empty
         a, z = to_ms(q.get("start_time")), to_ms(q.get("end_time"))
         if a is None or z is None:
             continue
@@ -567,7 +569,7 @@ def driver_findings(cid: str, apps: list[dict], runs: list[dict], queries: list[
                   + ev[0].lower() + ev[1:])
         out.append(_f(cid, r["spark_context_id"], sev, "no_spark_work",
                       f"run {_run_name(r)}" + (f" and {len(hs) - 1} more like it" if len(hs) > 1 else ""),
-                      ev, lo, run_key=r["run_key"]))
+                      ev, lo, run_key=r["run_key"], also_runs=[h[5]["run_key"] for h in hs[1:]] or None))
     # the app's own run only when it is the whole app (no named runs in it): else the finding is the app's, not a run's
     named = {r["spark_context_id"] for r in runs if r.get("kind") != "app"}
     app_run = {r["spark_context_id"]: r["run_key"] for r in runs if r.get("kind") == "app" and r["spark_context_id"] not in named}

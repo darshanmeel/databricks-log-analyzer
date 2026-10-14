@@ -54,7 +54,7 @@ export function ExecutorsAtTime({ cid, ctx, stageIds, start, end, title, onStage
       note={`Every executor during ${title}: its tasks in blue (red when failed), and grey where the executor was busy with other jobs.`}
     >
       {!open ? (
-        <button className="btn small ghost" onClick={() => setOpen(true)}>Show every executor's tasks in this window</button>
+        <button className="btn small" onClick={() => setOpen(true)}>Show every executor's tasks in this window <span className="muted">(every task on the cluster then: can take a few seconds)</span></button>
       ) : st.loading && !st.data ? (
         <p className="muted small">Loading executor activity…</p>
       ) : !st.data || start === null || end === null ? (
@@ -174,7 +174,7 @@ function Lanes({ g, stageIds, start, end, title, onStage }: { g: Gantt; stageIds
           .join(', ')}
         {kinds.size ? '.' : ''}
       </p>
-      <details className="exec-more">
+      <details className="exec-more" open>
       <summary className="small">Show the executors over time, how busy they were and their tasks</summary>
       <div style={{ position: 'relative', overflowX: 'auto' }} onMouseLeave={() => setHover(null)}>
         <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: 'block', minWidth: 640 }} role="img" aria-label="Executor activity in this window">

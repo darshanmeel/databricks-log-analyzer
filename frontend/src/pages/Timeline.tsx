@@ -691,7 +691,11 @@ function GanttCanvas({ g, width, onOpenStage, zoomTo }: { g: Gantt; width: numbe
           </span>
           <span className="item">
             <span className="mk" style={{ borderColor: 'var(--sev-high)' }} />
-            Out of memory, lost or error (dashed: on the driver)
+            Out of memory or lost (dashed: on the driver)
+          </span>
+          <span className="item">
+            <span style={{ display: 'inline-block', width: 2, height: 8, background: 'var(--sev-high)', marginRight: 4 }} />
+            Error line (tick at the top)
           </span>
           <span className="item">
             <span style={{ display: 'inline-block', width: 12, height: 4, background: 'var(--sev-medium)', marginRight: 4 }} />
@@ -783,6 +787,11 @@ function drawMarker(
     ctx.strokeStyle = c.panel;
     ctx.lineWidth = 1;
     ctx.stroke();
+    return;
+  }
+  if (m.kind === 'error') {
+    // an error line is a tick at the lane's top edge: full-height red is kept for an executor lost or out of memory
+    ctx.fillRect(x - 0.75, y, 1.5, Math.min(6, h));
     return;
   }
   if (dashed) {

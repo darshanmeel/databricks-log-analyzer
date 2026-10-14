@@ -204,7 +204,7 @@ export function RunFlow({ cid, onPick }: { cid: string; onPick: (n: FlowNode) =>
               {top[0] === 'gaps' && m.idle && m.idle.ms >= IDLE_MS && m.idle.ms >= total / 2
                 ? <><b>It sat idle for {fmtDuration(m.idle.ms)}</b> between {m.idle.from.kind === 'query' ? 'Query' : 'Spark job'} {m.idle.from.id} ({fmtTime(m.idle.from.end)}) and {m.idle.to.kind === 'query' ? 'Query' : 'Spark job'} {m.idle.to.id} ({fmtTime(m.idle.to.start)}): its own work took {fmtDuration(Math.max(0, total - m.idle.ms))}. <span className="muted">Nothing from this run reached Spark in that time: it waited on something outside Spark (a sleep, a poll, another job or table to be ready, a lock) or its driver code ran that long. Check the notebook between those two queries.</span></>
                 : top[0] === 'gaps' ? <><b>Most of it is outside Spark</b>: look at the driver code between queries, not at the queries.</>
-                : top[0] === 'waiting' ? <><b>Most of it is waiting for cores</b>: other runs held them; run fewer at once or add workers.</>
+                : top[0] === 'waiting' ? <><b>Most of it is waiting for cores</b>: other work held them. The first box above says what to change.</>
                 : <><b>Most of it is Spark work</b>: the slowest steps on the path are where to look.</>}
             </div>
           </div>

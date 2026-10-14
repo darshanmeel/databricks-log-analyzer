@@ -119,7 +119,7 @@ def test_signals_in_order(rules):
     names = [s.name if hasattr(s, "name") else s[0] for s in rules.signals]
     assert names == ["executor_oom", "driver_unresponsive", "gc_pressure", "disk_spill", "cache_not_fit",
                      "cache_dropped", "cache_lost", "fetch_failure",
-                     "executor_lost", "broadcast_timeout", "disk_full", "storage_throttling", "schema_error",
+                     "executor_lost", "broadcast_timeout", "disk_full", "storage_throttling", "sql_code_error", "schema_error",
                      "python_error"]
 
 

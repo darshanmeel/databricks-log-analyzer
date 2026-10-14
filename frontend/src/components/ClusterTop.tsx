@@ -126,7 +126,7 @@ export function ClusterTop({ cid, runs, executors, compute, onPick, find, more, 
       {timeline}
       <div className="ro-hero">
         <section className="ro-hero-box">
-          <span className={`ro-eyebrow ${slow.length || waitShare >= 0.2 || appSlow ? 'warn' : ''}`}>{slow.length || waitShare >= 0.2 || appSlow ? 'Why it was slow' : 'Where the time went'}</span>
+          <span className={`ro-eyebrow ${slow.length || waitShare >= 0.2 || appSlow ? 'warn' : ''}`}>{slow.length || waitShare >= 0.2 || appSlow ? 'Why runs were slow' : 'Where the time went'}</span>
           <WhySlow cid={cid} progs={progs} waiting={waiting} took={took} running={running} peak={peak.n} execs={atPeak.length} cores={cores} slow={slow} avg={busy ? took / busy : 0}
             appLevel={findings.filter((f) => !f.run_key && (f.category === 'no_spark_work' || f.category === 'tiny_task_stages'))} />
         </section>
@@ -224,7 +224,7 @@ function HowEnded({ cid, runs, failed, retried, lost, compute, t1, onPick }: {
       </ul>
       <div className="ro-links">
         {failed[0] && <button className="linkish" onClick={() => onPick(failed[0])}>Open the first failed run →</button>}
-        <a href="#cv-errors">All errors ↓</a>
+        <Link to={to.errors(cid)}>All errors →</Link>
         {worst ? <Link to={inRun(to.errors(cid), worst.run_key)}>Errors in the worst run ({truncate(runName(worst), 30)}) →</Link> : null}
         <Link to={to.findings(cid)}>All findings →</Link>
         <Link to={to.executors(cid)}>Executors →</Link>

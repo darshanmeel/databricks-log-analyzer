@@ -333,6 +333,35 @@ JDBC_SKEW_FIX = ("A JDBC read is split by its partitionColumn between lowerBound
                  "predicate per partition; salting keys and AQE skew join do not apply to a read.")
 
 
+def recheck_skew(findings: list[dict], stages: list[dict], rules: Rules) -> int:
+    """In place: the task_skew findings with the numbers of the restaged stages (median of the successful attempts)
+    and, for a JDBC read, the JDBC fix; a stage whose skew came from a failed attempt is no longer skewed and its
+    finding goes. Returns how many changed."""
+    by = {(s["spark_context_id"], s["stage_id"], s["stage_attempt"]): s for s in stages}
+    n = 0
+    gone = []
+    for f in findings:
+        if f["category"] != "task_skew":
+            continue
+        s = by.get((f.get("spark_context_id"), f.get("stage_id"), f.get("stage_attempt")))
+        if not s or s.get("skew") is None or s.get("max_task_ms") is None:
+            continue
+        if s["skew"] < rules.skew_ratio or s["max_task_ms"] < rules.skew_min_task_ms:
+            gone.append(f)
+            continue
+        ev = (f"slowest task {spark_double_str(round_half_up(s['max_task_ms'] / 1000))}s = "
+              f"{spark_double_str(s['skew'])}x the median"
+              + (f"; the biggest task read {spark_double_str(s['data_skew'])}x the median task's rows"
+                 if _jdbc_stage(s) and s.get("data_skew") else ""))
+        fix = JDBC_SKEW_FIX if _jdbc_stage(s) else f.get("fix")
+        if ev != f.get("evidence") or fix != f.get("fix"):
+            f["evidence"], f["fix"] = ev, fix
+            n += 1
+    if gone:
+        findings[:] = [f for f in findings if not any(f is g for g in gone)]
+    return n + len(gone)
+
+
 def _jdbc_stage(s: dict) -> bool:
     """A stage that read rows but no bytes from storage: a JDBC source (Spark records rows, not bytes, for it)."""
     return not s.get("input_bytes") and (s.get("input_records") or 0) > 0 and not s.get("shuffle_read")
@@ -509,6 +538,29 @@ def _signal_findings(cid: str, signal_summary: list[dict]) -> list[dict]:
             for g in signal_summary]
 
 
+NO_USER_FRAME_FIX = ("No frame from your code in the frames logged: it was thrown inside Spark, the JVM or a library "
+                     "(a JDBC driver, a tooling package). Start from the stage and query where it happened.")
+
+
+def recheck_exception_frames(findings: list[dict], rules: Rules) -> int:
+    """In place, for an output built with older framework prefixes: an exception finding that names a library frame
+    (a JDBC driver, a tooling package) as "user code" no longer does. Returns how many changed."""
+    from ..parsing.loglines import is_framework_frame
+
+    n = 0
+    for f in findings:
+        if f.get("category") != "exception":
+            continue
+        ev, fix = f.get("evidence") or "", f.get("fix") or ""
+        m = re.search(r"; user code: (.+?)(?=\. e\.g\. |$)", ev)
+        if m and is_framework_frame(m.group(1), rules.framework_frame_prefixes):
+            f["evidence"] = ev[:m.start()] + ev[m.end():]
+            if fix.startswith("Fix the code at "):
+                f["fix"] = NO_USER_FRAME_FIX
+            n += 1
+    return n
+
+
 def _exception_findings(cid: str, error_summary: list[dict], rules: Rules) -> list[dict]:
     high = re.compile(rules.exception_high_regex)
     benign = re.compile(rules.exception_benign_regex) if rules.exception_benign_regex else None
@@ -528,8 +580,7 @@ def _exception_findings(cid: str, error_summary: list[dict], rules: Rules) -> li
             ev += f"; user code: {frame_text(uf)}"
         if g["sample_message"]:
             ev += f". e.g. {g['sample_message'][:200]}"
-        fix = (f"Fix the code at {frame_text(uf)}" if uf else
-               "No user frame in the stack: read the full stack trace and the first error before it.")
+        fix = f"Fix the code at {frame_text(uf)}" if uf else NO_USER_FRAME_FIX
         site = oom_site(g.get("sample_stack") or [], g.get("sample_message")) if is_oom(f"{cls} {g['sample_message'] or ''}") else None
         if site:
             # where the memory ran out says more than a missing user frame
@@ -601,12 +652,37 @@ def demote_orphan_failures(findings: list[dict], queries: list[dict]) -> None:
                 and any(e in (f.get("evidence") or "") for e in errs)):
             f["severity"] = "low"
             if "no run was affected" not in (f.get("evidence") or ""):
-                f["evidence"] = "The internal query outside any run (no run was affected): " + (f.get("evidence") or "")
+                f["evidence"] = ORPHAN_LINE_TEXT + (f.get("evidence") or "")
     for f in findings:
         if f["category"] == "query_failed" and (f.get("spark_context_id"), f.get("sql_execution_id")) in orphan:
             f["severity"] = "low"
             if not (f.get("evidence") or "").startswith("Outside any run"):
-                f["evidence"] = "Outside any run, no stage ran (an internal query; no run was affected): " + (f.get("evidence") or "")
+                f["evidence"] = ORPHAN_QUERY_TEXT + (f.get("evidence") or "")
+
+
+ORPHAN_QUERY_TEXT = "Outside any run, no stage ran (an internal query; no run was affected): "
+ORPHAN_LINE_TEXT = "The internal query outside any run (no run was affected): "
+
+
+def restore_attributed_failures(findings: list[dict], queries: list[dict], rules: Rules) -> int:
+    """Undo demote_orphan_failures for a failed query that now has its run (an older output could not tell): it failed
+    that run, so it and its log lines are a failure again. Returns how many findings changed."""
+    keyed = {(q["spark_context_id"], q["sql_execution_id"]) for q in queries if q.get("status") == "failed" and q.get("run_key")}
+    errs = [str(q.get("error") or "").strip().splitlines()[0][:80] for q in queries
+            if (q["spark_context_id"], q["sql_execution_id"]) in keyed and q.get("error")]
+    errs = [e for e in errs if len(e) >= 20]
+    sev = {f"log:{s.name}": s.severity for s in rules.signals}
+    n = 0
+    for f in findings:
+        ev = f.get("evidence") or ""
+        if f["category"] == "query_failed" and ev.startswith(ORPHAN_QUERY_TEXT) \
+                and (f.get("spark_context_id"), f.get("sql_execution_id")) in keyed:
+            f["severity"], f["evidence"] = "high", ev[len(ORPHAN_QUERY_TEXT):]
+            n += 1
+        elif ev.startswith(ORPHAN_LINE_TEXT) and any(e in ev for e in errs):
+            f["severity"], f["evidence"] = sev.get(f["category"], "medium"), ev[len(ORPHAN_LINE_TEXT):]
+            n += 1
+    return n
 
 
 def build_findings_rows(tables: Mapping, rules: Rules) -> list[dict]:

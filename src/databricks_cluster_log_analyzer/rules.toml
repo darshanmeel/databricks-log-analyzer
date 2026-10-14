@@ -253,6 +253,13 @@ severity = "medium"
 fix = "Too many small files or requests; compact tables; reduce write parallelism."
 
 [[signals]]
+# the query text itself is wrong (an unknown function, a syntax error): a code bug, not an upstream change
+name = "sql_code_error"
+pattern = 'UNRESOLVED_ROUTINE|UNRESOLVED_FUNCTION|PARSE_SYNTAX_ERROR|Undefined function|undefined function|Syntax error at or near|WRONG_NUM_ARGS'
+severity = "high"
+fix = "The SQL in the code is wrong (an unknown function, a typo, a syntax error): fix the query text. Nothing upstream changed."
+
+[[signals]]
 name = "schema_error"
 pattern = 'AnalysisException|UNRESOLVED_COLUMN|DELTA_\w*SCHEMA\w*|SCHEMA_MISMATCH'
 severity = "high"

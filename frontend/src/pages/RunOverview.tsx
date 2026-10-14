@@ -5,7 +5,7 @@
 import { Fragment, useMemo, useState, type ReactNode } from 'react';
 import { TablesRead } from '../components/TableStats';
 import { Link, useNavigate } from 'react-router-dom';
-import { api, waitOf, type EngineCount, type FindingRow, type RunEnd, type RunRow, type RunStepGroup, type RunSteps } from '../api';
+import { api, waitOf, type Advice, type AdviceStage, type EngineCount, type FindingRow, type RunEnd, type RunRow, type RunStepGroup, type RunSteps } from '../api';
 import { useAsync } from '../hooks';
 import { fmtBytes, fmtDuration, fmtNum, fmtPct, fmtRows, fmtTime, truncate } from '../format';
 import { to } from '../links';
@@ -63,6 +63,8 @@ export function RunOverview({ run }: { run: RunRow }) {
     .filter((f) => !(f.executor_id != null && f.stage_id == null && f.sql_execution_id == null && !EXEC_FAILURES.has(f.category)))
     .sort(plainFirst), [fs.data]);
   const top = useTopFailure(cid, false, run.run_key);
+  const adv = useAsync((s) => api.settings(cid, s).catch(() => null), [cid]);
+  const hog = hogOf(adv.data?.advice ?? [], run);
   const [allSteps, setAllSteps] = useState(false);
   const e = end.data;
   const d = steps.data && steps.data.start !== null && steps.data.groups.length ? steps.data : null;
@@ -72,6 +74,7 @@ export function RunOverview({ run }: { run: RunRow }) {
   // the runs that started within two minutes of it: a burst of runs fights for the same cores
   const burst = scope.runs.filter((r) => r.run_key !== run.run_key && r.start_time != null && run.start_time != null && Math.abs(r.start_time - run.start_time) <= 120_000).length;
   const gone = e?.executors_gone ?? [];
+  const slowish = isSlow(run) || waitOf(run) / Math.max(1, run.duration_ms ?? 0) >= 0.3;
   const badGone = gone.filter((x) => BAD_GONE.includes(x.removal_category ?? ''));
   const goneTitle = gone.length ? Object.entries(gone.reduce<Record<string, number>>((m, x) => ({ ...m, [x.removal_category ?? 'other']: (m[x.removal_category ?? 'other'] ?? 0) + 1 }), {}))
     .map(([k, n]) => `${n} ${k}`).join(', ') : undefined;
@@ -92,9 +95,9 @@ export function RunOverview({ run }: { run: RunRow }) {
         <WhatBroke cid={cid} top={top.data} run={run.run_key} />
         <div className="ro-hero">
           <section className="ro-hero-box">
-            <span className={`ro-eyebrow ${a && (isSlow(run) || a.waitShare >= 0.3) ? 'warn' : ''}`}>{a && (isSlow(run) || a.waitShare >= 0.3) ? 'Why it was slow' : 'Where the time went'}</span>
+            <span className={`ro-eyebrow ${run.status === 'failed' ? 'bad' : slowish ? 'warn' : ''}`}>{run.status === 'failed' ? 'Why it failed' : slowish ? 'Why it was slow' : 'Where the time went'}</span>
             {a ? <WhySlow cid={cid} run={run} a={a} execs={execs} /> : <p className="muted small">{steps.loading ? 'Loading…' : 'No Spark work recorded for this run.'}</p>}
-            {a && <ChangeFirst cid={cid} run={run} a={a} fixes={fixItems(run, a, spill, findings, top.data)} />}
+            {a && <ChangeFirst cid={cid} run={run} a={a} hog={hog} fixes={fixItems(run, a, spill, findings, top.data, hog)} />}
           </section>
           <section className="ro-hero-box">
             <span className={`ro-eyebrow ${e && (e.failed_queries || e.failed_jobs || badGone.length) ? 'bad' : ''}`}>How it ended</span>
@@ -121,10 +124,10 @@ export function RunOverview({ run }: { run: RunRow }) {
           {badGone.length > 0 && <Tile label="Executors lost" value={fmtNum(badGone.length)} foot={<Link to={to.executors(cid)}>out of memory, lost or killed</Link>} tone="bad" title={goneTitle} />}
         </div>
 
-        {a && <Causes cid={cid} a={a} run={run} execs={execs} burst={burst} fixes={fixItems(run, a, spill, findings, top.data)}
+        {a && <Causes cid={cid} a={a} run={run} execs={execs} burst={burst} fixes={fixItems(run, a, spill, findings, top.data, hog)}
           toCluster={() => scope.choose(null)} />}
 
-        {a && <Fixes run={run} a={a} spill={spill} findings={findings} failure={top.data} />}
+        {a && <Fixes run={run} a={a} spill={spill} findings={findings} failure={top.data} hog={hog} />}
 
         {a && d && <TimeWent cid={cid} d={d} a={a} allSteps={allSteps} setAllSteps={setAllSteps} />}
         {allSteps && <RunStepsPanel cid={cid} run={run.run_key} />}
@@ -207,14 +210,21 @@ function WhySlow({ cid, run, a, execs }: { cid: string; run: RunRow; a: Analysis
   const d = a.total * a.waitShare;
   const t = a.top;
   const others = run.overlapping_runs?.length ?? 0;
+  // one query open for most of the run while it ran almost nothing
+  const open1 = a.byTook.map((g) => ({ g, other: Math.max(0, took(g) - g.running_ms - g.waiting_ms) }))
+    .filter((x) => x.g.kind === 'query' && x.other >= 0.5 * a.total).sort((x, y) => y.other - x.other)[0] ?? null;
   return (
     <>
       <ul className="ro-points">
         {waited && <li><b>{fmtDuration(d)} waiting for a free core</b> <span className="muted">· none of its tasks could start, {fmtPct(a.waitShare, 0)} of {fmtDuration(a.total)}</span>
           {others ? <span className="muted"> · {fmtNum(others)} other runs on the same {execs || ''} executors</span> : null}</li>}
-        {a.outsideShare >= 0.5 && <li><b>{fmtDuration(a.total * a.outsideShare)} with no Spark work</b> <span className="muted">· {fmtPct(a.outsideShare, 0)} of {fmtDuration(a.total)}: statements that ran no tasks, code between them, or waiting outside Spark</span></li>}
+        {a.outsideShare >= 0.5 && (open1
+          // the time sat inside one query that ran almost no tasks: say which, not "somewhere outside Spark"
+          ? <li><b>{gname(open1.g)} stayed open {fmtDuration(open1.other)}</b> <span className="muted">· but ran tasks for {fmtDuration(open1.g.running_ms)}: the time was inside the statement (planning, a Delta commit or its retries after a conflict, a lock, or the driver), not in Spark tasks</span></li>
+          : <li><b>{fmtDuration(a.total * a.outsideShare)} with no Spark work</b> <span className="muted">· {fmtPct(a.outsideShare, 0)} of {fmtDuration(a.total)}: statements that ran no tasks, code between them, or waiting outside Spark</span></li>)}
         {/* one line: the cause card below has the detail */}
-        {t && <li><b>{gname(t)}{a.merge ? ' (MERGE)' : ''}</b> {a.topShare >= 0.4 ? 'did most of the work' : 'ran longest'}
+        {/* the query that did the work, when its work is a real part of the run (846 ms of 6 hours is not) */}
+        {t && (a.merge || t.running_ms >= 0.05 * a.total) && <li><b>{gname(t)}{a.merge ? ' (MERGE)' : ''}</b> {a.topShare >= 0.4 ? 'did most of the work' : 'ran longest'}
           <span className="muted"> · {fmtDuration(t.running_ms)} of {fmtDuration(a.running)} running{a.merge ? `, read ${a.merge.read} of the target` : (t.input_bytes || t.shuffle_read) ? `, read ${fmtBytes((t.input_bytes ?? 0) + (t.shuffle_read ?? 0))}` : ''}{a.merge?.spilled || (t.disk_spill ?? 0) > 0 ? `, spilled ${a.merge?.spilled ?? fmtBytes(t.disk_spill)}` : ''}</span></li>}
       </ul>
       <div className="ro-links">
@@ -368,20 +378,33 @@ function TimeWent({ cid, d, a, allSteps, setAllSteps }: { cid: string; d: RunSte
   );
 }
 
-/** One line in the first box: the change to make first. When one stage held every core under FIFO and this run waited
- * behind it, that is the change (more workers would not help); else the first fix of the list below. */
-function ChangeFirst({ cid, run, a, fixes }: { cid: string; run: RunRow; a: Analysis; fixes: FixItem[] }) {
-  const adv = useAsync((s) => api.settings(cid, s).catch(() => null), [cid]);
-  const hog = adv.data?.advice.find((x) => x.fifo);
-  const st = hog?.stages?.[0];
-  const mine = !!st && st.run_key === run.run_key;
-  const behind = !!hog && (hog.runs ?? []).some((r) => r.run_key === run.run_key);
-  if (hog && st && a.waitShare >= 0.2 && (mine || behind)) {
+/** Under FIFO, the stage that held every core (the cluster's advice), and whether this run owns it or waited behind it. */
+type Hog = { adv: Advice; st: AdviceStage; mine: boolean; behind: boolean; held: string };
+function hogOf(advice: Advice[], run: RunRow): Hog | null {
+  const adv = advice.find((x) => x.fifo);
+  const st = adv?.stages?.[0];
+  if (!adv || !st) return null;
+  const mine = st.run_key === run.run_key;
+  const behind = (adv.runs ?? []).some((r) => r.run_key === run.run_key);
+  return mine || behind ? { adv, st, mine, behind, held: adv.title.replace(/^One stage held /, '').replace(/ under FIFO$/, '') } : null;
+}
+
+/** One line in the first box: the change to make first. A failed run: the failure's fix. The run whose stage held every
+ * core under FIFO, and the runs that waited behind it: FAIR pools (more workers would not help). Else the first fix. */
+function ChangeFirst({ cid, run, a, fixes, hog }: { cid: string; run: RunRow; a: Analysis; fixes: FixItem[]; hog: Hog | null }) {
+  if (run.status === 'failed' && fixes[0]) {
+    const f = fixes[0];
+    return <p className="small ro-first bad"><b>Change first</b> ({f.who}, why it failed): {f.text}</p>;
+  }
+  if (hog && (hog.mine || a.waitShare >= 0.2)) {
+    const st = hog.st;
     const stage = <Link to={inRun(to.stages(cid, st.spark_context_id, st.stage_id, st.stage_attempt), st.run_key)}>stage {st.stage_id}</Link>;
+    const others = (hog.adv.runs ?? []).filter((r) => r.run_key !== run.run_key).length;
     return (
-      <p className="small ro-first"><b>Change first:</b> FAIR scheduler pools (<code>spark.scheduler.mode</code> FAIR, a pool per run).{' '}
-        {mine ? <>This run's {stage} held every core ({hog.title.replace(/^One stage held all /, '').replace(/ under FIFO$/, '')}) and other runs queued behind it.</>
-          : <>{stage} of {st.run_label ?? 'another run'} held every core ({hog.title.replace(/^One stage held all /, '').replace(/ under FIFO$/, '')}); this run waited behind it. More workers would not change that.</>}
+      <p className="small ro-first">
+        {hog.mine
+          ? <><b>Change first:</b> this run's {stage} held {hog.held} under FIFO, and {others ? `${others} other runs` : 'the other runs'} queued behind it. Give each run its own FAIR pool (<code>spark.scheduler.mode</code> FAIR, <code>spark.scheduler.pool</code> per run){st.input_bytes ? '' : ', or read it in fewer JDBC partitions (numPartitions 8 to 16) so it leaves cores free'}.</>
+          : <><b>Change first:</b> FAIR scheduler pools (<code>spark.scheduler.mode</code> FAIR, a pool per run). {stage} of {st.run_label ?? 'another run'} held {hog.held}; this run waited behind it. More workers would not change that.</>}
       </p>
     );
   }
@@ -395,7 +418,7 @@ function ChangeFirst({ cid, run, a, fixes }: { cid: string; run: RunRow; a: Anal
 type FixItem = { who: string; text: ReactNode; plain: string; wins?: string; card?: 'driver' | 'cluster' | 'query' };
 
 /** The changes for this run, in order; the ones that belong to a cause card carry its name (they show in the card). */
-function fixItems(run: RunRow, a: Analysis, spill: number, findings: FindingRow[], failure: TopFailure | null): FixItem[] {
+function fixItems(run: RunRow, a: Analysis, spill: number, findings: FindingRow[], failure: TopFailure | null, hog: Hog | null = null): FixItem[] {
   const waitMs = a.total * a.waitShare;
   const t = a.top;
   const fixes: FixItem[] = [];
@@ -411,11 +434,13 @@ function fixItems(run: RunRow, a: Analysis, spill: number, findings: FindingRow[
     const i = rf.inc!;
     const q = rf.sql_execution_id ?? i.sql_execution_id, st = rf.stage_id ?? i.stage_id;
     const who = q !== null ? `Query ${q}` : st !== null ? `Stage ${st}` : rf.executor_id ? `Executor ${rf.executor_id}` : 'Cluster';
-    fixes.push({ who, plain: rf.fix, text: firstSentences(rf.fix) });
+    const item = { who, plain: rf.fix, text: firstSentences(rf.fix) };
+    if (run.status === 'failed') fixes.unshift(item);
+    else fixes.push(item);
     done.add(rf.category);
   }
   const bound = findings.find((f) => f.category === 'capacity_bound');
-  if (a.waitShare >= 0.2 && a.queued && bound?.fix) {
+  if (a.waitShare >= 0.2 && a.queued && bound?.fix && !hog?.behind) {
     // queued behind its own tasks (or other runs) on a full cluster: the capacity finding's fix, not the concurrency one
     // behind its own tasks: the wave fix (spill, skew) is the run's own, and the time it wins is not the whole queue
     const own = a.otherShare !== null && a.otherShare < 0.5;
@@ -423,6 +448,11 @@ function fixItems(run: RunRow, a: Analysis, spill: number, findings: FindingRow[
       wins: own ? undefined : `up to ${fmtDuration(waitMs * (a.otherShare ?? 1))} of queueing`, card: 'cluster' });
     done.add('capacity_bound');
     done.add('waited_for_cores');
+  } else if (a.waitShare >= 0.2 && hog?.behind) {
+    const plain = `FAIR scheduler pools (spark.scheduler.mode FAIR, a pool per run): stage ${hog.st.stage_id} of ${hog.st.run_label ?? 'another run'} held ${hog.held} under FIFO, and this run waited behind it. More workers would not change that.`;
+    fixes.push({ who: 'Cluster', plain, text: plain, wins: `up to ${fmtDuration(waitMs)} of waiting`, card: 'cluster' });
+    done.add('waited_for_cores');
+    done.add('capacity_bound');
   } else if (a.waitShare >= 0.2) {
     const plain = `Lower the for-each concurrency to about the cores available, or raise min_workers before the ${fmtTime(run.start_time).slice(0, 5)} schedule.`;
     fixes.push({ who: 'Cluster', plain, text: plain, wins: `up to ${fmtDuration(waitMs)} of waiting`, card: 'cluster' });
@@ -449,9 +479,9 @@ function fixItems(run: RunRow, a: Analysis, spill: number, findings: FindingRow[
 }
 
 /** One list to copy: every change in order. On the page, only the ones no cause card above shows. */
-function Fixes({ run, a, spill, findings, failure }: { run: RunRow; a: Analysis; spill: number; findings: FindingRow[]; failure: TopFailure | null }) {
+function Fixes({ run, a, spill, findings, failure, hog }: { run: RunRow; a: Analysis; spill: number; findings: FindingRow[]; failure: TopFailure | null; hog: Hog | null }) {
   const [copied, setCopied] = useState(false);
-  const all = fixItems(run, a, spill, findings, failure);
+  const all = fixItems(run, a, spill, findings, failure, hog);
   const fixes = all.filter((f) => !f.card);
   const inCards = all.length - fixes.length;
   const copy = () => {

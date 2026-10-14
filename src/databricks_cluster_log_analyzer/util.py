@@ -70,7 +70,7 @@ def fmt_ms(ms) -> str:
 
 
 def fmt_words(ms) -> str:
-    """Duration for sentences: '0.4 s', '42 s', '3 m 10 s', '1 h 5 m'."""
+    """Duration for sentences, as the UI writes it: '0.4 s', '42 s', '3m 10s', '1h 5m'."""
     if is_null(ms):
         return "?"
     s = ms / 1000
@@ -80,8 +80,9 @@ def fmt_words(ms) -> str:
         return f"{round(s)} s"
     s = int(round(s))
     if s < 3600:
-        return f"{s // 60} m {s % 60} s"
-    return f"{s // 3600} h {s % 3600 // 60} m"
+        return f"{s // 60}m {s % 60}s" if s % 60 else f"{s // 60}m"
+    m = int(round(s / 60))  # rounded to the minute, as the pages show it (12h 16m 40s is 12h 17m)
+    return f"{m // 60}h {m % 60}m" if m % 60 else f"{m // 60}h"
 
 
 def fmt_bytes(b) -> str:

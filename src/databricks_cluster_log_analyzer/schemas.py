@@ -120,6 +120,8 @@ SCHEMAS: dict[str, pa.Schema] = {
         ("entity", S), ("evidence", S), ("fix", S), ("ts", TS), ("stage_id", I), ("stage_attempt", I),
         ("spark_job_id", I), ("sql_execution_id", I), ("executor_id", S), ("signal", S), ("fingerprint", S),
         ("log_file_path", S), ("log_seq", I), ("run_key", S),
+        # Revision 22: the other runs a grouped finding speaks for ("and 16 more like it"): on their pages too
+        ("also_runs", LS),
     ),
     "timeline": _schema(("cluster_id", S), ("minute", TS), ("signal", S), ("count", I)),
     "query_profile": _schema(

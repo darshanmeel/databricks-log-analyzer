@@ -311,12 +311,12 @@ def add_findings(findings: list[dict], runs: list[dict], new: list[dict], replac
     cnt: dict[str, int] = {}
     worst: dict[str, str] = {}
     for f in allf:
-        k = f.get("run_key")
-        if not k:
-            continue
-        cnt[k] = cnt.get(k, 0) + 1
-        if k not in worst or SEVERITY_RANK.get(f["severity"], 9) < SEVERITY_RANK.get(worst[k], 9):
-            worst[k] = f["severity"]
+        for k in [f.get("run_key"), *(f.get("also_runs") or [])]:  # a grouped finding counts on each of its runs
+            if not k:
+                continue
+            cnt[k] = cnt.get(k, 0) + 1
+            if k not in worst or SEVERITY_RANK.get(f["severity"], 9) < SEVERITY_RANK.get(worst[k], 9):
+                worst[k] = f["severity"]
     for r in runs:
         r["findings"] = cnt.get(r["run_key"], 0)
         r["max_severity"] = worst.get(r["run_key"])

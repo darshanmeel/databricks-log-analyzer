@@ -1827,3 +1827,11 @@ details.sub[open] > summary { margin-bottom: 4px; }
 
 /* run Overview: the change to make first, under the "why" points */
 .ro-first { margin: 10px 0 0; padding: 8px 10px; border-left: 3px solid var(--st-warn); background: var(--panel-2, transparent); border-radius: 4px; }
+
+/* a long status chip wraps on a phone instead of pushing the page sideways */
+@media (max-width: 640px) { .chip { white-space: normal; max-width: 100%; } }
+.ro-first.bad { border-left-color: var(--st-crit); }
+
+/* skip link: off screen until it has the keyboard focus */
+.skip-link { position: absolute; left: -9999px; top: 4px; z-index: 100; padding: 6px 10px; background: var(--panel); color: var(--text); border: 1px solid var(--border, currentColor); border-radius: 4px; }
+.skip-link:focus { left: 8px; }

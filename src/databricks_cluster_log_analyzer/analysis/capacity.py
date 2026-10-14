@@ -8,6 +8,9 @@ cores cost against the work done.
                       would have taken on all the cores (inferred).
   autoscale_removed   per removal burst: autoscaling removed executors while a stage ran, losing cached blocks or
                       shuffle data that the next stage then had to rebuild (a fetch failure naming the executor).
+  core_hog            per Spark context, under the FIFO scheduler: one stage with more tasks than the cluster has
+                      cores held every core for half an hour or more, and the other runs' stages queued behind it.
+                      On the run and the stage that did it; the runs that waited are listed.
 
 The sweep: every first task attempt is queued from its stage's submission until its launch, and busy from launch
 to finish; the cores are the executors alive. The cluster is full while busy >= cores.
@@ -26,6 +29,7 @@ from ..util import fmt_words, is_worker
 from .contention import _run_name, to_ms
 
 FIX = {
+    "core_hog": "",  # set per finding (CORE_HOG_FIX, with the JDBC part when it reads a database)
     "capacity_bound": (
         "The run needed more cores than the cluster had, so its tasks queued: more or bigger workers (raise the "
         "minimum workers so they are there when the run starts), or less work (cache less, drop count() calls that "
@@ -39,8 +43,15 @@ FIX = {
         "rddBlocks.enabled), raise the minimum workers for this job, or avoid caches that autoscaling can throw away."),
 }
 
+CORE_HOG_FIX = (
+    "Under the FIFO scheduler the first stage keeps every core it can use until it is done, so every other run waits "
+    "behind it; more workers or fewer runs at once do not change that. Give each run its own FAIR pool "
+    "(spark.scheduler.mode FAIR, spark.scheduler.pool set per run), or run this stage on its own job cluster")
+CORE_HOG_JDBC_FIX = ", or read it in fewer JDBC partitions (numPartitions 8 to 16) so it leaves cores free"
+HOG_MS = 30 * 60_000
+
 OWN_WAVES_FIX = (
-    "Its own tasks filled every core, so it ran in waves: normal for a big job. Make each wave faster first: tasks too "
+    "Its own tasks filled every core, so it ran in waves. Make each wave faster first: tasks too "
     "big for their memory spill to disk (more shuffle partitions, or spark.sql.shuffle.partitions = auto), and one slow "
     "task holds up its wave (skew). More or bigger workers shorten it after that.")
 
@@ -156,9 +167,75 @@ def sweep(tdf: pd.DataFrame, stages: list[dict], executors: list[dict]) -> dict[
     return out
 
 
+def held_ms(s: Mapping) -> int:
+    """How long a stage held cores: its first task to its end (from submission to the first task it waited for one)."""
+    a, z = to_ms(s.get("first_task_time")) or to_ms(s.get("start_time")), to_ms(s.get("end_time"))
+    return z - a if a is not None and z is not None and z > a else 0
+
+
+def stage_tasks(s: Mapping) -> int:
+    """The tasks of a stage (not its attempts: a retried task counts once)."""
+    return int(s.get("num_tasks") or ((s.get("tasks") or 0) - (s.get("failed_tasks") or 0)))
+
+
+def core_hog(stages: list[dict], executors: list[dict]) -> tuple[dict, int] | None:
+    """The stage that held cores longest (HOG_MS or more, from its first task) with more tasks than the most worker
+    cores ever up at once, and those cores."""
+    ev = []
+    for e in executors:
+        if not is_worker(e, executors) or not e.get("cores"):
+            continue
+        ev.append((to_ms(e.get("added_time")) or 0, int(e["cores"])))
+        if e.get("removed_time"):
+            ev.append((to_ms(e["removed_time"]), -int(e["cores"])))
+    n = most = 0
+    for _, c in sorted(ev, key=lambda x: (x[0], x[1])):
+        n += c
+        most = max(most, n)
+    long_ = [s for s in stages if held_ms(s) >= HOG_MS and most and stage_tasks(s) > most]
+    return (max(long_, key=held_ms), most) if long_ else None
+
+
+def _waited(r: Mapping) -> int:
+    w = r.get("waiting_ms")
+    return int(w if w is not None else (r.get("queued_full_ms") or 0))
+
+
+def hog_findings(cid: str, stages: list[dict], executors: list[dict], runs: list[dict],
+                 settings: list[dict] | None) -> list[dict]:
+    """core_hog: under FIFO, the stage that held every core and the runs that waited behind it."""
+    mode = next((str(s.get("value") or "") for s in settings or [] if s.get("key") == "spark.scheduler.mode"), "") or "FIFO"
+    if mode.upper() != "FIFO" or len(runs) < 2:
+        return []
+    hog = core_hog(stages, executors)
+    if not hog:
+        return []
+    st, cores = hog
+    held = held_ms(st)
+    z = to_ms(st.get("end_time"))
+    a = z - held if z is not None else None
+    behind = [r for r in runs if r.get("run_key") != st.get("run_key") and a is not None and z is not None
+              and (to_ms(r.get("start_time")) or 0) < z and (to_ms(r.get("end_time")) or z) > a and _waited(r) >= 60_000]
+    most = max(behind, key=_waited, default=None)
+    jdbc = not st.get("input_bytes") and (st.get("input_records") or 0) > 0
+    n = stage_tasks(st)
+    ev = (f"Stage {st['stage_id']} held all {cores} cores for {fmt_words(held)} under FIFO: {n:,} tasks"
+          + (f" ({st.get('tasks'):,} attempts)" if (st.get("tasks") or 0) > n else "")
+          + (" reading a database over JDBC" if jdbc else "") + f", more than the {cores} cores.")
+    if most:
+        # how long each waited is on its own page (the runs table here has no wait of its own, only the queue)
+        ev += (f" {len(behind)} other {'run' if len(behind) == 1 else 'runs'} had tasks queued for a core while it "
+               f"ran, among them run {_run_name(most)}.")
+    f = _f(cid, st.get("spark_context_id"), "high", "core_hog", f"stage {st['stage_id']} (all {cores} cores)", ev, a,
+           stage_id=st["stage_id"], stage_attempt=st.get("stage_attempt"), spark_job_id=st.get("spark_job_id"),
+           sql_execution_id=st.get("sql_execution_id"), run_key=st.get("run_key"))
+    f["fix"] = CORE_HOG_FIX + (CORE_HOG_JDBC_FIX if jdbc else "") + "."
+    return [f]
+
+
 def capacity_findings(cid: str, tdf: pd.DataFrame, stages: list[dict], executors: list[dict], runs: list[dict],
                       cluster_info: list[dict] | None, log_signals: list[dict], rules: Rules,
-                      sw: Mapping[str, dict] | None = None) -> list[dict]:
+                      sw: Mapping[str, dict] | None = None, settings: list[dict] | None = None) -> list[dict]:
     out: list[dict] = []
     sw = sweep(tdf, stages, executors) if sw is None else sw
 
@@ -190,6 +267,14 @@ def capacity_findings(cid: str, tdf: pd.DataFrame, stages: list[dict], executors
             # big for their memory, so they spilled; skew) is the thing to fix first
             f["fix"] = OWN_WAVES_FIX
         out.append(f)
+
+    # ---- under FIFO, one stage that held every core: on its run, whose waves were not "normal for a big job"
+    hogs = hog_findings(cid, stages, executors, runs, settings)
+    for h in hogs:
+        for f in out:
+            if f["category"] == "capacity_bound" and f.get("run_key") == h.get("run_key"):
+                f["fix"] = h["fix"]
+    out += hogs
 
     # ---- per Spark context: autoscaling ----------------------------------------------------------------------
     info = {c.get("spark_context_id"): c for c in cluster_info or []}
@@ -339,4 +424,4 @@ def core_use(tdf: pd.DataFrame, executors: list[dict], apps: list[dict]) -> dict
 
 
 __all__ = ["capacity_findings", "sweep", "makespan", "core_use", "CATEGORIES"]
-CATEGORIES = ("capacity_bound", "autoscale_lag", "autoscale_removed")
+CATEGORIES = ("capacity_bound", "autoscale_lag", "autoscale_removed", "core_hog")

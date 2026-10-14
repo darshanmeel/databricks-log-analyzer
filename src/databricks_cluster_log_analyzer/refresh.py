@@ -32,7 +32,8 @@ from .analysis.runs import default_run, inherit_run_keys, runs_note, set_typical
 from .analysis.contention import CATEGORIES, add_findings, contention_findings, first_tasks, recount_queries, to_ms
 from .analysis.diagnosis import build_summary
 from .analysis.findings import (_real_losses, _signal_findings, calibrate, confirmed_signals, demote_orphan_failures,
-                                recheck_gc, summarize_errors, summarize_signals)
+                                recheck_exception_frames, recheck_gc, recheck_skew,
+                                restore_attributed_failures, summarize_errors, summarize_signals)
 from .analysis.workload import CATEGORIES as WORKLOAD_CATEGORIES, driver_findings, plan_findings, read_split, workload_findings
 from .config import Rules
 from .parsing.eventlog import _BENIGN_KILL
@@ -113,6 +114,26 @@ def _reclassify_retries(path: Path, findings: list[dict]) -> list[dict]:
     return rows
 
 
+def _resignal(path: Path, rules: Rules) -> list[dict]:
+    """Each log line's signal again with the current rules (the first that matches wins): a signal added before
+    another, such as a SQL code error before a schema error, takes the lines that are its."""
+    rows = _rows(path)
+    changed = False
+    for r in rows:
+        line = r.get("line") or ""
+        names = [s.name for s in rules.signals]
+        if r.get("signal") not in names:
+            continue
+        # only a signal listed before the line's own takes it (the rest of the matching, multi-line or not, stays)
+        hit = next((s for s in rules.signals[:names.index(r["signal"])] if s.regex.search(line)), None)
+        if hit is not None:
+            r["signal"], r["severity"], r["fix"] = hit.name, hit.severity, hit.fix
+            changed = True
+    if changed:
+        write_parquet(rows, path, "log_signals")
+    return rows
+
+
 def _refresh_user_frames(path: Path, rules: Rules) -> list[dict]:
     """"Where to fix" again with the current framework prefixes (JDBC drivers and tooling are not the user's code)."""
     from .parsing.loglines import is_framework_frame
@@ -171,11 +192,12 @@ def refresh_findings(out_dir: str | os.PathLike, rules: Rules) -> dict:
     set_typical(runs)
     info = _rows(d / "cluster_info.parquet")
     findings = _rows(d / "findings.parquet")
+    restore_attributed_failures(findings, queries, rules)
     qkey = {(q["spark_context_id"], q["sql_execution_id"]): q["run_key"] for q in queries if q.get("run_key")}
     for f in findings:
         if not f.get("run_key") and f.get("sql_execution_id") is not None:
             f["run_key"] = qkey.get((f.get("spark_context_id"), int(f["sql_execution_id"])))
-    signals = _rows(d / "log_signals.parquet")
+    signals = _resignal(d / "log_signals.parquet", rules)
 
     # ---- what the tasks say: failures, then the stage columns built from them -------------------------------------
     tdf = _unflag_replanned_kills(d / "tasks.parquet")
@@ -191,7 +213,8 @@ def refresh_findings(out_dir: str | os.PathLike, rules: Rules) -> dict:
              if (n["spark_context_id"], n["sql_execution_id"]) in merges and "Scan" in (n.get("name") or "")] if merges else []
     tms = _ms_frame(tdf)
     _refresh_skew_tasks(d, tms, stages, queries, rules, cid)
-    new = capacity_findings(cid, tms, stages, executors, runs, info, signals, rules) if tms is not None else []
+    new = capacity_findings(cid, tms, stages, executors, runs, info, signals, rules,
+                            settings=_rows(d / "settings.parquet")) if tms is not None else []
     bound = {f["run_key"] for f in new if f["category"] == "capacity_bound"}
     new += [f for f in contention_findings(cid, stages, first_tasks(tasks), runs, executors, queries, info, rules, nodes)
             if not (f["category"] == "waited_for_cores" and f.get("run_key") in bound)]
@@ -200,6 +223,13 @@ def refresh_findings(out_dir: str | os.PathLike, rules: Rules) -> dict:
     new += plan_findings(cid, queries, stages, _rows(d / "sql_plan_nodes.parquet",
                                                      ["spark_context_id", "sql_execution_id", "name", "detail"]), runs, rules)
     recheck_gc(findings, stages, rules)
+    recheck_skew(findings, stages, rules)
+    recheck_exception_frames(findings, rules)
+    # older builds wrote binary sizes with decimal labels ("917.5 GB" for 917.5 GiB)
+    for f in findings:
+        for k in ("evidence", "entity"):
+            if f.get(k):
+                f[k] = re.sub(r"(\d) (K|M|G|T)B\b", r"\1 \2iB", f[k])
     # the log signal findings again, without the lines the event log does not back (a fetch failure no task had, an
     # executor lost as the cluster stopped)
     retries = _reclassify_retries(d / "task_retries.parquet", findings)

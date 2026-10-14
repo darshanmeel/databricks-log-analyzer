@@ -1029,7 +1029,7 @@ export interface MergeCycle {
 
 export interface JdbcStep {
   query: number; ctx: string; kind: 'count' | 'probe' | 'key ranges' | 'read'; source: string | null; partitions: number; sql: string;
-  rows: number | null; took_ms: number | null; wrote_rows: number | null; wrote_bytes: number | null; written: string[]; same_as: number | null;
+  rows: number | null; took_ms: number | null; ran_ms?: number | null; wrote_rows: number | null; wrote_bytes: number | null; written: string[]; same_as: number | null;
   spread?: { p50_task_rows_in: number | null; max_task_rows_in: number | null; min_task_rows_in: number | null; p50_task_ms: number | null; p90_task_ms: number | null };
 }
 
@@ -1038,7 +1038,7 @@ export interface JdbcStep {
 /** Waiting for a core, one meaning everywhere: time when none of the run's tasks could start because every core was
  * busy (the cause bar's "waiting"). Its tasks queuing behind its own while others ran is "ran in waves", apart. */
 /** What was read from a database over JDBC (no files: rows, not bytes). */
-export interface JdbcRead { source: string; rows: number; queries: number; runs: number; partitions: number; took_ms: number; max_task_rows: number; p50_task_rows: number | null }
+export interface JdbcRead { source: string; rows: number; queries: number; runs: number; partitions: number; took_ms: number; ran_ms?: number; max_task_rows: number; p50_task_rows: number | null }
 
 export const waitOf = (r: { waiting_ms?: number | null; queued_full_ms?: number | null }) =>
   r.waiting_ms ?? r.queued_full_ms ?? 0;

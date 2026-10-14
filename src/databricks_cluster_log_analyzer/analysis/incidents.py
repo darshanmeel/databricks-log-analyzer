@@ -58,7 +58,8 @@ CATEGORY_KIND = {
 # findings about the whole run or cluster (queueing, MERGE, counts, DDL loops, init scripts): no cause -> effect with
 # a failure, so they stay outside incidents (the cache and autoscaling findings above do take part)
 NOT_IN_INCIDENTS = {"capacity_bound", "autoscale_lag", "cores_full", "waited_for_cores", "merge_rewrite",
-                    "ddl_loop", "disk_cache", "init_script", "dedup_noop", "jdbc_one_partition", "empty_input"}
+                    "ddl_loop", "disk_cache", "init_script", "dedup_noop", "jdbc_one_partition", "empty_input",
+                    "core_hog"}
 AUTOSCALED_RE = re.compile(r"removed \d+ executors? \(([\w, ]+)\)")
 PERF_KINDS = {"skew", "tiny", "large", "big_read", "idle", "driver", "count", "spill", "gc"}
 ERROR_KINDS = {"task_error", "driver_error", "other_error", "reported", "source_db"}
@@ -764,6 +765,11 @@ def build_incidents(cid: str, findings: list[dict], stages: list[dict], executor
                 m = re.search(r"spent ([\d hms]+?) in all|No Spark stage ran for ([\d hms]+?) of", ev)
                 if p["lead"]["f"].get("category") == "no_spark_work" and m:
                     parts.append(f"{(m.group(1) or m.group(2)).strip()} with no Spark work")
+                    break
+                # many stages of tiny tasks: the finding counted them all, not the one stage it is linked to
+                t = re.match(r"(\d[\d,]* stages ran \d[\d,]* tasks each)", ev)
+                if p["lead"]["f"].get("category") == "tiny_task_stages" and t:
+                    parts.append(t.group(1))
                     break
         if not parts and st:
             # the clock the stages held: from each one's first task (before that it waited for a core), overlaps once

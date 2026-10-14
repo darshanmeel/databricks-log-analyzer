@@ -194,7 +194,7 @@ function JdbcSteps({ cid, d }: { cid: string; d: RT }) {
         <b>The source database was queried {js.length} {js.length === 1 ? 'time' : 'times'}</b>
         {sources.length ? <> ({sources.map((s, i) => <span key={s!}>{i ? ', ' : ''}<code className="fp-table">{s}</code></span>)})</> : null}
         {again.length ? <span className="bad"> · {again.length} sent the same SQL again</span> : null}
-        {big && big.took_ms ? <span className="muted"> · the read: {fmtRows(big.rows)} rows in {big.partitions} partitions, {fmtRows(Math.round((big.rows ?? 0) / Math.max(1, big.took_ms / 1000)))} rows/s</span> : null}
+        {big && (big.ran_ms ?? big.took_ms) ? <span className="muted"> · the read: {fmtRows(big.rows)} rows in {big.partitions} partitions, {fmtRows(Math.round((big.rows ?? 0) / Math.max(1, (big.ran_ms ?? big.took_ms ?? 0) / 1000)))} rows/s while it held cores</span> : null}
       </div>
       <table className="table compact" style={{ marginTop: 4 }}>
         <thead><tr><th>Query</th><th>Asked the database to</th><th className="num">Rows</th><th className="num">Partitions</th><th className="num">Took</th><th /></tr></thead>

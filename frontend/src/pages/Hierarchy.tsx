@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode, useRef } from 'react';
 import { hasLogic, QueryLogic } from '../components/QueryLogic';
 import { Link } from 'react-router-dom';
 import { api, isMissing, type AppRow, type ConnectOperationRow, type Flow, type FlowEdge, type FlowNode, type Graph, type IncidentRow, type TaskRetryRow } from '../api';
@@ -647,6 +647,9 @@ export default function HierarchyPage() {
   const isQuery = unit?.node?.type === 'query' && unit.node.execId !== null;
   // the list of queries folds away so a query or stage gets the page's width (remembered in this browser)
   const [listHidden, setListHiddenState] = useState<boolean>(() => { try { return localStorage.getItem('q:list') === 'hidden'; } catch { return false; } });
+  // a stage opened (a link to it, or a click in the graph): the list folds away so the stage has the width
+  const stageOpen = node?.type === 'stage' ? node.id : null;
+  useEffect(() => { if (stageOpen) setListHiddenState(true); }, [stageOpen]);
   const setListHidden = (v: boolean) => { setListHiddenState(v); try { localStorage.setItem('q:list', v ? 'hidden' : 'shown'); } catch { /* private window */ } };
   const tabQ = sp.get('tab');
   const tab = isQuery && tabQ === 'plan' ? 'plan' : tabQ === 'trace' && unit?.kind !== 'orphans' ? 'trace' : 'stages';
@@ -697,6 +700,9 @@ export default function HierarchyPage() {
             ))}
           </nav>
         )}
+        {stageNode && stageNode.stageId !== null ? (
+          <ScrollHere key={`at-${stageNode.id}`} />
+        ) : null}
         {stageNode && stageNode.stageId !== null ? (
           <StagePanel key={stageNode.id} cid={cid} ctx={model.ctx} stage={String(stageNode.stageId)} attempt={String(stageNode.attempt)}
             retries={retries.data?.rows ?? null} onClose={() => select(jobNode?.id ?? null)} />
@@ -972,4 +978,11 @@ function SameLevel({ sib, parent, onPick }: { sib: FlowCtx[]; parent: string | n
       </div>
     </details>
   );
+}
+
+/** Scrolls the page to where it is rendered, once: a stage opened from a link or the graph is in view, not 6,000 px down. */
+function ScrollHere() {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => { ref.current?.scrollIntoView({ block: 'start', behavior: 'smooth' }); }, []);
+  return <div ref={ref} aria-hidden style={{ scrollMarginTop: 90 }} />;
 }

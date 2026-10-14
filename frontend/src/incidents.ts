@@ -29,7 +29,7 @@ export function groupIncidents(rows: Joined[]): Incident[] {
   }
   // what touched a run before what touched none (a tooling query that failed on its own); then the analyzer's rank:
   // failures first, then by severity and how much they cost, so the numbers read I1, I2, … down the page
-  const noRun = (i: Incident) => (i.problems.some((p) => [p.lead, ...p.same].some((f) => (f as { run_key?: string | null }).run_key)) ? 0 : 1);
+  const noRun = (i: Incident) => (touchesRun(i) ? 0 : 1);
   return [...m.values()].sort((a, b) => noRun(a) - noRun(b) || a.head.incident_rank - b.head.incident_rank);
 }
 
@@ -39,6 +39,10 @@ export function joinIncidents(findings: FindingRow[], incidents: IncidentRow[]):
   const byId = new Map(incidents.map((r) => [r.finding_id, r]));
   return findings.map((r) => ({ ...r, inc: byId.get(r.finding_id) ?? null }));
 }
+
+/** Whether any of its findings belongs to a run. */
+export const touchesRun = (i: Incident) =>
+  i.problems.some((p) => [p.lead, ...p.same].some((f) => (f as { run_key?: string | null }).run_key));
 
 export const isFailure = (i: Incident) => i.problems.some((p) => FAILURE_KINDS.has(p.lead.inc!.kind));
 /** The incident's root problem: the one marked root, else its first. */

@@ -33,7 +33,7 @@ def test_capacity_bound_counts_every_wave():
     f = capacity_findings("x", pd.DataFrame(tasks), stages, ex, runs, [], [], rules)
     cb = [r for r in f if r["category"] == "capacity_bound"]
     assert len(cb) == 1 and cb[0]["severity"] == "high"
-    assert cb[0]["evidence"].startswith("Tasks queued on a full cluster for 9 m 0 s of its 10 m 0 s (90%): every core busy with 4-36")
+    assert cb[0]["evidence"].startswith("Tasks queued on a full cluster for 9m of its 10m (90%): every core busy with 4-36")
     assert "behind its own tasks" in cb[0]["evidence"]
 
 
@@ -55,7 +55,7 @@ def test_autoscale_lag_and_removed_mid_work():
     signals = [{"signal": "cache_lost", "ts": T0 + 441 * S}] * 3
     f = {r["category"]: r for r in capacity_findings("x", pd.DataFrame(tasks), stages, ex, [], ci, signals, rules)}
     lag = f["autoscale_lag"]
-    assert "the first new executor came 5 m 0 s later" in lag["evidence"] and "between 1 and 4 workers" in lag["evidence"]
+    assert "the first new executor came 5m later" in lag["evidence"] and "between 1 and 4 workers" in lag["evidence"]
     rm = f["autoscale_removed"]
     assert rm["severity"] == "high" and "3 cached blocks were lost" in rm["evidence"]
     assert "stage 2 hit a fetch failure: its shuffle data was on executor 3" in rm["evidence"]
@@ -81,7 +81,7 @@ def test_autoscale_lag_starts_at_the_real_queue_and_blocks_go_to_their_removal()
     # 2 lines in the removal's own second (log lines carry whole seconds), 4 after the OOM
     signals = [{"signal": "cache_lost", "ts": T0 + 480 * S}] * 2 + [{"signal": "cache_lost", "ts": T0 + 486 * S}] * 4
     f = {r["category"]: r for r in capacity_findings("x", pd.DataFrame(tasks), stages, ex, [], ci, signals, rules)}
-    assert "the first new executor came 5 m 0 s later" in f["autoscale_lag"]["evidence"]
+    assert "the first new executor came 5m later" in f["autoscale_lag"]["evidence"]
     assert "2 cached blocks were lost" in f["autoscale_removed"]["evidence"]
 
 
@@ -136,7 +136,7 @@ def test_count_only_cache_and_ddl_loop():
     c = f["dataframe_cache"]
     assert c["severity"] == "high" and "the largest is 144 GiB (query 104), 9.0× the 16.0 GiB of memory a cache can use" in c["evidence"]
     assert "3 blocks did not fit in memory (one reached 2.1 GiB)" in c["evidence"] and "Nothing was released (no unpersist)" in c["evidence"]
-    assert f["count_only"]["evidence"].startswith("1 query only counted rows: 10 m 0 s of its 16 m 40 s (60%)")
+    assert f["count_only"]["evidence"].startswith("1 query only counted rows: 10m of its 16m 40s (60%)")
     assert f["ddl_loop"]["evidence"].startswith("12 statements of the same shape")
     # the query stayed open 10 minutes but its stages ran 2 seconds: not a costly count
     st = [{"spark_context_id": "c", "sql_execution_id": 104, "start_time": T0 + 100 * S, "end_time": T0 + 102 * S}]
@@ -144,7 +144,7 @@ def test_count_only_cache_and_ddl_loop():
     st = [{"spark_context_id": "c", "sql_execution_id": 104, "start_time": T0, "end_time": T0 + 500 * S},
           {"spark_context_id": "c", "sql_execution_id": 104, "start_time": T0 + 400 * S, "end_time": T0 + 560 * S}]
     f = {r["category"]: r for r in workload_findings("x", qs, runs, ex, sig, evc, rules, st)}
-    assert f["count_only"]["evidence"].startswith("1 query only counted rows: 9 m 20 s of Spark work, of its 16 m 40 s")
+    assert f["count_only"]["evidence"].startswith("1 query only counted rows: 9m 20s of Spark work, of its 16m 40s")
 
 
 def test_read_split():

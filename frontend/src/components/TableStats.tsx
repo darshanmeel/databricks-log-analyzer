@@ -17,7 +17,7 @@ export function TableStatsLines({ s }: { s: TS }) {
   const big = (s.avg_file_bytes ?? 0) >= BIG_FILE;
   return (
     <div className="small tstats">
-      {s.size_bytes ? <div><b>~{fmtBytes(s.size_bytes)}</b> in {fmtNum(s.files)} {s.files === 1 ? 'file' : 'files'} · <span className={big ? 'st-warn' : ''}>{fmtBytes(s.avg_file_bytes)} per file</span>{fileRange(s.min_file_bytes, s.max_file_bytes) ? <span className="muted"> ({fileRange(s.min_file_bytes, s.max_file_bytes)})</span> : null}{s.rows_per_file ? <span className="muted"> · ~{fmtRows(s.rows_per_file)} rows per file</span> : null}</div> : null}
+      {s.size_bytes ? <div><b>~{fmtBytes(s.size_bytes)}</b> in {fmtNum(s.files)} {s.files === 1 ? 'file' : 'files'} · <span className={big ? 'st-warn' : ''}>{fmtBytes(s.avg_file_bytes)} per file</span>{fileRange(s.min_file_bytes, s.max_file_bytes) ? <span className="muted"> (the files read: {fileRange(s.min_file_bytes, s.max_file_bytes)})</span> : null}{s.rows_per_file ? <span className="muted"> · ~{fmtRows(s.rows_per_file)} rows per file read</span> : null}</div> : null}
       <div className="muted">scanned {fmtNum(s.scans)}×{s.bytes_from_files ? <> · {fmtBytes(s.bytes_from_files)} pulled from the files</> : null}{s.scan_task_ms ? <> · {fmtDuration(s.scan_task_ms)} of task time</> : null}</div>
       {big && <div className="st-warn">Files of {fmtBytes(s.avg_file_bytes)}: data skipping works per file, so a filter can skip little, and without deletion vectors a MERGE rewrites every file with one matching row. Aim for 64–256 MiB files and cluster by the merge keys.</div>}
     </div>
