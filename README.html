@@ -201,7 +201,7 @@ PYTHONPATH=src python3 -m databricks_cluster_log_analyzer ui --output ~/dbx/outp
     <code>".[adls]"</code>, <code>".[s3]"</code> or <code>".[all]"</code>.</p>
   <ul>
     <li><b>To update:</b> <code>git pull</code>, then start the UI again. Old analyses still open; <b>Analyze again</b>
-      rebuilds one with the newest findings. Outputs built before analyzer revision 20 need it (or
+      rebuilds one with the newest findings. Outputs built before analyzer revision 22 need it (or
       <code>refresh-findings</code>, which covers most finding changes) to show the numbers described here.</li>
     <li><b>"No module named databricks_cluster_log_analyzer":</b> run <code>python -m pip install -e .</code> in the
       repo folder, or set <code>PYTHONPATH=src</code>.</li>
@@ -358,7 +358,8 @@ dbx-log-analyzer ui --output ./demo_out --cache ./demo_cache</code></pre>
       fixes</b> come in the order to make them, the fix for what broke first.</li>
     <li><b>On its clock:</b> waited for cores, ran tasks, and no Spark work (driver code). While it ran tasks, the time
       they sat queued on a full cluster is counted as waiting too (here 22m 5s, with 2 other runs on the same
-      executors). An idle gap of 30 minutes or more is called idle, not driver code. Every query is listed with its
+      executors). When a stage of another run held every core, the run names it and what to change. An idle gap of 30
+      minutes or more is called idle, not driver code. Every query is listed with its
       wait, run time and rows in.</li>
     <li><b>What to change for this run</b> is under Details, so the first screen has one fix list: the same folded
       cards as the cluster, limited to the changes this run is part of, with this run's problems behind each. The full
@@ -375,7 +376,7 @@ dbx-log-analyzer ui --output ./demo_out --cache ./demo_cache</code></pre>
       page, one line gives the verdict: its worst finding in one sentence.</li>
     <li><b>Reads and writes:</b> every table, with the bytes read and the stages that read it.</li>
     <li><b>Step by step:</b> each stage with its tasks, when it was submitted, when its first task started, the wait
-      for cores and the run time. <b>Rows in → out</b> shows, for example, "96.0M read → 96.0M to the shuffle" or
+      for cores and the run time. A stage's time counts from its first task, so the wait is not counted twice. <b>Rows in → out</b> shows, for example, "96.0M read → 96.0M to the shuffle" or
       "109M from stage 6, 7 → 214M written". You can follow the data through the query.</li>
     <li><b>Why it took that long:</b> the stages that held it up, with their tail, skew, spill, wait and share of the
       executors.</li>
@@ -413,7 +414,8 @@ dbx-log-analyzer ui --output ./demo_out --cache ./demo_cache</code></pre>
       to memory and to disk, peak memory and bytes written.</li>
     <li><b>Columns:</b> min, p10, median, p90 and max, then a small histogram, the total and how many tasks had any.
       The max carries <b>×N</b>, how many times the median it is, when that is 3 or more. Units sit next to each
-      measure (s, MiB, GiB), chosen for the typical value.</li>
+      measure (s, MiB, GiB), chosen for the typical value. The statistics, like the stage's own median, skew and
+      rows, come from the attempts that succeeded: a failed attempt's rows were read again by its retry.</li>
     <li><b>Per task, or per second of task time:</b> the second view divides each measure by the task's duration
       (GC as a % of its time, MiB of shuffle per second), so a task that is slow <i>because</i> it got more data reads
       the same as the others.</li>
@@ -531,8 +533,8 @@ dbx-log-analyzer ui --output ./demo_out --cache ./demo_cache</code></pre>
     <figcaption>Events &amp; timeline → Events: the run told in order, with its critical path on top.</figcaption></figure>
   <ul class="look">
     <li><b>What happened when:</b> every query of the run on one timeline, with the critical path outlined. It splits
-      the path into running Spark work, waiting for a free core, and time between queries with no Spark work (your
-      driver code, Python, JDBC calls, sleeps). Arrows show which query needed which: read a table an earlier one
+      the path into running Spark work, waiting for a free core, time inside a query with no task running, and time
+      between queries with no Spark work (your driver code, Python, JDBC calls, sleeps). Arrows show which query needed which: read a table an earlier one
       wrote, or reused its shuffle output.</li>
     <li><b>The event list:</b> query, job and stage starts and ends, task retries, important log lines and findings,
       one stream in time order. Each row shows the clock time and the offset from the run's start. Findings are marked
@@ -593,17 +595,24 @@ dbx-log-analyzer ui --output ./demo_out --cache ./demo_cache</code></pre>
   <p>Kinds include disk spill, skewed tasks, tasks too big, big table reads, MERGE reading far more of the target than
     it merged, waiting for cores, too few or too many shuffle partitions, file-reading tasks above the split size, GC
     pressure, a DataFrame cache larger than memory, a window dedup that removed no rows, errors in task or driver
-    code, timeouts connecting to a source database over JDBC, task retries, out-of-memory or lost executors, and
-    executors paid for but idle. Related findings are grouped into one incident with its root cause and effects, for
+    code, a mistake in the SQL text itself (an unknown function, a syntax error), timeouts connecting to a source
+    database over JDBC, task retries, out-of-memory or lost executors, executors paid for but idle, one stage holding
+    every core under FIFO while other runs waited behind it, a big JDBC read on one connection (no
+    <code>partitionColumn</code>), and long queries that found no input and still waited, planned and committed. Related findings are grouped into one incident with its root cause and effects, for
     example "Query 2 ran slow: task skew, disk spill" where the skew caused the spill. A cache larger than memory is
     linked to the GC, out of memory and spill of its run, and an autoscaling removal to the errors on the executors it
-    removed.</p>
+    removed. Task retries whose attempts all lost their source database connection are put down to the database, not
+    to another error on the same executor, and the driver's two lines for one error in the same second are one
+    problem, so a failed query leads with its SQL error and its fix.</p>
   <ul class="look">
     <li><b>Severity:</b> one problem gets one <i>High</i>; its side effects are Medium (for example big tasks on a
       stage whose spill is already high). A finding tied to no run and no stage is demoted.</li>
     <li><b>Advice fits the case:</b> a skewed JDBC read is measured in rows and gets advice on its
       <code>partitionColumn</code> and bounds, not salting; one long stage holding every core under FIFO gets FAIR
       pools, its own cluster or fewer JDBC partitions; burst advice comes only when 3 or more runs overlapped.</li>
+    <li><b>Who held the cores:</b> a stage that kept every core for 30 minutes or more is one finding, shown on its
+      own run and on every run that waited behind it. Their capacity fix and the cluster's "more workers" item say
+      FAIR pools first: under FIFO, more workers do not stop one stage taking them all.</li>
     <li><b>On the cluster's Findings tab</b> you see every run's problems, each with a chip naming its run that opens
       that run's findings. Inside a run, only that run's.</li>
   </ul>

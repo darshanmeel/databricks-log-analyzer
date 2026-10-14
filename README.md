@@ -10,9 +10,11 @@ Point it at the logs Databricks delivers for a cluster (driver and executor logs
 Parquet datasets and opens a **local web UI** that answers:
 
 - **Where did the time go?** How long the cluster was up next to the run time added up over all runs, how much of it
-  was spent queued on a full cluster (every core busy), and each run's time split by cause.
+  was spent queued on a full cluster (every core busy), which stage held every core while other runs waited behind
+  it, and each run's time split by cause.
 - **What failed, and why?** Failed jobs and queries, task retries that still succeeded, lost or out-of-memory
-  executors, and errors grouped with the first line of your own code.
+  executors, and errors grouped with the first line of your own code. A retry that lost its source database
+  connection is put down to the database, and a typo in the SQL text is called a code bug.
 - **What should I change?** Grouped fixes, highest impact first, each with what the data shows, the likely cause and
   the setting or code change. For the whole cluster and for each run.
 - **Which tables cost the most?** Size, files, file size (average, smallest and largest), rows per file, files
@@ -69,8 +71,9 @@ A browser tab opens at http://127.0.0.1:8765. On **Home**:
 3. Pick the cluster and click **Analyze**.
 
 Every analyzed cluster has an **Analyze again** button. It rebuilds the analysis from the same raw logs with the
-newest version of the tool, as long as those logs are still on disk. Outputs built before analyzer revision 20 need
-it to show the newest numbers.
+newest version of the tool, as long as those logs are still on disk. Outputs built before analyzer revision 22 need
+it to show the newest numbers. When the raw logs are gone, `dbx-log-analyzer refresh-findings --output <dir>`
+brings an analysis up to date from its own datasets.
 
 ### Without installing the package
 
