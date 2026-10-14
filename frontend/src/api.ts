@@ -332,6 +332,8 @@ export interface IncidentRow {
   because: string | null; confidence: 'strong' | 'likely' | 'weak' | null; spark_context_id: string | null;
   stage_id: number | null; stage_attempt: number | null; spark_job_id: number | null; sql_execution_id: number | null;
   executor_id: string | null; stages: string | null; executors: string | null;
+  /** the run of its stage or query (older outputs: none) */
+  run_key?: string | null;
 }
 
 export interface TimelineRow { cluster_id: string; minute: number; signal: string; count: number }
@@ -793,6 +795,8 @@ export interface FlowNode extends DataDist, DataIO {
   tables_written: string[]; disk_spill?: number | null; tasks?: number | null;
   /** stretches where a stage of it waited for a free core and none of its stages ran */
   waits?: [number, number][];
+  /** stretches where a stage of it ran tasks (older servers: absent) */
+  runs?: [number, number][];
 }
 /** rows / bytes: what passed along it (a table: the rows its writer wrote; a reused shuffle: the rows that stage wrote) */
 export interface FlowEdge {

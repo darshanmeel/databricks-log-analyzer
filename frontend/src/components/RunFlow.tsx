@@ -122,24 +122,27 @@ export function RunFlow({ cid, onPick }: { cid: string; onPick: (n: FlowNode) =>
     // a query that ran others inside it waited while they did: their waits count as its own (merged, within its span)
     const insideOf = new Map<string, string[]>();
     for (const e of edges) if (e.kind === 'inside') insideOf.set(e.from, [...(insideOf.get(e.from) ?? []), e.to]);
-    const waitsOf = (n: FlowNode, seen = new Set<string>()): [number, number][] => {
+    const spansOf = (n: FlowNode, pick: (x: FlowNode) => [number, number][] | undefined, seen = new Set<string>()): [number, number][] => {
       if (seen.has(n.key)) return [];
       seen.add(n.key);
-      const own: [number, number][] = [...(n.waits ?? [])];
-      for (const k of insideOf.get(n.key) ?? []) { const c = nodeBy.get(k); if (c) own.push(...waitsOf(c, seen)); }
+      const own: [number, number][] = [...(pick(n) ?? [])];
+      for (const k of insideOf.get(n.key) ?? []) { const c = nodeBy.get(k); if (c) own.push(...spansOf(c, pick, seen)); }
       return own;
     };
-    const merged = (n: FlowNode) => {
+    const merged = (n: FlowNode, pick: (x: FlowNode) => [number, number][] | undefined) => {
       const s0 = n.start ?? 0, e0 = n.end ?? s0;
-      const iv = waitsOf(n).map(([a, b]) => [Math.max(a, s0), Math.min(b, e0)] as [number, number]).filter(([a, b]) => b > a).sort((x, y) => x[0] - y[0]);
+      const iv = spansOf(n, pick).map(([a, b]) => [Math.max(a, s0), Math.min(b, e0)] as [number, number]).filter(([a, b]) => b > a).sort((x, y) => x[0] - y[0]);
       let tot = 0, cs = -Infinity, ce = -Infinity;
       for (const [a, b] of iv) { if (a > ce) { if (ce > cs) tot += ce - cs; cs = a; ce = b; } else ce = Math.max(ce, b); }
       return tot + (ce > cs ? ce - cs : 0);
     };
-    const waited = crit.reduce((a, n) => a + merged(n), 0);
+    const waited = crit.reduce((a, n) => a + merged(n, (x) => x.waits), 0);
+    // running: when a stage of it (or of a query inside it) ran tasks; older servers send no runs: all but the waits
+    const hasRuns = crit.some((n) => n.runs !== undefined);
+    const ranMs = hasRuns ? crit.reduce((a, n) => a + merged(n, (x) => x.runs), 0) : null;
     const critSet = new Set(crit.map((n) => n.key));
     const prevOnPath = new Map(crit.slice(1).map((n, i) => [n.key, crit[i]]));
-    return { nodes, tree, kids, parent, parentKind, edges, row, t0, t1, hidden, up, down, truncated: f.truncated, crit, critSet, prevOnPath, busy, gaps, waited, idle };
+    return { nodes, tree, kids, parent, parentKind, edges, row, t0, t1, hidden, up, down, truncated: f.truncated, crit, critSet, prevOnPath, busy, gaps, waited, idle, ranMs };
   }, [st.data]);
 
   const chain = useMemo(() => {
@@ -185,10 +188,13 @@ export function RunFlow({ cid, onPick }: { cid: string; onPick: (n: FlowNode) =>
       {m.crit.length > 1 && (() => {
         const total = Math.max(1, (m.crit[m.crit.length - 1].end ?? 0) - (m.crit[0].start ?? 0));
         const busy = m.busy ?? 0;
-        const ran = m.waited >= 1000 ? Math.max(0, busy - m.waited) : busy;
+        const ran = m.ranMs ?? (m.waited >= 1000 ? Math.max(0, busy - m.waited) : busy);
+        // open queries with neither tasks running nor a stage waiting: the driver, a commit, a lock
+        const inside = m.ranMs !== null ? Math.max(0, busy - ran - m.waited) : 0;
         const parts: [string, number, ReactNode][] = [
           ['running', ran, <>running Spark work</>],
           ...(m.waited >= 1000 ? [['waiting', m.waited, <>waiting for a free core inside queries <span className="muted">(grey hatch: other work held the cores)</span></>] as [string, number, ReactNode]] : []),
+          ...(inside >= 1000 ? [['inside', inside, <>inside queries with no Spark work <span className="muted">(the driver, planning, a commit or a lock)</span></>] as [string, number, ReactNode]] : []),
           ['gaps', m.gaps, <>between queries with no Spark work <span className="muted">(grey dots: its own driver code, Python, JDBC calls, sleeps, or waiting outside Spark)</span></>],
         ];
         const top = [...parts].sort((x, y) => y[1] - x[1])[0];
@@ -205,6 +211,7 @@ export function RunFlow({ cid, onPick }: { cid: string; onPick: (n: FlowNode) =>
                 ? <><b>It sat idle for {fmtDuration(m.idle.ms)}</b> between {m.idle.from.kind === 'query' ? 'Query' : 'Spark job'} {m.idle.from.id} ({fmtTime(m.idle.from.end)}) and {m.idle.to.kind === 'query' ? 'Query' : 'Spark job'} {m.idle.to.id} ({fmtTime(m.idle.to.start)}): its own work took {fmtDuration(Math.max(0, total - m.idle.ms))}. <span className="muted">Nothing from this run reached Spark in that time: it waited on something outside Spark (a sleep, a poll, another job or table to be ready, a lock) or its driver code ran that long. Check the notebook between those two queries.</span></>
                 : top[0] === 'gaps' ? <><b>Most of it is outside Spark</b>: look at the driver code between queries, not at the queries.</>
                 : top[0] === 'waiting' ? <><b>Most of it is waiting for cores</b>: other work held them. The first box above says what to change.</>
+                : top[0] === 'inside' ? <><b>Most of it is inside queries that ran no tasks</b>: planning, a Delta commit (and its retries after a conflict), a lock, or the driver. Open the longest one below.</>
                 : <><b>Most of it is Spark work</b>: the slowest steps on the path are where to look.</>}
             </div>
           </div>

@@ -2006,10 +2006,15 @@ def flow(store: Store, cid: str, run: str | None = None) -> dict[str, Any]:
                     WHERE {"run_key = ?" if by_run else "TRUE"} GROUP BY 1, 2, 3""", [run] if by_run else []):
                 firsts[(r["spark_context_id"], r["stage_id"], r["stage_attempt"])] = _as_ms(r["first"])
     waits_of = _query_waits(stages, firsts)
+    # when a stage of it ran tasks: the rest of a query's open time with no wait is no Spark work (the driver, a commit)
+    qkey = (lambda st: (st["spark_context_id"], st["sql_execution_id"]) if st.get("sql_execution_id") is not None else None)
+    runs_of = {k: [list(x) for x in r] for k, (_, r) in _wait_and_run(stages, firsts, qkey).items()}
     # a Spark job without SQL waits for a free core too: draw its wait like a query's
     jkey = (lambda st: (st["spark_context_id"], st["spark_job_id"])
             if st.get("sql_execution_id") is None and st.get("spark_job_id") is not None else None)
-    job_waits = {k: [[a, b] for a, b in w if b - a >= 1000] for k, (w, _) in _wait_and_run(stages, firsts, jkey).items()}
+    jwr = _wait_and_run(stages, firsts, jkey)
+    job_waits = {k: [[a, b] for a, b in w if b - a >= 1000] for k, (w, _) in jwr.items()}
+    job_runs = {k: [list(x) for x in r] for k, (_, r) in jwr.items()}
     jobs_of: dict[tuple, list] = {}
     for j in jobs:
         jobs_of.setdefault((j["spark_context_id"], j.get("sql_execution_id")), []).append(j)
@@ -2038,7 +2043,7 @@ def flow(store: Store, cid: str, run: str | None = None) -> dict[str, Any]:
                       "error": q.get("error"), "jobs": [j["spark_job_id"] for j in js],
                       "tables_read": sorted({_short_table(t) for t in q.get("tables_read") or []}),
                       "tables_written": sorted({_short_table(t) for t in q.get("tables_written") or []}),
-                      "waits": waits_of.get(k, []),
+                      "waits": waits_of.get(k, []), "runs": runs_of.get(k, []),
                       **{c: q.get(c) for c in keep}})
     for j in jobs:
         if j.get("sql_execution_id") is not None and (j["spark_context_id"], j["sql_execution_id"]) in qby:
@@ -2052,6 +2057,7 @@ def flow(store: Store, cid: str, run: str | None = None) -> dict[str, Any]:
                       "what": j.get("description") or j.get("call_site"), "error": j.get("error"),
                       "jobs": [j["spark_job_id"]], "tables_read": [], "tables_written": [],
                       "waits": job_waits.get((j["spark_context_id"], j["spark_job_id"]), []),
+                      "runs": job_runs.get((j["spark_context_id"], j["spark_job_id"]), []),
                       **{c: j.get(c) for c in keep}})
     nodes.sort(key=lambda n: (n["start"] is None, n["start"] or 0, n["key"]))
     truncated = len(nodes) > FLOW_MAX_NODES
@@ -2921,8 +2927,9 @@ def settings_view(store: Store, cid: str) -> dict[str, Any]:
              + f" for {_fmt_ms(held)}"
              + (" reading a database over JDBC" if jdbc else "") + f": more tasks than the {cores_} cores",
              "spark.scheduler.mode = FIFO: the first stage keeps every core it can use until it is done",
-             (f"{_plural(len(behind), 'other run')} waited for cores while it ran, up to "
-              f"{_fmt_ms(_waited(most))} ({labels.get(most['run_key'], most['run_key'])})")
+             (f"{_plural(len(behind), 'other run')} waited for cores while it ran (part of each wait can be "
+              f"before or after it; the longest wait in all: {_fmt_ms(_waited(most))}, "
+              f"{labels.get(most['run_key'], most['run_key'])})")
              if most else None],
             "One long stage held every core: small jobs of other runs queued behind it, often to run for seconds after "
             "waiting for many minutes. More workers or fewer runs at once do not change that.",
@@ -2932,6 +2939,11 @@ def settings_view(store: Store, cid: str) -> dict[str, Any]:
             refs([st_], _held_ms), runs=run_refs(r["run_key"] for r in behind),
             cost_ms=held)
         advice[-1]["fifo"] = True
+        # the cores item says "more workers": under FIFO that comes after the FAIR pools
+        for a in advice:
+            if a.get("key") == TAGS + "clusterWorkers" and a.get("fixes"):
+                a["fixes"] = [f"First the FAIR pools above: stage {st_['stage_id']} held every core, and more workers do "
+                              "not change who gets them. Then, if the runs still wait:"] + a["fixes"]
     merges = [x for x in newer if x["category"] == "merge_rewrite"]
     merge_info: dict[tuple, dict] = {}  # (ctx, query) -> merge_facts: one number per MERGE on every page
     if merges:

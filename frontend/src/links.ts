@@ -60,6 +60,8 @@ export interface EntityLink {
 
 /** Links derived from any row that carries the shared link columns (findings, story). */
 export interface LinkCols {
+  /** the run the row belongs to: its stage, job and query links open in that run */
+  run_key?: string | null;
   spark_context_id?: string | null;
   stage_id?: number | null;
   stage_attempt?: number | null;
@@ -75,16 +77,18 @@ export interface LinkCols {
 export function rowLinks(cid: string, r: LinkCols): EntityLink[] {
   const out: EntityLink[] = [];
   const ctx = r.spark_context_id ?? null;
+  // a stage, job or query page is a run's: without the run it opens in whatever run was picked last
+  const inRun = (href: string) => (r.run_key ? `${href}${href.includes('?') ? '&' : '?'}run=${encodeURIComponent(r.run_key)}` : href);
   if (r.stage_id !== null && r.stage_id !== undefined)
     out.push({
       type: 'stage',
       label: `Stage ${r.stage_id}${r.stage_attempt ? `.${r.stage_attempt}` : ''}`,
-      href: to.stages(cid, ctx, r.stage_id, r.stage_attempt ?? 0),
+      href: inRun(to.stages(cid, ctx, r.stage_id, r.stage_attempt ?? 0)),
     });
   if (r.spark_job_id !== null && r.spark_job_id !== undefined)
-    out.push({ type: 'job', label: `Spark job ${r.spark_job_id}`, href: to.hierarchy(cid, { ctx, job: r.spark_job_id }) });
+    out.push({ type: 'job', label: `Spark job ${r.spark_job_id}`, href: inRun(to.hierarchy(cid, { ctx, job: r.spark_job_id })) });
   if (r.sql_execution_id !== null && r.sql_execution_id !== undefined && ctx)
-    out.push({ type: 'query', label: `Query ${r.sql_execution_id}`, href: to.query(cid, ctx, r.sql_execution_id) });
+    out.push({ type: 'query', label: `Query ${r.sql_execution_id}`, href: inRun(to.query(cid, ctx, r.sql_execution_id)) });
   if (r.executor_id !== null && r.executor_id !== undefined && r.executor_id !== '')
     out.push({
       type: 'executor',

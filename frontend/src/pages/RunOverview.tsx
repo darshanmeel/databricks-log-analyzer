@@ -38,7 +38,11 @@ const toBytes = (s: string | null | undefined) => {
   return Number(m[1]) * (u[m[2]] ?? 1);
 };
 /** The first sentence or two of a fix, up to about 200 characters: the rest is on the finding. */
-const firstSentences = (s: string) => truncate(s.split(/(?<=\.)\s+/)[0].replace(/ \(for example [^)]*\)/, ''), 160);
+/** The fix's first sentence; with the next when the first only says what happened ("it ran in waves"), not what to do. */
+const firstSentences = (s: string) => {
+  const xs = s.split(/(?<=\.)\s+/).map((x) => x.replace(/ \(for example [^)]*\)/, ''));
+  return truncate(xs[0].length < 90 && xs[1] ? `${xs[0]} ${xs[1]}` : xs[0], 260);
+};
 /** What a query did, for one line: a MERGE is named by its step, so what it read can go. */
 const brief = (w: string) => {
   const bits = w.split(' · ');
@@ -450,7 +454,8 @@ function fixItems(run: RunRow, a: Analysis, spill: number, findings: FindingRow[
     done.add('waited_for_cores');
   } else if (a.waitShare >= 0.2 && hog?.behind) {
     const plain = `FAIR scheduler pools (spark.scheduler.mode FAIR, a pool per run): stage ${hog.st.stage_id} of ${hog.st.run_label ?? 'another run'} held ${hog.held} under FIFO, and this run waited behind it. More workers would not change that.`;
-    fixes.push({ who: 'Cluster', plain, text: plain, wins: `up to ${fmtDuration(waitMs)} of waiting`, card: 'cluster' });
+    // no "wins up to": part of its wait can be before or after that stage held the cores
+    fixes.push({ who: 'Cluster', plain, text: plain, card: 'cluster' });
     done.add('waited_for_cores');
     done.add('capacity_bound');
   } else if (a.waitShare >= 0.2) {

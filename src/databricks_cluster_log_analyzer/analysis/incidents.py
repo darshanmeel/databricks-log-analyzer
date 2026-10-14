@@ -31,7 +31,7 @@ from .contention import to_ms
 INCIDENT_COLS = ["cluster_id", "finding_id", "incident_id", "incident_rank", "incident_title", "incident_severity",
                  "incident_impact", "incident_start", "incident_end", "problem_id", "kind", "role", "caused_by",
                  "because", "confidence", "spark_context_id", "stage_id", "stage_attempt", "spark_job_id", "sql_execution_id",
-                 "executor_id", "stages", "executors"]
+                 "executor_id", "stages", "executors", "run_key"]
 
 # kind -> (label, level). Lower levels come first in Spark's usual failure order and can cause higher ones.
 KINDS = {
@@ -413,8 +413,9 @@ def build_incidents(cid: str, findings: list[dict], stages: list[dict], executor
                 if same_text or (sa.stages & sb.stages) - (sa.inferred & sb.inferred):
                     return True
                 # ... unless logged together: a Python traceback and the error inside it, the same second
-                return any(ea.execs & eb.execs and ta is not None and tb is not None and abs(ta - tb) <= ERR_SAME_MS
-                           for ta, ea in a["events"] for tb, eb in b["events"])
+                # (or two lines of the driver's log the same second, with no executor: one error, logged twice)
+                return any((ea.execs & eb.execs or not (ea.execs or eb.execs)) and ta is not None and tb is not None
+                           and abs(ta - tb) <= ERR_SAME_MS for ta, ea in a["events"] for tb, eb in b["events"])
             # the same message on two executors is two problems ("Java heap space" on each of them)
             if same_text and (not sa.execs or not sb.execs or shared_exec(sa, sb)):
                 return True
@@ -424,8 +425,9 @@ def build_incidents(cid: str, findings: list[dict], stages: list[dict], executor
             return any(ea.execs & eb.execs and close(ta, tb) for ta, ea in a["events"] for tb, eb in b["events"])
         if {ka, kb} <= ERROR_KINDS:
             # the executor's error and the driver's copy of it, or a wrapper and its cause logged together
-            return same_text or any(ea.execs & eb.execs and ta is not None and tb is not None and abs(ta - tb) <= ERR_SAME_MS
-                                    for ta, ea in a["events"] for tb, eb in b["events"])
+            # (two lines of the driver's log the same second, with no executor: one error, logged twice)
+            return same_text or any((ea.execs & eb.execs or not (ea.execs or eb.execs)) and ta is not None and tb is not None
+                                    and abs(ta - tb) <= ERR_SAME_MS for ta, ea in a["events"] for tb, eb in b["events"])
         if {ka, kb} == {"stage_failed", "job_aborted"} and same_text:
             return True  # "Job aborted due to stage failure" is the stage failure, logged by the driver
         return False
@@ -437,6 +439,9 @@ def build_incidents(cid: str, findings: list[dict], stages: list[dict], executor
         yield from (("ex", info["kind"], e) for e in sc.execs)
         yield from (("msg", m) for m in sc.messages)
         yield from (("fr", m) for m in sc.frames)
+        # the driver's errors with no executor: compared with the ones logged in the same seconds
+        if info["kind"] in ERROR_KINDS and not sc.execs and info["ts"] is not None:
+            yield ("drv", info["ts"] // max(1, ERR_SAME_MS))
 
     single = [i for i, x in enumerate(infos) if not x["multi"]]
     buckets: dict[tuple, list[int]] = {}
@@ -506,9 +511,20 @@ def build_incidents(cid: str, findings: list[dict], stages: list[dict], executor
                          "runs": {m["f"].get("run_key") for m in ms} - {None}})
 
     # ---- 3. cause -> effect between problems ---------------------------------------------------------------
+    # why each stage's tasks failed, from the attempts themselves: retries that all lost their database connection
+    # were caused by the database, not by an error another job logged on the same executor meanwhile
+    retry_cats: dict[tuple, set] = {}
+    for r in task_retries or []:
+        retry_cats.setdefault((r.get("spark_context_id"), r.get("stage_id"), r.get("stage_attempt")), set()).add(
+            r.get("first_failure_category"))
+
     def link_score(c: dict, e: dict) -> int:
         if c["level"] >= e["level"] or c["kind"] not in CAUSES.get(e["kind"], ()):
             return 0
+        if e["kind"] in ("retries", "stage_failed") and c["kind"] != "source_db":
+            cats = set().union(*(retry_cats.get(k, set()) for k in e["sc"].stages)) if e["sc"].stages else set()
+            if cats == {"source_db"}:
+                return 0
         if c["ts"] is not None and e["ts"] is not None and c["ts"] > e["ts"] + 5_000:
             return 0
         a, b = c["sc"], e["sc"]
@@ -541,6 +557,10 @@ def build_incidents(cid: str, findings: list[dict], stages: list[dict], executor
                 ex in stage_execs.get(k, ()) for (_, ex) in a.execs for k in b.stages):
             return 2
         if a.execs & b.execs:
+            return 2
+        # the driver logged the error of a query that failed the same second (no stage, no executor to share)
+        if e["kind"] == "query_failed" and c["kind"] in ("driver_error", "other_error", "task_error") \
+                and c["ts"] is not None and e["ts"] is not None and abs(c["ts"] - e["ts"]) <= 10_000:
             return 2
         if e["kind"] == "reported" and c["kind"] in ("query_failed", "job_aborted") and b.calls:
             names = " ".join((stage_by_key.get(k, {}).get("stage_name") or "") for k in a.stages).lower()
@@ -578,6 +598,11 @@ def build_incidents(cid: str, findings: list[dict], stages: list[dict], executor
         if e["kind"] in ("reported", "query_failed"):
             for c in ends:
                 cands[id(c)] = c
+        if e["kind"] == "query_failed" and e["ts"] is not None:
+            for c in problems:
+                if c["kind"] in ("driver_error", "other_error", "task_error") and c["ts"] is not None \
+                        and abs(c["ts"] - e["ts"]) <= 10_000:
+                    cands[id(c)] = c
         if e["kind"] in ("gc", "oom", "spill", "killed"):
             for c in caches:
                 cands[id(c)] = c
@@ -849,6 +874,9 @@ def build_incidents(cid: str, findings: list[dict], stages: list[dict], executor
                     "executor_id": _str(f.get("executor_id")) or (exs[0] if len(exs) == 1 else None),
                     "stages": ", ".join(f"{a}.{b}" for _, a, b in st) or None,
                     "executors": ", ".join(exs) or None,
+                    # the run its stage or query belongs to: a link to them opens in that run
+                    "run_key": _str(f.get("run_key")) or (s_row or stage_by_key.get(
+                        (f.get("spark_context_id"), f_stage, _int(f.get("stage_attempt")) or 0)) or {}).get("run_key"),
                 })
     order = {f["finding_id"]: i for i, f in enumerate(findings)}
     out.sort(key=lambda r: (r["incident_rank"], order.get(r["finding_id"], 0)))

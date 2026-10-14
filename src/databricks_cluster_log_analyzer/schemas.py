@@ -189,6 +189,7 @@ SCHEMAS: dict[str, pa.Schema] = {
         ("spark_context_id", S),
         ("stage_id", I), ("stage_attempt", I), ("spark_job_id", I), ("sql_execution_id", I), ("executor_id", S),
         ("stages", S), ("executors", S),
+        ("run_key", S),
     ),
     "connect_operations": _schema(
         ("cluster_id", S), ("spark_context_id", S), ("operation_id", S), ("session_id", S), ("user_id", S),

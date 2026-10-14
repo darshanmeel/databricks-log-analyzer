@@ -111,7 +111,8 @@ export function indexProblems(rows: IncidentRow[], keys: (r: IncidentRow) => str
 }
 
 export function FixTips({ kind, fix, stackHref, compact }: { kind: string; fix?: string | null; stackHref?: string | null; compact?: boolean }) {
-  const tips = TIPS[kind] ?? [];
+  // a JDBC read's skew is how it was split: its own fix says so, and the join-key tips do not apply
+  const tips = kind === 'task skew' && /JDBC read/.test(fix ?? '') ? [] : TIPS[kind] ?? [];
   if (!fix && !tips.length) return null;
   return (
     <div className={`fix-tips ${compact ? 'compact' : ''}`}>

@@ -192,18 +192,26 @@ function ModePills({ mode, setMode, extra }: { mode: Mode; setMode: (m: Mode) =>
 /** Section 1: all the tasks. */
 function AllTasks({ c, n, what, waits, allRowsLink }: { c: TaskColumns; n: number; what: string; waits?: number[] | null; allRowsLink?: string }) {
   const [mode, setMode] = useState<Mode>('task');
-  const scale = (k: MetricKey) => stats(valuesOf(c, k, mode, null))?.max ?? 0;
+  // the statistics of the attempts that succeeded, as the stage's own median and skew: a failed attempt (a lost
+  // connection, a killed executor) is not a typical task; the failed ones are in their own section
+  const failed = c.cols.failed ?? [];
+  const okIdx = useMemo(() => {
+    const ix = (c.cols.task_ms ?? []).map((_, i) => i).filter((i) => !failed[i]);
+    return ix.length && ix.length < (c.cols.task_ms ?? []).length ? ix : null;
+  }, [c]);
+  const scale = (k: MetricKey) => stats(valuesOf(c, k, mode, okIdx))?.max ?? 0;
   return (
     <div className="ts-section">
       <h3 className="ts-h"><span className="ts-num">1</span> {n === 1 ? 'Its one task' : `All ${fmtNum(n)} tasks`}{c.sampled ? <span className="muted small"> · statistics from {fmtNum(c.n)} of {fmtNum(c.total)} tasks (every failed one, the longest and an even sample)</span> : null}</h3>
       <p className="ts-legend small">
         <b>min</b> the smallest task · <b>p10</b> 10% of tasks are at or below this · <b>median</b> half are at or below this · <b>p90</b> 90% are at or below this, the last 10% are the tail · <b>max</b> the single largest task, with how many times the median it is · <b>distribution</b> how many tasks fall in each slice, from 0 to the max
       </p>
+      {okIdx && <p className="small muted" style={{ margin: '4px 0' }}>Over the {fmtNum(okIdx.length)} attempts that succeeded, as the stage's median and skew are; the {fmtNum((c.cols.task_ms ?? []).length - okIdx.length)} failed attempts are not typical tasks and are counted under Failed tasks.</p>}
       <ModePills mode={mode} setMode={setMode} extra={allRowsLink ? <Link className="btn small ghost" to={allRowsLink}>All {fmtNum(n)} rows</Link> : null} />
       <div className="table-wrap">
         <table className="table compact ts-table">
           <MetricHead first={`Measure · ${what}`} />
-          <tbody><MetricRows c={c} idx={null} mode={mode} scaleOf={scale} hideEmpty={false} waits={waits} /></tbody>
+          <tbody><MetricRows c={c} idx={okIdx} mode={mode} scaleOf={scale} hideEmpty={false} waits={waits} /></tbody>
         </table>
       </div>
       <Histogram c={c} />

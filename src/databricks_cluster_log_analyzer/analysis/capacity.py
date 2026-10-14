@@ -228,7 +228,9 @@ def hog_findings(cid: str, stages: list[dict], executors: list[dict], runs: list
                f"ran, among them run {_run_name(most)}.")
     f = _f(cid, st.get("spark_context_id"), "high", "core_hog", f"stage {st['stage_id']} (all {cores} cores)", ev, a,
            stage_id=st["stage_id"], stage_attempt=st.get("stage_attempt"), spark_job_id=st.get("spark_job_id"),
-           sql_execution_id=st.get("sql_execution_id"), run_key=st.get("run_key"))
+           sql_execution_id=st.get("sql_execution_id"), run_key=st.get("run_key"),
+           # on the pages of the runs that queued behind it too: their wait has this cause
+           also_runs=[r["run_key"] for r in behind] or None)
     f["fix"] = CORE_HOG_FIX + (CORE_HOG_JDBC_FIX if jdbc else "") + "."
     return [f]
 
@@ -271,9 +273,14 @@ def capacity_findings(cid: str, tdf: pd.DataFrame, stages: list[dict], executors
     # ---- under FIFO, one stage that held every core: on its run, whose waves were not "normal for a big job"
     hogs = hog_findings(cid, stages, executors, runs, settings)
     for h in hogs:
+        behind = set(h.get("also_runs") or [])
         for f in out:
             if f["category"] == "capacity_bound" and f.get("run_key") == h.get("run_key"):
                 f["fix"] = h["fix"]
+            elif f["category"] == "capacity_bound" and f.get("run_key") in behind:
+                f["fix"] = (f"While it queued, stage {h['stage_id']} of another run held every core under FIFO: give each "
+                            "run its own FAIR pool (spark.scheduler.mode FAIR, spark.scheduler.pool per run) first; more "
+                            "workers do not change who gets the cores. " + f["fix"])
     out += hogs
 
     # ---- per Spark context: autoscaling ----------------------------------------------------------------------

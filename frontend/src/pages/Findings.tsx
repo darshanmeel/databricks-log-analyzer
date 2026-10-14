@@ -335,6 +335,7 @@ function ProblemView({ cid, p, focus, big }: { cid: string; p: Problem; focus: s
     spark_job_id: f.spark_job_id ?? i.spark_job_id,
     sql_execution_id: f.sql_execution_id ?? i.sql_execution_id,
     executor_id: f.executor_id ?? i.executor_id,
+    run_key: (f as { run_key?: string | null }).run_key ?? i.run_key ?? null,
     finding_id: null,
   });
   // the log line and error links of the merged findings too: the evidence behind the conclusion
@@ -451,6 +452,7 @@ function AllFindings({ cid, rows: all, total, focus }: { cid: string; rows: Join
                 spark_job_id: f.spark_job_id ?? i?.spark_job_id ?? null,
                 sql_execution_id: f.sql_execution_id ?? i?.sql_execution_id ?? null,
                 executor_id: f.executor_id ?? i?.executor_id ?? null,
+                run_key: (f as { run_key?: string | null }).run_key ?? i?.run_key ?? null,
                 finding_id: null,
               });
               return (

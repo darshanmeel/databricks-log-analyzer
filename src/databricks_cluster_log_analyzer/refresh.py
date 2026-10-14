@@ -134,6 +134,32 @@ def _resignal(path: Path, rules: Rules) -> list[dict]:
     return rows
 
 
+IO_SUMS = ("input_bytes", "input_records", "output_bytes", "output_records")
+
+
+def _resum_io(rows: list[dict], stages: list[dict], key) -> int:
+    """In place: the data read and written of each query or run as the sum of its restaged stages (attempts that
+    succeeded only: a failed attempt's rows were read again by its retry). Returns how many rows changed."""
+    tot: dict = {}
+    for st in stages:
+        k = key(st)
+        if k is None:
+            continue
+        t = tot.setdefault(k, dict.fromkeys(IO_SUMS, 0))
+        for c in IO_SUMS:
+            t[c] += int(st.get(c) or 0)
+    n = 0
+    for r in rows:
+        t = tot.get(key(r))
+        if not t:
+            continue
+        new = {c: t[c] for c in IO_SUMS if c in r and r.get(c) is not None and t[c] != r.get(c)}
+        if new:
+            r.update(new)
+            n += 1
+    return n
+
+
 def _refresh_user_frames(path: Path, rules: Rules) -> list[dict]:
     """"Where to fix" again with the current framework prefixes (JDBC drivers and tooling are not the user's code)."""
     from .parsing.loglines import is_framework_frame
@@ -204,6 +230,9 @@ def refresh_findings(out_dir: str | os.PathLike, rules: Rules) -> dict:
     mark_replanned(jobs, stages, rules)
     restage(stages, _ms_frame(tdf) if tdf is not None else pd.DataFrame())  # times in ms, as the pipeline has them
     read_split(queries, stages, _rows(d / "sql_plan_nodes.parquet", ["spark_context_id", "sql_execution_id", "metrics_json"]))
+    qk = (lambda x: (x.get("spark_context_id"), x.get("sql_execution_id")) if x.get("sql_execution_id") is not None else None)
+    _resum_io(queries, stages, qk)
+    _resum_io(runs, stages, lambda x: x.get("run_key"))
 
     # ---- findings that need runs, and the workload findings -----------------------------------------------------------
     # the MERGE finding reads deletion vectors and CDF from the plans (the queries are read whole, plans included) and
@@ -244,6 +273,7 @@ def refresh_findings(out_dir: str | os.PathLike, rules: Rules) -> dict:
     if (d / "query_profile.parquet").exists():
         qp = _rows(d / "query_profile.parquet")
         recount_queries(qp, allf)
+        _resum_io(qp, stages, qk)
         write_parquet(qp, d / "query_profile.parquet", "query_profile")
 
     # ---- incidents with the later findings in them, and the per-minute task numbers spread over each task's run --
