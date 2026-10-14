@@ -124,7 +124,7 @@ function AdviceBody({ cid, v }: { cid: string; v: SettingsView }) {
   return (
     <Panel
       title="What to change"
-      note="Outliers in this cluster's data, the evidence, and the setting that decides it. Highest impact first."
+      note="Outliers in this cluster's data, the evidence, and the setting that decides it. Root causes first, then by time lost."
     >
       <div className="stack" style={{ gap: 10 }}>
         {v.advice.length ? (

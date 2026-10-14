@@ -109,6 +109,18 @@ function SearchView() {
   );
   const active = FILTERS.some((k) => f[k]) || tsFrom || tsTo || q;
 
+  // the raw lines were not kept in this copy: say so, without a filter form over nothing
+  if (st.error && /not built|not available/.test(st.error.message))
+    return (
+      <div className="page">
+        <div className="panel"><Empty title="The raw log lines are not in this copy">
+          This output was copied or built without the full driver and executor lines, so they cannot be searched here. The
+          errors, exceptions and log signals found in them are still on Problems and in the timelines. Analyze the raw logs
+          again to search every line.
+        </Empty></div>
+      </div>
+    );
+
   return (
     <div className="page wide">
       <div className="page-head">

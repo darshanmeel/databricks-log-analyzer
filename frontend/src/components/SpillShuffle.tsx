@@ -6,6 +6,7 @@ import { fmtBytes, fmtNum, fmtTime, fmtTs, tickLabel, timeTicks, truncate } from
 import { METRIC_META, type MeterKey } from '../graph/model';
 import { useAsync, useWidth } from '../hooks';
 import { to } from '../links';
+import { useRunScopeCtx } from './Shell';
 import { DataLink } from './ui';
 
 /** Lanes: one per executor, per stage attempt, or per executor × stage attempt ('both'). */
@@ -243,6 +244,7 @@ function peakKind(metric: MeterKey) {
 function Lanes({ cid, ctx, d, by, metric, width, peaks }: { cid: string; ctx: string | null; d: SsData; by: SsBy; metric: MeterKey; width: number; peaks: Hotspot[] }) {
   const nav = useNavigate();
   const [sel, setSel] = useState<Hotspot | null>(null);
+  const scopeRun = useRunScopeCtx().run;
   const myPeaks = peaks.filter((h) => h.kind === peakKind(metric) && h.ts_start !== null);
   const plotW = Math.max(120, width - LABEL_W - 8);
   const { lanes, totals, t0, t1, step } = useLanes(d, by, Math.floor(plotW / 6));
@@ -263,7 +265,7 @@ function Lanes({ cid, ctx, d, by, metric, width, peaks }: { cid: string; ctx: st
   if (!d.buckets.length || !withData.length)
     return (
       <p className="ink2">
-        No {METRIC_META[metric].label.toLowerCase()} in this Spark context.{' '}
+        No {METRIC_META[metric].label.toLowerCase()} {scopeRun ? "by this run's tasks" : 'in this Spark context'}.{' '}
         {metric.endsWith('spill') ? 'Every task fit in memory.' : 'No stage exchanged data between executors.'}
       </p>
     );

@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import Body, FastAPI, HTTPException, Query, Request
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 
@@ -119,6 +120,8 @@ def create_app(output_root: Path, cache_root: Path, *, frontend_dist: Optional[P
     app.state.cache_root = cache_root
     app.state.store = store
 
+    # JSON compresses ~10x: the run list, task columns and timelines are MBs uncompressed
+    app.add_middleware(GZipMiddleware, minimum_size=1024)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=DEV_ORIGINS,

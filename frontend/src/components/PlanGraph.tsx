@@ -208,7 +208,14 @@ export function PlanGraph({ cid, ctx, id }: { cid: string; ctx: string; id: stri
   const [sel, setSel] = useState<number | null>(null);
   const [hiSeg, setHiSeg] = useState<number | null>(null);
   const [anyway, setAnyway] = useState(false);
-  const rows = st.data?.rows ?? null;
+  // a scan's "metadata time" runs from the stage's submission to its first task: on a full cluster that is the wait for
+  // a core, not work. Left out of the operator's time (it stays in its metrics list)
+  const rows = useMemo(() => (st.data?.rows ?? null)?.map((r) => {
+    if (!r.time_ms || !r.metrics_json || !/metadata time/i.test(r.metrics_json)) return r;
+    const ms: Metric[] = JSON.parse(r.metrics_json);
+    const meta = ms.filter((m) => /metadata time/i.test(m.name)).reduce((a, m) => a + (m.total_ms ?? m.total ?? 0), 0);
+    return { ...r, time_ms: Math.max(0, r.time_ms - meta) || null };
+  }) ?? null, [st.data]);
 
   const g = useMemo(() => (rows && rows.length > 1 ? layout(rows) : null), [rows]);
   const parts = useMemo(() => (rows && rows.length > 1 ? stageSegments(rows, sst.data?.stages ?? []) : null), [rows, sst.data]);

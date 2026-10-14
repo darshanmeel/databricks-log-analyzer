@@ -545,6 +545,7 @@ const CAUSE: Record<string, { label: string; sev: 'high' | 'medium' | 'low'; fix
   gc: { label: 'GC pressure', sev: 'medium', fix: 'The task spent much of its time in garbage collection: give executors more memory per core, or reduce cached and broadcast data.' },
   gc_stuck: { label: 'Stuck in GC', sev: 'high', fix: 'Not skew: the executor heap stayed full after every collection, so its tasks hung. Its retries on other executors were quick. Cache or broadcast less, or use bigger executors; salting keys will not help.' },
   lost: { label: 'Lost with executor', sev: 'medium', fix: 'No metrics: the task was lost when its executor went away. See why the executor was removed.' },
+  source_db: { label: 'Source database slow', sev: 'high', fix: 'A normal share of rows, but the database took that long to send them (a slow query, locks, or the network); retries after a lost connection start the read over. Check the source query and its indexes, read in more, smaller ranges (partitionColumn with lowerBound / upperBound, or predicates), and set a connection timeout so a dead connection fails fast.' },
   unknown: { label: 'Cause unclear', sev: 'low', fix: 'Input size and GC look normal. Look at the task in the timeline and its executor logs around that time.' },
 };
 
@@ -596,7 +597,7 @@ function StageVerdict({ s, d, execs }: { s: StageRow; d: StageDetail; execs: Exe
     const slow = d.task_durations.filter((x) => x >= Math.max(t.p50! * TH.skewRatio, TH.skewMinTaskMs)).length;
     const top = execs[0];
     const cause = d.hotspots?.[0]?.cause;
-    const why = cause === 'data_skew' ? 'they read far more data (data skew)' : cause === 'slow_executor' ? 'their executor was slow' : cause === 'gc' ? 'garbage collection' : cause === 'gc_stuck' ? 'their executor was stuck in GC' : null;
+    const why = cause === 'data_skew' ? 'they read far more data (data skew)' : cause === 'source_db' ? 'the source database was slow to send their rows' : cause === 'slow_executor' ? 'their executor was slow' : cause === 'gc' ? 'garbage collection' : cause === 'gc_stuck' ? 'their executor was stuck in GC' : null;
     cards.push({
       tone: 'bad', title: 'A few tasks held it up', big: fmtSkew(s.skew), unit: 'slowest ÷ median',
       chart: <Bars rows={[['median', t.p50, false], ['p90', t.p90 ?? null, false], ['slowest', t.max, true]]} fmt={fmtDuration} />,

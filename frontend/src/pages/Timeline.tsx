@@ -503,7 +503,11 @@ function GanttCanvas({ g, width, onOpenStage, zoomTo }: { g: Gantt; width: numbe
         ctx.globalAlpha = 1;
       }
       if (lane.kind === 'exec') {
-        const ends = lane.markers.filter((m) => END_WORD[m.kind]);
+        // how it left: only a mark after it started, and for a still-running executor only out of memory (a "lost" log
+        // line at its start is about an executor before it, not this one)
+        const added = lane.exec?.added ?? null, removed = lane.exec?.removed ?? null;
+        const ends = lane.markers.filter((m) => END_WORD[m.kind] && (added === null || m.ts > added + 5_000)
+          && (removed !== null || m.kind === 'oom'));
         const last = ends.length ? ends.reduce((a, b) => (b.ts > a.ts ? b : a)) : null;
         if (last) {
           const x = xOf(last.ts);

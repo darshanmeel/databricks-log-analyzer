@@ -65,16 +65,37 @@ const unreachable = () =>
   `Cannot reach the analyzer at ${window.location.host}: it has stopped. Start it again with \`dbx-log-analyzer ui\` ` +
   `(the same --output and --port ${window.location.port || '80'}), then Try again. Why it stopped: .dbx_ui.log in the --output folder.`;
 
+/** GETs in flight, by URL: two parts of a page asking for the same thing share one request. */
+const inflight = new Map<string, Promise<unknown>>();
+
 async function get<T>(path: string, params?: Params, signal?: AbortSignal): Promise<T> {
-  let res: Response;
   if (runScope && RUN_AWARE.test(path) && !(params && 'run' in params)) params = { ...(params ?? {}), run: runScope };
-  try {
-    res = await fetch(`/api${path}${qs(params)}`, { signal });
-  } catch (e) {
-    if ((e as Error).name === 'AbortError') throw e;
-    throw new ApiError(0, unreachable());
+  const url = `/api${path}${qs(params)}`;
+  let p = inflight.get(url) as Promise<T> | undefined;
+  if (!p) {
+    p = (async () => {
+      let res: Response;
+      try {
+        res = await fetch(url);
+      } catch {
+        throw new ApiError(0, unreachable());
+      }
+      return parse<T>(res);
+    })();
+    inflight.set(url, p);
+    const done = () => { if (inflight.get(url) === p) inflight.delete(url); };
+    p.then(done, done);
   }
-  return parse<T>(res);
+  // each caller can stop waiting (a page left) without cancelling the request the others wait for
+  const mine = p.then((d) => structuredClone(d));
+  if (!signal) return mine;
+  if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
+  return new Promise<T>((resolve, reject) => {
+    const stop = () => reject(new DOMException('Aborted', 'AbortError'));
+    signal.addEventListener('abort', stop, { once: true });
+    mine.then((d) => { signal.removeEventListener('abort', stop); resolve(d); },
+      (e) => { signal.removeEventListener('abort', stop); reject(e); });
+  });
 }
 
 async function post<T>(path: string, body: unknown): Promise<T> {
@@ -171,7 +192,7 @@ export interface Hotspot {
   stage_id: number | null; stage_attempt: number | null; spark_job_id: number | null; sql_execution_id: number | null;
   query_description: string | null; operator: string | null; task_id: number | null; task_index: number | null;
   executor_id: string | null; host: string | null; value: number | null; baseline: number | null; ratio: number | null;
-  share: number | null; cause: 'data_skew' | 'slow_executor' | 'gc' | 'gc_stuck' | 'lost' | 'unknown' | null; detail: string;
+  share: number | null; cause: 'data_skew' | 'source_db' | 'slow_executor' | 'gc' | 'gc_stuck' | 'lost' | 'unknown' | null; detail: string;
   run_key?: string | null; affected_runs?: string[] | null;
 }
 
@@ -852,6 +873,8 @@ export interface Advice {
   facts?: string[]; cause?: string | null; fixes?: string[];
   runs?: { run_key: string; label: string | null }[];
   queries?: { spark_context_id: string; sql_execution_id: number; run_key: string | null; label: string | null }[];
+  /** one stage held every core under the FIFO scheduler: the runs listed waited behind it */
+  fifo?: boolean;
 }
 export interface AdviceStage {
   spark_context_id: string; stage_id: number; stage_attempt: number; spark_job_id: number | null; sql_execution_id: number | null;

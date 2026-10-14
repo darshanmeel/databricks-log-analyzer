@@ -42,16 +42,20 @@ interface Props {
 export function ExecutorsAtTime({ cid, ctx, stageIds, start, end, title, onStage }: Props) {
   // every run's tasks around this window (a minute either side), so other runs' work on the same executors shows in grey
   const pad = 60_000;
+  // every task on the cluster in the window is a big download: only when asked for
+  const [open, setOpen] = useState(false);
   const st = useAsync(
     (s) => api.gantt(cid, ctx, 20000, s, start !== null && end !== null ? { start: start - pad, end: end + pad } : undefined),
-    [cid, ctx, start, end],
+    [cid, ctx, start, end], open,
   );
   return (
     <Panel
       title="What the executors were doing at the same time"
       note={`Every executor during ${title}: its tasks in blue (red when failed), and grey where the executor was busy with other jobs.`}
     >
-      {st.loading && !st.data ? (
+      {!open ? (
+        <button className="btn small ghost" onClick={() => setOpen(true)}>Show every executor's tasks in this window</button>
+      ) : st.loading && !st.data ? (
         <p className="muted small">Loading executor activity…</p>
       ) : !st.data || start === null || end === null ? (
         <p className="muted small">No task timing for this window.</p>

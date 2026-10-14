@@ -233,7 +233,12 @@ function useRunScope(cid: string, section: string) {
     setPicked(next ?? ALL_RUNS);
     // the executors page is always the cluster's: picking a run there opens that run
     if (next && runs.length > 1 && CLUSTER_PAGES.has(section)) nav(`/c/${encodeURIComponent(cid)}?run=${encodeURIComponent(next)}`);
-    else {
+    else if (next && next !== run) {
+      // another run: its own page of the same tab (Overview, Queries, Problems, Timeline), without the old run's
+      // query, stage or dataset in the URL; the raw-data and log views open the run's Overview
+      const keep = ['', 'hierarchy', 'findings', 'errors', 'timeline'].includes(section) ? loc.pathname : `/c/${encodeURIComponent(cid)}`;
+      nav(`${keep}?run=${encodeURIComponent(next)}`);
+    } else {
       // the pick goes into the URL, so a reload or a shared link shows the same run
       const q = new URLSearchParams(loc.search);
       if (next) q.set('run', next); else q.delete('run');

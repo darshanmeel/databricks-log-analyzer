@@ -10,6 +10,10 @@
                     (statements that run no tasks, Python, waiting), which more cores cannot shorten.
   tiny_task_stages  per Spark app: many stages cut almost no data into the same number of tasks (Delta's 50 log
                     partitions, a shuffle partition count set for big data), so task overhead is most of their time.
+  jdbc_one_partition per Spark app: JDBC reads that ran as one task (numPartitions=1) and took long: one connection
+                    reads the whole table while the other cores wait.
+  empty_input       per Spark app: queries whose plan found no input (an EmptyRelation): runs that queued, planned and
+                    committed with nothing to do.
 
 read_split() adds per query: storage_read (files), cache_read (a DataFrame cache) and the disk cache numbers.
 """
@@ -50,6 +54,14 @@ FIX = {
         "Give these stages fewer partitions: lower spark.sql.shuffle.partitions (or let adaptive execution coalesce "
         "them), or coalesce() small DataFrames before the action. Each task costs a few milliseconds of scheduling "
         "even when it has nothing to do."),
+    "jdbc_one_partition": (
+        "Read big JDBC sources in parallel: set partitionColumn (a numeric or date column), lowerBound, upperBound and "
+        "numPartitions (8 to 16 is a start; the database must take that many connections), or pass predicates with one "
+        "range each. A read without them is one task on one connection, however many cores the cluster has."),
+    "empty_input": (
+        "Check for new data before the heavy step (the source's row count or its latest commit version against the "
+        "last run's), and skip the MERGE or write when there is none: each empty run still waits for cores, plans, "
+        "and commits."),
     "disk_cache": (
         "The disk cache wrote far more than it served: this job reads each file about once. Turn it off for the job "
         "(spark.databricks.io.cache.enabled false) so the local disks keep their room for spill and shuffle."),
@@ -147,10 +159,11 @@ def read_split(queries: list[dict], stages: list[dict], plan_nodes: list[dict]) 
 
 def _spark_time(stages: list[dict] | None) -> dict[tuple, float]:
     """Per (ctx, query): the wall time with at least one of its stages running (the union of their spans). A query can
-    sit open for hours (a stream, a lock, the driver) while its Spark work takes a second."""
+    sit open for hours (a stream, a lock, the driver) while its Spark work takes a second. A stage counts from its first
+    task: from submission to that it was waiting for a core, not working."""
     spans: dict[tuple, list] = {}
     for s in stages or []:
-        a, z = to_ms(s.get("start_time")), to_ms(s.get("end_time"))
+        a, z = to_ms(s.get("first_task_time")) or to_ms(s.get("start_time")), to_ms(s.get("end_time"))
         if s.get("sql_execution_id") is not None and a is not None and z is not None and z > a:
             spans.setdefault((s["spark_context_id"], s["sql_execution_id"]), []).append((a, z))
     out = {}
@@ -322,7 +335,7 @@ def _max_alive(ex: list[dict]) -> int:
 
 
 CATEGORIES = ("dataframe_cache", "count_only", "ddl_loop", "disk_cache", "dedup_noop", "no_spark_work",
-              "tiny_task_stages")
+              "tiny_task_stages", "jdbc_one_partition", "empty_input")
 
 DELTA_LOG_FIX = (
     "These are Delta reading a table's transaction log (its state), split into spark.databricks.delta.snapshotPartitions "
@@ -410,6 +423,80 @@ def _no_spark(spans_q: list[dict], stage_iv: list[tuple[int, int]], up: list[tup
     return wall, none, in_q, top
 
 
+_ONE_PART_RE = re.compile(r"JDBCRelation\(.*\[numPartitions=1\]")
+JDBC_ONE_MIN_MS = 10 * 60_000
+EMPTY_MIN_MS = 10 * 60_000
+
+
+def plan_findings(cid: str, queries: list[dict], stages: list[dict], nodes: list[dict], runs: list[dict],
+                  rules: Rules) -> list[dict]:
+    """jdbc_one_partition and empty_input, from the operator trees (sql_plan_nodes)."""
+    out: list[dict] = []
+    one: set = set()
+    empty: set = set()
+    for n in nodes or []:
+        k = (n.get("spark_context_id"), n.get("sql_execution_id"))
+        name = n.get("name") or ""
+        if _ONE_PART_RE.search(name) or _ONE_PART_RE.search(n.get("detail") or ""):
+            one.add(k)
+        elif name == "EmptyRelation":
+            empty.add(k)
+    qby = {(q["spark_context_id"], q["sql_execution_id"]): q for q in queries}
+    labels = {r["run_key"]: _run_name(r) for r in runs}
+
+    # ---- one connection: the read's task time (a one-task stage that read rows and no bytes) ----------------------
+    took: dict = {}
+    for st in stages:
+        k = (st.get("spark_context_id"), st.get("sql_execution_id"))
+        if k in one and (st.get("input_records") or 0) > 0 and not st.get("input_bytes") and (st.get("num_tasks") or st.get("tasks")) == 1:
+            took[k] = max(took.get(k, 0), st.get("max_task_ms") or 0)
+    by_ctx: dict = {}
+    for k, ms in took.items():
+        by_ctx.setdefault(k[0], []).append((ms, k))
+    for ctx, xs in by_ctx.items():
+        xs.sort(reverse=True)
+        long_ = [x for x in xs if x[0] >= JDBC_ONE_MIN_MS]
+        if not long_:
+            continue
+        tot = sum(ms for ms, _ in long_)
+        top = ", ".join(f"query {k[1]} {fmt_words(ms)}" + (f" ({labels[qby[k]['run_key']]})" if qby.get(k, {}).get("run_key") in labels else "")
+                        for ms, k in long_[:3])
+        ms0, k0 = long_[0]
+        q0 = qby.get(k0, {})
+        out.append(_f(cid, ctx, "high" if ms0 >= 3_600_000 else "medium", "jdbc_one_partition",
+                      f"{len(long_)} JDBC {'read' if len(long_) == 1 else 'reads'} on one connection",
+                      f"{len(long_)} single-connection JDBC reads (numPartitions=1) took {fmt_words(tot)} in all, "
+                      f"{fmt_words(JDBC_ONE_MIN_MS)} or more each (of {len(xs)} such reads), one task each while the other "
+                      f"cores waited: {top}.",
+                      to_ms(q0.get("start_time")), sql_execution_id=k0[1], run_key=q0.get("run_key")))
+
+    # ---- nothing to do: queries whose plan found no input --------------------------------------------------------
+    per_ctx: dict = {}
+    for k in empty:
+        q = qby.get(k)
+        root = q.get("root_execution_id") if q else None
+        if not q or (root is not None and root != q["sql_execution_id"] and (k[0], root) in empty):
+            continue  # counted once, at its root
+        a, z = to_ms(q.get("start_time")), to_ms(q.get("end_time"))
+        if a is None or z is None:
+            continue
+        per_ctx.setdefault(k[0], []).append((z - a, q))
+    for ctx, xs in per_ctx.items():
+        tot = sum(ms for ms, _ in xs)
+        if tot < EMPTY_MIN_MS:
+            continue
+        xs.sort(key=lambda x: -x[0])
+        runs_hit = {q.get("run_key") for _, q in xs if q.get("run_key")}
+        top = ", ".join(f"query {q['sql_execution_id']} {fmt_words(ms)}" for ms, q in xs[:3])
+        out.append(_f(cid, ctx, "medium" if tot >= 3_600_000 else "low", "empty_input",
+                      f"{len(xs)} queries with no input",
+                      f"{len(xs)} queries in {len(runs_hit)} runs found no input (their plan became an empty relation): "
+                      f"{fmt_words(tot)} open in all, waiting for cores, planning and committing for nothing. Longest: {top}.",
+                      to_ms(xs[0][1].get("start_time")), sql_execution_id=xs[0][1]["sql_execution_id"],
+                      run_key=xs[0][1].get("run_key")))
+    return out
+
+
 def driver_findings(cid: str, apps: list[dict], runs: list[dict], queries: list[dict], stages: list[dict],
                     settings: list[dict], rules: Rules) -> list[dict]:
     """no_spark_work (per run, and per Spark app when no single run covers most of it) and tiny_task_stages."""
@@ -475,8 +562,9 @@ def driver_findings(cid: str, apps: list[dict], runs: list[dict], queries: list[
         if len(hs) > 1:
             same = sum(1 for x in runs if x.get("program") and x.get("program") == r.get("program"))
             lo_n, hi_n = min(h[0] for h in hs), max(h[0] for h in hs)
-            ev = (f"{len(hs)} of the {same} runs of {r.get('program')} spent {fmt_words(lo_n)} to {fmt_words(hi_n)} "
-                  f"with no Spark stage running. The longest: " + ev[0].lower() + ev[1:])
+            ev = (f"{len(hs)} of the {same} runs of {r.get('program')} spent {fmt_words(sum(h[0] for h in hs))} in all "
+                  f"with no Spark stage running ({fmt_words(lo_n)} to {fmt_words(hi_n)} each). The longest: "
+                  + ev[0].lower() + ev[1:])
         out.append(_f(cid, r["spark_context_id"], sev, "no_spark_work",
                       f"run {_run_name(r)}" + (f" and {len(hs) - 1} more like it" if len(hs) > 1 else ""),
                       ev, lo, run_key=r["run_key"]))

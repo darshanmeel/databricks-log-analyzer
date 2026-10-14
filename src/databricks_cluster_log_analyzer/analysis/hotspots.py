@@ -124,6 +124,15 @@ def _row_ratio(r, med_rows) -> float:
     return _rows_in(r) / max(med_rows, 1)
 
 
+def _db_failures(g) -> int:
+    """Failed attempts in a stage that lost their connection to a source database."""
+    if "error" not in g or "failed" not in g:
+        return 0
+    from .retries import SOURCE_DB_TEXT_RE
+    e = g.loc[g["failed"].fillna(False).astype(bool), "error"].dropna()
+    return int(sum(1 for x in e if SOURCE_DB_TEXT_RE.match(str(x))))
+
+
 def _skew_tasks(tdf, stage_info, query_info, rules: Rules, cid: str, stuck=frozenset()) -> list[dict]:
     out: list[dict] = []
     t = tdf[tdf["task_ms"].notna()]
@@ -132,7 +141,9 @@ def _skew_tasks(tdf, stage_info, query_info, rules: Rules, cid: str, stuck=froze
     slowness = _executor_slowness(tdf)
     for (ctx, sid, att), g in t.groupby(["spark_context_id", "stage_id", "stage_attempt"], dropna=False, sort=True):
         att = 0 if is_null(att) else int(att)
-        p50 = lower_median(g["task_ms"].tolist())
+        # the median of the successful attempts, as the stage's own (a failed attempt is not a typical task)
+        okg = g[~g["failed"].fillna(False).astype(bool)] if "failed" in g else g
+        p50 = lower_median((okg if not okg.empty else g)["task_ms"].tolist())
         if p50 is None:
             continue
         thr = max(rules.skew_ratio * max(p50, 1), rules.skew_min_task_ms)
@@ -180,6 +191,13 @@ def _skew_tasks(tdf, stage_info, query_info, rules: Rules, cid: str, stuck=froze
                 cause = "slow_executor"
                 why = (f"its data size was normal but executor {r['executor_id']} is {slow:.1f}× slower than other "
                        f"executors across stages, so the node itself is slow")
+            elif jdbc:
+                # a JDBC read with a normal share of the rows: the database took that long to send them
+                cause = "source_db"
+                why = (f"it read {_rows_in(r):,.0f} rows vs a {med_rows or 0:,.0f} median, a normal share, so the time "
+                       "went to the source database (a slow query, locks or the network), not to Spark"
+                       + (f"; {n_db} task attempts of this stage lost their database connection"
+                          if (n_db := _db_failures(g)) else ""))
             else:
                 cause = "unknown"
                 why = f"its input size was close to the median ({fmt_bytes(b)} vs {fmt_bytes(med_bytes)}), cause unclear"

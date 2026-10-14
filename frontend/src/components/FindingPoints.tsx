@@ -35,11 +35,13 @@ const CAUSE: Record<string, string> = {
   disk_cache: 'The Databricks disk cache copies files to local disk for later reads that never came.',
   dedup_noop: 'A window dedup (row_number per key) shuffled and sorted every row but removed none: the keys were already unique.',
   init_script: 'A cluster init script wrote errors when a node started.',
+  jdbc_one_partition: 'A JDBC read with no partition column runs as one task on one connection, however many cores there are.',
+  empty_input: 'Queries found no input, yet still waited for cores, planned and committed.',
 };
 const KIND: Record<string, string> = {
   merge_rewrite: 'code', data_skew: 'code', task_skew: 'code', tiny_tasks: 'code', exception: 'code', query_failed: 'code',
   waited_for_cores: 'cluster', cores_full: 'cluster', capacity_bound: 'cluster', autoscale_lag: 'cluster', autoscale_removed: 'cluster',
-  dataframe_cache: 'code', count_only: 'code', ddl_loop: 'code', init_script: 'cluster', executor_lost: 'cluster', executor_oom: 'cluster', oom_site: 'code',
+  dataframe_cache: 'code', count_only: 'code', ddl_loop: 'code', jdbc_one_partition: 'code', empty_input: 'code', init_script: 'cluster', executor_lost: 'cluster', executor_oom: 'cluster', oom_site: 'code',
 };
 const base = (c: string) => c.replace(/^log:/, '');
 

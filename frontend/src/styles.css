@@ -1824,3 +1824,6 @@ details.sub[open] > summary { margin-bottom: 4px; }
 .focus-toggle { grid-column: 1 / -1; justify-self: start; }
 .focus-layout.no-side { grid-template-columns: minmax(0, 1fr); }
 .focus-layout.no-side .focus-side { display: none; }
+
+/* run Overview: the change to make first, under the "why" points */
+.ro-first { margin: 10px 0 0; padding: 8px 10px; border-left: 3px solid var(--st-warn); background: var(--panel-2, transparent); border-radius: 4px; }

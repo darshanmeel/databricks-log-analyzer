@@ -1,7 +1,6 @@
 // Findings grouped into incidents (root cause -> effects), shared by the Findings page and the overviews' "What went
 // wrong" block.
 import type { FindingRow, IncidentRow } from './api';
-import { depthOf } from './components/FindingPoints';
 import { FAILURE_KINDS } from './problems';
 
 export type Joined = FindingRow & { inc: IncidentRow | null };
@@ -28,11 +27,10 @@ export function groupIncidents(rows: Joined[]): Incident[] {
     for (const p of inc.problems) for (const f of [p.lead, ...p.same]) inc.byFinding.set(f.finding_id, p);
     inc.problems.sort((a, b) => (a.ts ?? Infinity) - (b.ts ?? Infinity) || a.id.localeCompare(b.id));
   }
-  // failures first; then the plain problems (spill, big reads, slow work) before the GC and memory details that
-  // often explain them, then the log details
-  const fail = (i: Incident) => (i.problems.some((p) => FAILURE_KINDS.has(p.lead.inc!.kind)) ? 0 : 1);
-  const depth = (i: Incident) => Math.min(...i.problems.map((p) => depthOf(p.lead.category)));
-  return [...m.values()].sort((a, b) => fail(a) - fail(b) || depth(a) - depth(b) || a.head.incident_rank - b.head.incident_rank);
+  // what touched a run before what touched none (a tooling query that failed on its own); then the analyzer's rank:
+  // failures first, then by severity and how much they cost, so the numbers read I1, I2, … down the page
+  const noRun = (i: Incident) => (i.problems.some((p) => [p.lead, ...p.same].some((f) => (f as { run_key?: string | null }).run_key)) ? 0 : 1);
+  return [...m.values()].sort((a, b) => noRun(a) - noRun(b) || a.head.incident_rank - b.head.incident_rank);
 }
 
 

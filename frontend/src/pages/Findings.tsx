@@ -99,7 +99,7 @@ function Incidents({ cid, rows, focus }: { cid: string; rows: Joined[]; focus: s
       <IncidentStrip incs={incs} />
       <p className="muted small" style={{ margin: '0 0 12px' }}>
         {fmtNum(rows.length)} findings make {fmtNum(incs.length)} incident{incs.length !== 1 ? 's' : ''}
-        {failed.length ? `, ${failed.length} of them failures` : ''}. Failures first, then by severity. Links between problems are a best guess from shared
+        {failed.length ? `, ${failed.length} of them failures` : ''}. Failures first, then by severity; problems that touched no run last. Links between problems are a best guess from shared
         stages, executors and timing; each one says why it was made.
       </p>
       <div className="incidents">

@@ -186,7 +186,7 @@ function WhySlow({ cid, progs, waiting, took, running, peak, execs, cores, slow,
         {share >= 0.1 && <li><b>{fmtDuration(waiting)} waiting for a free core</b> <span className="muted">· added up over runs, {fmtPct(share, 0)} of their {fmtDuration(took)}</span></li>}
         {share >= 0.1 && <li>Up to <b>{fmtNum(peak)} runs at once</b> <span className="muted">on {cores ? `${fmtNum(cores)} cores (${fmtNum(execs)} ${execs === 1 ? 'executor' : 'executors'})` : `${fmtNum(execs)} ${execs === 1 ? 'executor' : 'executors'}`}{avg >= 1.05 ? `; ${avg.toFixed(1)} at once on average` : ''}</span></li>}
         {top && <li><b>{top.name}</b> {topShare >= 0.4 ? 'did most of the work' : 'did the most work'} <span className="muted">· {fmtDuration(top.running)} running tasks, added up over {fmtNum(top.runs.length)} runs{top.spill >= GB ? `, spilled ${fmtBytes(top.spill)}` : ''}</span></li>}
-        {worst && <li><b>{slow.length === 1 ? 'One run' : `${fmtNum(slow.length)} runs`} 2× usual or more</b>; worst <Link to={inRun(to.overview(cid), worst.run_key)}>{runName(worst)}</Link> <span className="muted">· {fmtDuration(worst.duration_ms)}, {usualX(worst)!.toFixed(1)}×</span></li>}
+        {worst && <li><b>{slow.length === 1 ? 'One run' : `${fmtNum(slow.length)} runs`} 2× usual or more</b> <span className="muted">(and a minute or more over)</span>; worst <Link to={inRun(to.overview(cid), worst.run_key)}>{runName(worst)}</Link> <span className="muted">· {fmtDuration(worst.duration_ms)}, {usualX(worst)!.toFixed(1)}×</span></li>}
         {!top && !worst && share < 0.1 ? <li>No run was slow: none waited long for cores, none took twice its usual time</li> : null}
       </ul>
       <div className="ro-links">
@@ -235,12 +235,16 @@ function HowEnded({ cid, runs, failed, retried, lost, compute, t1, onPick }: {
 
 /** Wall-clock time with at least one run going. */
 function busyClock(runs: RunRow[], t1: number) {
-  const iv = runs.filter((r) => r.start_time != null).map((r) => [r.start_time!, r.end_time ?? t1] as [number, number]).sort((a, b) => a[0] - b[0]);
+  // the catch-all "Outside any run" spans the app between the runs: only its own (merged job) time counts, and it
+  // overlaps no named run
+  const own = (r: RunRow) => String(r.label ?? '').startsWith('Outside any run');
+  const extra = runs.filter(own).reduce((a, r) => a + (r.duration_ms ?? 0), 0);
+  const iv = runs.filter((r) => r.start_time != null && !own(r)).map((r) => [r.start_time!, r.end_time ?? t1] as [number, number]).sort((a, b) => a[0] - b[0]);
   let busy = 0, s = 0, e = -Infinity;
   for (const [a, b] of iv) {
     if (a > e) { if (e > s) busy += e - s; s = a; e = b; } else e = Math.max(e, b);
   }
-  return e > s ? busy + e - s : busy;
+  return (e > s ? busy + e - s : busy) + extra;
 }
 
 /** Run time summed over runs against the cluster's own clock: runs overlap, so the sum can be days on a cluster up for hours. */
@@ -495,7 +499,7 @@ export function ChangeList({ cid, rows, loading, runs, run }: { cid: string; row
       <div className="panel-head">
         <div>
           <h2>What to change {sv.loading ? null : <span className="ro-count">{advice.length}</span>}</h2>
-          <div className="note">Highest impact first{run ? ', for what this run is part of' : ''}. Click one to open what the data shows{run ? '' : ' across all runs'}, the likely cause, the fix and the problems behind it.</div>
+          <div className="note">Root causes first, then by time lost{run ? ', for what this run is part of' : ''}. Click one to open what the data shows{run ? '' : ' across all runs'}, the likely cause, the fix and the problems behind it.</div>
         </div>
         {loading ? null : run ? <a className="btn small" href="#ro-problems">All {fmtNum(rows.length)} problems ↓</a> : null}
       </div>

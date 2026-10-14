@@ -21,7 +21,7 @@ from .analysis.runs import attach_run_keys, default_run, runs_note
 from .analysis.capacity import capacity_findings, core_use
 from .analysis.contention import add_findings, contention_findings, first_tasks, recount_queries
 from .analysis.initscripts import init_scripts, reader
-from .analysis.workload import driver_findings, read_split, workload_findings
+from .analysis.workload import driver_findings, read_split, workload_findings, plan_findings
 from .analysis.findings import build_findings_rows, build_timeline, demote_orphan_failures, gc_stuck, summarize_errors, task_oom_rows
 from .analysis.coverage import coverage
 from .analysis.incidents import build_incidents
@@ -235,7 +235,8 @@ def build(cluster_dir: str | os.PathLike, output_root: str | os.PathLike, *, clu
     gaps = [(c["from"], c["to"]) for c in cov if c["kind"] == "event_log_gap"]
     later = (capacity_findings(cid, tdf, stages, executors, runs, ds["cluster_info"], log_signals, rules)
              + workload_findings(cid, queries, runs, executors, log_signals, ds["event_counts"], rules, stages)
-             + driver_findings(cid, apps, runs, queries, stages, ds["settings"], rules))
+             + driver_findings(cid, apps, runs, queries, stages, ds["settings"], rules)
+             + plan_findings(cid, queries, stages, ds["sql_plan_nodes"], runs, rules))
     # an autoscaling delay measured across missing event-log files is not a delay: the executors came in the gap
     # nor when executors ran tasks whose start is not in the event log: "no executor", "0 cores" would be false
     no_start = any(c["kind"] == "executors_no_start" for c in cov)

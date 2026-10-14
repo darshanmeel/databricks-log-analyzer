@@ -28,12 +28,12 @@ from .analysis.aggregate import mark_replanned, restage
 from .analysis.capacity import CATEGORIES as CAPACITY_CATEGORIES, capacity_findings
 from .analysis.combined import spill_shuffle_timeline
 from .analysis.incidents import build_incidents
-from .analysis.runs import set_typical
+from .analysis.runs import default_run, inherit_run_keys, runs_note, set_typical, widen_runs
 from .analysis.contention import CATEGORIES, add_findings, contention_findings, first_tasks, recount_queries, to_ms
 from .analysis.diagnosis import build_summary
 from .analysis.findings import (_real_losses, _signal_findings, calibrate, confirmed_signals, demote_orphan_failures,
                                 recheck_gc, summarize_errors, summarize_signals)
-from .analysis.workload import CATEGORIES as WORKLOAD_CATEGORIES, driver_findings, read_split, workload_findings
+from .analysis.workload import CATEGORIES as WORKLOAD_CATEGORIES, driver_findings, plan_findings, read_split, workload_findings
 from .config import Rules
 from .parsing.eventlog import _BENIGN_KILL
 from .store import write_parquet
@@ -113,6 +113,43 @@ def _reclassify_retries(path: Path, findings: list[dict]) -> list[dict]:
     return rows
 
 
+def _refresh_user_frames(path: Path, rules: Rules) -> list[dict]:
+    """"Where to fix" again with the current framework prefixes (JDBC drivers and tooling are not the user's code)."""
+    from .parsing.loglines import is_framework_frame
+
+    rows = _rows(path)
+    pre = rules.framework_frame_prefixes
+    changed = False
+    for r in rows:
+        uf = r.get("user_frame")
+        if uf and is_framework_frame(uf, pre):
+            r["user_frame"] = next((f for f in (r.get("top_frames") or []) if f and not is_framework_frame(f, pre)), None)
+            changed = True
+    if changed:
+        write_parquet(rows, path, "log_errors")
+    return rows
+
+
+def _refresh_skew_tasks(d: Path, tms: pd.DataFrame | None, stages: list[dict], queries: list[dict], rules: Rules,
+                        cid: str) -> None:
+    """The slow-task hotspots again (their cause: a slow source database is now told from an unclear one)."""
+    from .analysis.hotspots import _context, _skew_tasks
+
+    path = d / "hotspots.parquet"
+    if tms is None or tms.empty or not path.exists():
+        return
+    old = _rows(path)
+    stuck = {(h["spark_context_id"], h["executor_id"]) for h in old if h.get("cause") == "gc_stuck"}
+    stage_info, query_info = _context(stages, queries)
+    new = _skew_tasks(tms, stage_info, query_info, rules, cid, frozenset(stuck))
+    for h in new:
+        st = stage_info.get((h["spark_context_id"], h["stage_id"], h["stage_attempt"])) or {}
+        h["run_key"] = st.get("run_key")
+        h["affected_runs"] = [h["run_key"]] if h["run_key"] else None
+    keep = [h for h in old if h.get("kind") != "skew_task"]
+    write_parquet(new + keep, path, "hotspots")
+
+
 def refresh_findings(out_dir: str | os.PathLike, rules: Rules) -> dict:
     """`out_dir` is <output>/<cluster_id>. Returns {"added": n, "by_category": {...}}."""
     d = Path(out_dir)
@@ -121,18 +158,29 @@ def refresh_findings(out_dir: str | os.PathLike, rules: Rules) -> dict:
     jobs = _rows(d / "spark_jobs.parquet")
     tasks = _rows(d / "tasks.parquet", ["spark_context_id", "stage_id", "stage_attempt", "launch_time"])
     runs = _rows(d / "runs.parquet")
-    # "usual" from runs on the same subject (one notebook over 30 tables is not the same work 30 times)
-    set_typical(runs)
     executors = _rows(d / "executors.parquet")
     queries = _rows(d / "sql_queries.parquet")
+    # Revision 22: job-less queries take the run they ran in; a run starts at its first query, not its first job
+    if inherit_run_keys(queries):
+        failed = {q["run_key"] for q in queries if q.get("run_key") and q.get("status") == "failed"}
+        for r in runs:
+            if r["run_key"] in failed:
+                r["status"] = "failed"  # as the pipeline has it: a run whose query failed failed
+    widen_runs(runs, queries)
+    # "usual" from runs on the same subject (one notebook over 30 tables is not the same work 30 times)
+    set_typical(runs)
     info = _rows(d / "cluster_info.parquet")
     findings = _rows(d / "findings.parquet")
+    qkey = {(q["spark_context_id"], q["sql_execution_id"]): q["run_key"] for q in queries if q.get("run_key")}
+    for f in findings:
+        if not f.get("run_key") and f.get("sql_execution_id") is not None:
+            f["run_key"] = qkey.get((f.get("spark_context_id"), int(f["sql_execution_id"])))
     signals = _rows(d / "log_signals.parquet")
 
     # ---- what the tasks say: failures, then the stage columns built from them -------------------------------------
     tdf = _unflag_replanned_kills(d / "tasks.parquet")
     mark_replanned(jobs, stages, rules)
-    restage(stages, tdf if tdf is not None else pd.DataFrame())
+    restage(stages, _ms_frame(tdf) if tdf is not None else pd.DataFrame())  # times in ms, as the pipeline has them
     read_split(queries, stages, _rows(d / "sql_plan_nodes.parquet", ["spark_context_id", "sql_execution_id", "metrics_json"]))
 
     # ---- findings that need runs, and the workload findings -----------------------------------------------------------
@@ -142,12 +190,15 @@ def refresh_findings(out_dir: str | os.PathLike, rules: Rules) -> dict:
     nodes = [n for n in _rows(d / "sql_plan_nodes.parquet", ["spark_context_id", "sql_execution_id", "name", "metrics_json"])
              if (n["spark_context_id"], n["sql_execution_id"]) in merges and "Scan" in (n.get("name") or "")] if merges else []
     tms = _ms_frame(tdf)
+    _refresh_skew_tasks(d, tms, stages, queries, rules, cid)
     new = capacity_findings(cid, tms, stages, executors, runs, info, signals, rules) if tms is not None else []
     bound = {f["run_key"] for f in new if f["category"] == "capacity_bound"}
     new += [f for f in contention_findings(cid, stages, first_tasks(tasks), runs, executors, queries, info, rules, nodes)
             if not (f["category"] == "waited_for_cores" and f.get("run_key") in bound)]
     new += workload_findings(cid, queries, runs, executors, signals, _rows(d / "event_counts.parquet"), rules, stages)
     new += driver_findings(cid, _rows(d / "apps.parquet"), runs, queries, stages, _rows(d / "settings.parquet"), rules)
+    new += plan_findings(cid, queries, stages, _rows(d / "sql_plan_nodes.parquet",
+                                                     ["spark_context_id", "sql_execution_id", "name", "detail"]), runs, rules)
     recheck_gc(findings, stages, rules)
     # the log signal findings again, without the lines the event log does not back (a fetch failure no task had, an
     # executor lost as the cluster stopped)
@@ -166,7 +217,7 @@ def refresh_findings(out_dir: str | os.PathLike, rules: Rules) -> dict:
         write_parquet(qp, d / "query_profile.parquet", "query_profile")
 
     # ---- incidents with the later findings in them, and the per-minute task numbers spread over each task's run --
-    log_errors = _rows(d / "log_errors.parquet")
+    log_errors = _refresh_user_frames(d / "log_errors.parquet", rules)
     if (d / "incidents.parquet").exists():
         incidents = build_incidents(cid, allf, stages, executors, jobs, queries, signals, log_errors, tms,
                                     _rows(d / "task_retries.parquet"), _rows(d / "apps.parquet"))
@@ -202,6 +253,14 @@ def refresh_findings(out_dir: str | os.PathLike, rules: Rules) -> dict:
         }, rules)
         for k in ("status", "diagnosis", "findings_by_severity", "retries", "analyzer_revision"):
             s[k] = fresh[k]
+        if isinstance(s.get("runs"), dict) and runs:
+            s["runs"].update({"count": len(runs), "default_run": default_run(runs), "note": runs_note(runs)})
+        # the row counts the Raw data list shows, for the datasets rewritten here
+        rows_ = s.setdefault("rows", {})
+        for name in ("findings", "incidents", "runs", "stages", "spark_jobs", "sql_queries", "spill_shuffle_timeline",
+                     "query_profile", "task_retries"):
+            if (d / f"{name}.parquet").exists():
+                rows_[name] = pq.read_metadata(d / f"{name}.parquet").num_rows
         s["refreshed_at"] = fresh["built_at"]
         tmp = d / "summary.json.tmp"
         tmp.write_text(json.dumps(s, indent=2, default=str), "utf-8")

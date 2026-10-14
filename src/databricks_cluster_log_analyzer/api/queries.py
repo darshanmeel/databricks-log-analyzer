@@ -587,9 +587,15 @@ def read_summary(store: Store, cid: str) -> dict[str, Any]:
     if not p.is_file():
         raise NotFound(f"summary.json not found for cluster {cid!r}")
     try:
-        return clean(json.loads(p.read_text(encoding="utf-8")))
+        s = json.loads(p.read_text(encoding="utf-8"))
     except json.JSONDecodeError as e:
         raise ApiError(f"summary.json of {cid!r} is not valid JSON: {e}") from e
+    # a dataset left out of a copy (the raw log lines, say) has no rows to offer, whatever the build counted
+    if isinstance(s.get("rows"), dict):
+        for name in list(s["rows"]):
+            if not (d / f"{name}.parquet").exists() and not (d / name).is_dir():
+                s["rows"][name] = None
+    return clean(s)
 
 
 _CLUSTER_KEYS = (
@@ -1264,14 +1270,20 @@ def stage_detail(store: Store, cid: str, ctx: str, stage_id: int, attempt: int) 
             src = store.src(tpath)
             task_columns = _task_column_stats(con, src, store.schema(con, tpath), key_where, key_params)
             qs = ", ".join(str(q) for _, q in _QUANTILES)
+            # task times from the successful attempts, as the stage's own median and skew are (a failed attempt killed
+            # with its executor is not a slow task); a stage with no success keeps them all
+            ok = con.execute(f"SELECT count(*) FILTER (WHERE NOT coalesce(failed, false)) FROM {src} WHERE {key_where}",
+                             key_params).fetchone()[0]
+            okw = f"{key_where} AND NOT coalesce(failed, false)" if ok else key_where
             row = con.execute(
-                f"SELECT count(task_ms), count(*) FILTER (WHERE failed), min(task_ms), max(task_ms), avg(task_ms), "
-                f"quantile_disc(task_ms, [{qs}]) FROM {src} WHERE {key_where}",
-                key_params,
+                f"SELECT count(task_ms), (SELECT count(*) FROM {src} WHERE {key_where} AND failed), min(task_ms), "
+                f"max(task_ms), avg(task_ms), quantile_disc(task_ms, [{qs}]), "
+                f"(SELECT count(task_ms) FROM {src} WHERE {key_where}) FROM {src} WHERE {okw}",
+                key_params + key_params + key_params,
             ).fetchone()
             n = int(row[0] or 0)
             tasks_summary.update(
-                {"count": n, "failed": int(row[1] or 0), "min": row[2], "max": row[3], "mean": row[4]}
+                {"count": int(row[6] or 0), "failed": int(row[1] or 0), "min": row[2], "max": row[3], "mean": row[4]}
             )
             if row[5] is not None:
                 for (k, _), v in zip(_QUANTILES, row[5]):
@@ -1283,7 +1295,7 @@ def stage_detail(store: Store, cid: str, ctx: str, stage_id: int, attempt: int) 
                     r[0]
                     for r in con.execute(
                         f"SELECT task_ms FROM (SELECT task_ms, row_number() OVER (ORDER BY task_ms, task_id) AS rn "
-                        f"FROM {src} WHERE {key_where} AND task_ms IS NOT NULL) "
+                        f"FROM {src} WHERE {okw} AND task_ms IS NOT NULL) "
                         f"WHERE (rn - 1) % {step} = 0 OR rn = {n} ORDER BY rn",
                         key_params,
                     ).fetchall()
@@ -2592,8 +2604,21 @@ BURST_MIN_RUNS = 5
 HOG_MS = 30 * 60_000  # a stage that held every core this long blocks every other run on a FIFO scheduler
 
 
+def _held_ms(s: dict) -> int:
+    """How long a stage held cores: its first task to its end (submission to the first task it waited for one)."""
+    a, z = _as_ms(s.get("first_task_time")) or _as_ms(s.get("start_time")), _as_ms(s.get("end_time"))
+    return z - a if a is not None and z is not None and z > a else 0
+
+
+def _waited(r: dict) -> int:
+    """A run's wait for a core (its own measure; the time more of its tasks queued is only for older outputs)."""
+    w = r.get("waiting_ms")
+    return int(w if w is not None else (r.get("queued_full_ms") or 0))
+
+
 def _core_hog(stages: list[dict], executors: list[dict]) -> tuple[dict, int] | None:
-    """The longest stage (HOG_MS or more) with more tasks than the most worker cores ever up at once, and those cores."""
+    """The stage that held cores longest (HOG_MS or more, from its first task) with more tasks than the most worker
+    cores ever up at once, and those cores."""
     ev = []
     for e in executors:
         if not is_worker(e, executors) or not e.get("cores"):
@@ -2605,8 +2630,9 @@ def _core_hog(stages: list[dict], executors: list[dict]) -> tuple[dict, int] | N
     for _, c in sorted(ev, key=lambda x: (x[0], x[1])):
         n += c
         most = max(most, n)
-    long_ = [s for s in stages if (s.get("duration_ms") or 0) >= HOG_MS and most and (s.get("tasks") or 0) > most]
-    return (max(long_, key=lambda s: s["duration_ms"]), most) if long_ else None
+    n_tasks = lambda s: s.get("num_tasks") or ((s.get("tasks") or 0) - (s.get("failed_tasks") or 0))
+    long_ = [s for s in stages if _held_ms(s) >= HOG_MS and most and n_tasks(s) > most]
+    return (max(long_, key=_held_ms), most) if long_ else None
 
 
 def _start_bursts(runs: list[dict]) -> list[dict]:
@@ -2766,6 +2792,9 @@ def settings_view(store: Store, cid: str) -> dict[str, Any]:
         cores = sorted(e["cores"] for e in view["executors"] if e.get("cores"))
         if hm and cores:
             heap = (hm[len(hm) // 2] * MB, cores[len(cores) // 2])
+        # the same figure as the Executors tab: the memory Spark reported for tasks and cache, per core
+        umem = sorted(e["unified_memory"] for e in view["executors"] if e.get("unified_memory"))
+        um = (umem[len(umem) // 2], heap[1]) if umem and heap else None
         try:
             frac = float(val("spark.memory.fraction") or 0.6)
         except ValueError:
@@ -2775,12 +2804,14 @@ def settings_view(store: Store, cid: str) -> dict[str, Any]:
         add("high" if spill >= 50 * GB else "medium", "spark.executor.memory", f"{_fmt_bytes(spill)} spilled to disk",
             [f"{_plural(len(spilled), 'stage')} spilled; most in "
              + ", ".join(f"stage {x['stage_id']} ({_fmt_bytes(x.get('disk_spill'))})" for x in worst),
-             (f"Each running task gets about {_fmt_bytes(heap[0] * frac / heap[1])} of memory "
-              f"({_fmt_bytes(heap[0])} heap × {frac} ÷ {heap[1]} cores)") if heap else None],
+             ((f"Each running task gets about {_fmt_bytes(um[0] / um[1])} of memory "
+               f"({_fmt_bytes(um[0])} for tasks + cache, as Spark reported it, ÷ {um[1]} cores)") if um else
+              (f"Each running task gets about {_fmt_bytes((heap[0] - 300 * MB) * frac / heap[1])} of memory "
+               f"(({_fmt_bytes(heap[0])} heap − 300 MiB) × {frac} ÷ {heap[1]} cores)") if heap else None)],
             "Tasks held more data than their share of executor memory, so they wrote the rest to local disk and read it back.",
             ["First make the tasks smaller: more shuffle partitions",
              "If the data per task is already small: a memory-optimised worker type, or fewer cores per executor"],
-            refs(spilled, lambda x: x.get("disk_spill")), cost_ms=sum(x.get("duration_ms") or 0 for x in worst))
+            refs(spilled, lambda x: x.get("disk_spill")), cost_ms=sum(_held_ms(x) for x in worst))
     # 4b. a DataFrame cache bigger than memory: the cause of the out-of-memory and GC findings it brings, so it goes
     # first, and the memory findings go under it (its key names memory)
     cache_adv = None
@@ -2874,7 +2905,7 @@ def settings_view(store: Store, cid: str) -> dict[str, Any]:
         # FIFO and one long stage with more tasks than the cluster has cores: it holds every core until it is done,
         # and every other run's stages queue behind it (more workers or fewer runs at once do not change that)
         # summed over runs that overlap it reads as days: about the clock time, divided by the runs going at once
-        queued = sum(r.get("waiting_ms") or r.get("queued_full_ms") or 0 for r in runs_) / _at_once(runs_)
+        queued = sum(_waited(r) for r in runs_) / _at_once(runs_)
         add(f["severity"], TAGS + "clusterWorkers", "The runs waited for cores more than they ran", facts, cause, fixes,
             runs=run_refs(x.get("run_key") for x in waited), cost_ms=queued)
     # FIFO and one long stage with more tasks than the cluster has cores: it holds every core until it is done, and
@@ -2882,29 +2913,32 @@ def settings_view(store: Store, cid: str) -> dict[str, Any]:
     hog = _core_hog(stages, view["executors"]) if len(runs_) > 1 else None
     if hog and (val("spark.scheduler.mode") or "FIFO").upper() == "FIFO":
         st_, cores_ = hog
-        a_, z_ = _as_ms(st_.get("start_time")), _as_ms(st_.get("end_time"))
+        held = _held_ms(st_)
+        z_ = _as_ms(st_.get("end_time"))
+        a_ = z_ - held if z_ is not None else None
+        n_ = st_.get("num_tasks") or ((st_.get("tasks") or 0) - (st_.get("failed_tasks") or 0))
         jdbc = not st_.get("input_bytes") and (st_.get("input_records") or 0) > 0
         behind = [r for r in runs_ if r.get("run_key") != st_.get("run_key") and a_ is not None and z_ is not None
                   and (r.get("start_time") or 0) < z_ and (r.get("end_time") or z_) > a_
-                  and (r.get("waiting_ms") or r.get("queued_full_ms") or 0) >= 60_000]
-        most = max(behind, key=lambda r: r.get("waiting_ms") or r.get("queued_full_ms") or 0, default=None)
+                  and _waited(r) >= 60_000]
+        most = max(behind, key=_waited, default=None)
         add("high", "spark.scheduler.mode",
-            f"One stage held all {cores_} cores for {_fmt_ms(st_['duration_ms'])} under FIFO",
+            f"One stage held all {cores_} cores for {_fmt_ms(held)} under FIFO",
             [f"Stage {st_['stage_id']} (query {st_.get('sql_execution_id')}"
              + (f", run {labels.get(st_.get('run_key'), st_.get('run_key'))}" if st_.get("run_key") else "")
-             + f") ran {st_.get('tasks'):,} tasks for {_fmt_ms(st_['duration_ms'])}"
+             + f") ran {n_:,} tasks for {_fmt_ms(held)}"
              + (" reading a database over JDBC" if jdbc else "") + f": more tasks than the {cores_} cores",
              "spark.scheduler.mode = FIFO: the first stage keeps every core it can use until it is done",
              (f"{_plural(len(behind), 'other run')} waited for cores while it ran, up to "
-              f"{_fmt_ms(most.get('waiting_ms') or most.get('queued_full_ms'))} ({labels.get(most['run_key'], most['run_key'])})")
+              f"{_fmt_ms(_waited(most))} ({labels.get(most['run_key'], most['run_key'])})")
              if most else None],
             "One long stage held every core: small jobs of other runs queued behind it, often to run for seconds after "
             "waiting for many minutes. More workers or fewer runs at once do not change that.",
             ["Give each run its own FAIR pool: spark.scheduler.mode FAIR and spark.scheduler.pool set per run, so the runs share the cores",
              "or run this stage on its own job cluster"
              + (", or read it in fewer JDBC partitions (numPartitions) so it leaves cores free" if jdbc else "")],
-            refs([st_], lambda x: x.get("duration_ms")), runs=run_refs(r["run_key"] for r in behind),
-            cost_ms=st_["duration_ms"])
+            refs([st_], _held_ms), runs=run_refs(r["run_key"] for r in behind),
+            cost_ms=held)
         advice[-1]["fifo"] = True
     merges = [x for x in newer if x["category"] == "merge_rewrite"]
     merge_info: dict[tuple, dict] = {}  # (ctx, query) -> merge_facts: one number per MERGE on every page
@@ -3029,6 +3063,9 @@ def settings_view(store: Store, cid: str) -> dict[str, Any]:
             ("no_spark_work", None, "The time went to the driver: statements that run no tasks, the code between "
                                     "them, or waiting outside Spark. More cores will not shorten it."),
             ("count_only", None, "Each count() runs the whole query again (over JDBC: reads the source table again)."),
+            ("jdbc_one_partition", None, "A JDBC read with no partition column is one task on one connection: the "
+                                         "other cores wait however many there are."),
+            ("empty_input", None, "The source had nothing new, but the run still waited for cores, planned and committed."),
             ("tiny_task_stages", "spark.databricks.delta.snapshotPartitions", "Many stages cut almost no data into the "
                                  "same number of tasks: scheduling the tasks costs more than their work.")):
         fs_ = sorted((x for x in newer if x["category"] == cat), key=lambda x: sev_rank(x["severity"]))
@@ -3041,7 +3078,9 @@ def settings_view(store: Store, cid: str) -> dict[str, Any]:
             sents + [f"and {len(fs_) - 1} more like it" if len(fs_) > 1 else None], cause,
             [s.strip() for s in re.split(r"(?<=\.)\s+", x.get("fix") or "") if s.strip()][:3],
             runs=run_refs(y.get("run_key") for y in fs_),
-            cost_ms=sum(_words_ms(y.get("evidence")) for y in fs_))
+            # summed over runs that overlap it reads as days: about the clock time, over the runs going at once
+            cost_ms=sum(_words_ms(y.get("evidence")) for y in fs_)
+            / (_at_once(runs_) if len(runs_) > 1 and cat in ("no_spark_work", "empty_input") else 1))
     # one concurrency item per cluster: the bursts and the sharing are the same story as "waited for cores"
     cores = next((a for a in advice if a["key"] == TAGS + "clusterWorkers"), None)
     if cores is not None:

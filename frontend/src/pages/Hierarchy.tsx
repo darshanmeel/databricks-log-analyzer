@@ -414,7 +414,7 @@ function UnitHeader({ u, cid }: { u: WorkUnit; cid: string }) {
           {STATUS_META[u.vstatus].glyph} {STATUS_META[u.vstatus].label}
         </span>
         <span className="small ink2">
-          {fmtDuration(u.duration_ms)} · {fmtNum(u.jobs.length)} {u.jobs.length === 1 ? 'job' : 'jobs'} · {fmtNum(u.stages.length)} stage attempts
+          {fmtDuration(u.duration_ms)} · {fmtNum(u.jobs.length)} {u.jobs.length === 1 ? 'job' : 'jobs'} · {u.stages.length === 1 ? '1 stage attempt' : `${fmtNum(u.stages.length)} stage attempts`}
           {failed ? (
             <>
               , <b className="bad">{fmtNum(failed)} failed</b>

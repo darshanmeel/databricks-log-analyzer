@@ -1,7 +1,7 @@
 // Interactive SVG for the Hierarchy graph: Flow (layered DAG per job) and Time (shared time axis).
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { fmtGrow, stageRows } from '../rows';
-import { fmtBytes, fmtDuration, fmtNum, fmtPct, fmtRows, fmtSkew, fmtTs, tickLabel, timeTicks, truncate } from '../format';
+import { fmtBytes, fmtDuration, fmtNum, fmtPct, fmtRows, fmtSkew, fmtTs, tickLabel, timeTicks, truncate, plural } from '../format';
 import { FLOW, flowLayout, QBOX_HEAD, TIME, timeLayout, type FlowAround, type FlowCtx, type FlowLayout, type FoldSide, type Rect, type TimeLayout } from './layout';
 import { METRIC_META, STATUS_META, typeLabel, type FilterKey, type GModel, type GNode } from './model';
 
@@ -80,7 +80,7 @@ function StageCard({ n, r, max, selected, dim, focusable, onKey }: { n: GNode; r
   const att = n.metrics?.attempts ?? 1;
   const tasks = n.metrics?.tasks;
   const failedTasks = n.metrics?.failed_tasks ?? 0;
-  const left = `${fmtDuration(n.duration_ms ?? (n.start && n.end ? n.end - n.start : null))} · ${fmtNum(tasks)} tasks`;
+  const left = `${fmtDuration(n.duration_ms ?? (n.start && n.end ? n.end - n.start : null))} · ${plural(tasks, 'task')}`;
   let flags = flagText(n);
   if (left.length + flags.length + (failedTasks ? 10 : 0) > 40) flags = [n.flagSet.has('skew') ? 'skew' : '', n.flagSet.has('gc') ? 'GC' : ''].filter(Boolean).join(' · ');
   const innerW = r.w - 24;

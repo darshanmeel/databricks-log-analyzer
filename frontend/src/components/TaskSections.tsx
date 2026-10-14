@@ -195,7 +195,7 @@ function AllTasks({ c, n, what, waits, allRowsLink }: { c: TaskColumns; n: numbe
   const scale = (k: MetricKey) => stats(valuesOf(c, k, mode, null))?.max ?? 0;
   return (
     <div className="ts-section">
-      <h3 className="ts-h"><span className="ts-num">1</span> All {fmtNum(n)} tasks{c.sampled ? <span className="muted small"> · statistics from {fmtNum(c.n)} of {fmtNum(c.total)} tasks (every failed one, the longest and an even sample)</span> : null}</h3>
+      <h3 className="ts-h"><span className="ts-num">1</span> {n === 1 ? 'Its one task' : `All ${fmtNum(n)} tasks`}{c.sampled ? <span className="muted small"> · statistics from {fmtNum(c.n)} of {fmtNum(c.total)} tasks (every failed one, the longest and an even sample)</span> : null}</h3>
       <p className="ts-legend small">
         <b>min</b> the smallest task · <b>p10</b> 10% of tasks are at or below this · <b>median</b> half are at or below this · <b>p90</b> 90% are at or below this, the last 10% are the tail · <b>max</b> the single largest task, with how many times the median it is · <b>distribution</b> how many tasks fall in each slice, from 0 to the max
       </p>

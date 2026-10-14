@@ -189,3 +189,7 @@ export function unitFor(kind: 'ms' | 'b', vals: (number | null | undefined)[], p
     f: (v) => (v === null || v === undefined || Number.isNaN(v) ? DASH : bare(v / d, whole)),
   };
 }
+
+/** "1 task", "3 tasks": a count with its word, singular for one (`many` when the plural is not word + s). */
+export const plural = (n: number | null | undefined, word: string, many?: string) =>
+  `${fmtNum(n ?? 0)} ${(n ?? 0) === 1 ? word : many ?? `${word}s`}`;

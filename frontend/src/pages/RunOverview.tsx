@@ -94,6 +94,7 @@ export function RunOverview({ run }: { run: RunRow }) {
           <section className="ro-hero-box">
             <span className={`ro-eyebrow ${a && (isSlow(run) || a.waitShare >= 0.3) ? 'warn' : ''}`}>{a && (isSlow(run) || a.waitShare >= 0.3) ? 'Why it was slow' : 'Where the time went'}</span>
             {a ? <WhySlow cid={cid} run={run} a={a} execs={execs} /> : <p className="muted small">{steps.loading ? 'Loading…' : 'No Spark work recorded for this run.'}</p>}
+            {a && <ChangeFirst cid={cid} run={run} a={a} fixes={fixItems(run, a, spill, findings, top.data)} />}
           </section>
           <section className="ro-hero-box">
             <span className={`ro-eyebrow ${e && (e.failed_queries || e.failed_jobs || badGone.length) ? 'bad' : ''}`}>How it ended</span>
@@ -149,7 +150,7 @@ export function RunOverview({ run }: { run: RunRow }) {
         {/* one fix list on this page (Fix, above); every problem of the run is on its Findings tab */}
         {!fs.loading && findings.length > 0 && (
           <p className="small" style={{ margin: 0 }}>
-            <Link to={inRun(to.findings(cid), run.run_key)}>All {fmtNum(findings.length)} problems found in this run, with their fixes →</Link>
+            <Link to={inRun(to.findings(cid), run.run_key)}>{findings.length === 1 ? 'The problem' : `All ${fmtNum(findings.length)} problems`} found in this run, with {findings.length === 1 ? 'its fix' : 'their fixes'} →</Link>
           </p>
         )}
 
@@ -262,7 +263,8 @@ function RunClockLine({ d, total }: { d: RunSteps; total: number }) {
   return (
     <div className="note">
       On its clock <b>{fmtDuration(total)}</b>: waited for cores {fmtDuration(d.waiting_ms)}, ran tasks {fmtDuration(d.running_ms)}, no Spark work {fmtDuration(d.outside_ms ?? 0)}.{' '}
-      {(d.queued_full_ms ?? 0) > d.waiting_ms + 60_000 && <>While it ran tasks, more of its tasks queued on a full cluster for <b>{fmtDuration(d.queued_full_ms!)}</b> (every core busy, wave after wave).{' '}</>}
+      {/* queued_full_ms counts the wait before its first task too: only the rest is "while it ran" */}
+      {(d.queued_full_ms ?? 0) > d.waiting_ms + 60_000 && <>While it ran tasks, more of its tasks queued on a full cluster for another <b>{fmtDuration(d.queued_full_ms! - d.waiting_ms)}</b> (every core busy, wave after wave).{' '}</>}
       Its {fmtNum(gs.length)} queries and jobs add up to <b>{fmtDuration(sumQ)}</b>{sumQ > total * 1.05
         ? <> because they overlapped (up to {fmtNum(peak)} at once)</> : sumQ < total * 0.95 ? <>; the rest of the clock is between them</> : null}.
     </div>
@@ -364,6 +366,28 @@ function TimeWent({ cid, d, a, allSteps, setAllSteps }: { cid: string; d: RunSte
       </div>
     </section>
   );
+}
+
+/** One line in the first box: the change to make first. When one stage held every core under FIFO and this run waited
+ * behind it, that is the change (more workers would not help); else the first fix of the list below. */
+function ChangeFirst({ cid, run, a, fixes }: { cid: string; run: RunRow; a: Analysis; fixes: FixItem[] }) {
+  const adv = useAsync((s) => api.settings(cid, s).catch(() => null), [cid]);
+  const hog = adv.data?.advice.find((x) => x.fifo);
+  const st = hog?.stages?.[0];
+  const mine = !!st && st.run_key === run.run_key;
+  const behind = !!hog && (hog.runs ?? []).some((r) => r.run_key === run.run_key);
+  if (hog && st && a.waitShare >= 0.2 && (mine || behind)) {
+    const stage = <Link to={inRun(to.stages(cid, st.spark_context_id, st.stage_id, st.stage_attempt), st.run_key)}>stage {st.stage_id}</Link>;
+    return (
+      <p className="small ro-first"><b>Change first:</b> FAIR scheduler pools (<code>spark.scheduler.mode</code> FAIR, a pool per run).{' '}
+        {mine ? <>This run's {stage} held every core ({hog.title.replace(/^One stage held all /, '').replace(/ under FIFO$/, '')}) and other runs queued behind it.</>
+          : <>{stage} of {st.run_label ?? 'another run'} held every core ({hog.title.replace(/^One stage held all /, '').replace(/ under FIFO$/, '')}); this run waited behind it. More workers would not change that.</>}
+      </p>
+    );
+  }
+  const f = fixes[0];
+  if (!f) return null;
+  return <p className="small ro-first"><b>Change first</b> ({f.who}): {f.text}{f.wins ? <span className="muted"> Wins {f.wins}.</span> : null}</p>;
 }
 
 /** At most three changes, in order, each with what it wins: the cluster's concurrency when the run mostly waited, the
@@ -502,7 +526,8 @@ function Causes({ cid, a, run, execs, burst, toCluster, fixes }: { cid: string; 
           <button className="linkish small" style={{ alignSelf: 'flex-start' }} onClick={() => { toCluster(); nav(to.overview(cid)); }}>The cluster's runs and settings ↗</button>
         </section>
       )}
-      {t && (
+      {/* a query is a cause only when its work explains a tenth of the run or more (900 ms of a 10-minute run is not) */}
+      {t && (a.merge || (t.disk_spill ?? 0) >= GB || t.running_ms >= 0.1 * a.total) && (
         <section className="ro-card">
           <div className="ro-card-head"><span className="ro-tag">Cause {(a.waitShare >= 0.2 ? 2 : 1) + n0} · query</span><span className="muted small mono">{gname(t)} · {fmtTime(t.start).slice(0, 5)} – {fmtTime(t.end).slice(0, 5)}</span></div>
           <h3>{a.merge ? 'The MERGE reads the whole target' : a.topShare >= 0.4 ? `${gname(t)} did most of the work` : `The longest: ${gname(t)}`}</h3>

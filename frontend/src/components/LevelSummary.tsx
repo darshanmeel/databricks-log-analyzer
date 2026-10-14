@@ -6,7 +6,7 @@ import { TablesRead } from './TableStats';
 import { useState } from 'react';
 import { api, type SparkJobRow, type StageRow, type StageWhy } from '../api';
 import { useAsync } from '../hooks';
-import { fmtBytes, fmtDuration, fmtNum, fmtPct, fmtRows, fmtSkew, fmtTime, truncate, unitFor } from '../format';
+import { fmtBytes, fmtDuration, fmtNum, fmtPct, fmtRows, fmtSkew, fmtTime, truncate, unitFor, plural } from '../format';
 import { gcBreach, skewBreach, spillBreach } from '../thresholds';
 import { StatusBadge, Tile } from './ui';
 import { ScopeTaskSection } from './TaskSections';
@@ -43,7 +43,7 @@ function reasons(s: Stage, w: StageWhy | undefined): Reason[] {
   if (spillBreach(s.disk_spill)) out.push({ text: `spilled ${fmtBytes(s.disk_spill)} to disk`, short: `spill ${fmtBytes(s.disk_spill)}`, tone: 'warn', weight: dur * 0.3 });
   if (gcBreach(s.gc_share)) out.push({ text: `GC ${fmtPct(s.gc_share, 0)} of task time`, short: `GC ${fmtPct(s.gc_share, 0)}`, tone: 'warn', weight: (s.gc_share ?? 0) * dur });
   if ((s.tasks ?? 0) >= 2000 && (s.p50_task_ms ?? 1e9) < 200) out.push({ text: `${fmtNum(s.tasks)} tiny tasks (${fmtDuration(s.p50_task_ms)} each)`, short: `${fmtNum(s.tasks)} tiny tasks`, tone: 'warn', weight: dur * 0.3 });
-  if (!out.length) out.push({ text: dur < 5000 ? 'quick' : `no problem: ${fmtNum(s.tasks)} tasks of ~${fmtDuration(s.p50_task_ms)}`, short: dur < 5000 ? 'quick' : 'ok', tone: 'ok', weight: 0 });
+  if (!out.length) out.push({ text: dur < 5000 ? 'quick' : `no problem: ${plural(s.tasks, 'task')} of ~${fmtDuration(s.p50_task_ms)}`, short: dur < 5000 ? 'quick' : 'ok', tone: 'ok', weight: 0 });
   return out.sort((a, b) => b.weight - a.weight);
 }
 
@@ -451,7 +451,7 @@ export function QuerySummary({ cid, ctx, id, title, onJob, onQuery, tasks = true
   })).sort((a, b) => (b.dur ?? 0) - (a.dur ?? 0));
   return (
     <section className="panel">
-      <div className="panel-head"><h2>{title}</h2><span className="muted small">all {fmtNum(jobs.length)} Spark jobs and {fmtNum(stages.length)} stages together</span></div>
+      <div className="panel-head"><h2>{title}</h2><span className="muted small">{jobs.length === 1 && stages.length === 1 ? 'its Spark job and stage' : `all ${plural(jobs.length, 'Spark job')} and ${plural(stages.length, 'stage')}`} together</span></div>
       <div className="panel-body stack">
         {/* where its time went and why, then the graph below; the step list, numbers, tables and jobs fold away */}
         {tst.data && <QueryTimeBar t={tst.data} onQuery={(qid) => onQuery?.(qid)} />}

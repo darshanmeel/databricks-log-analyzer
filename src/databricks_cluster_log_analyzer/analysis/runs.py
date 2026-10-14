@@ -316,6 +316,8 @@ def _runs_rows(cid: str, meta: dict, d: dict, tdf: pd.DataFrame) -> list[dict]:
         r["program"], r["subject"] = names.get(r["run_key"], (None, None))
         if str(r.get("label") or "").startswith("Outside any run"):
             r["program"], r["subject"] = None, None  # not one test or table: its label says what it is
+    if widen_runs(rows, d["sql_queries"]):
+        rows.sort(key=lambda r: (r["start_time"] is None, r["start_time"] or 0, r["run_key"]))
     from .aggregate import DIST_COLS, dist_rows
 
     data = dist_rows(tdf, ["run_key"], ("input_bytes", "input_records", "output_bytes", "output_records")) \
@@ -326,6 +328,64 @@ def _runs_rows(cid: str, meta: dict, d: dict, tdf: pd.DataFrame) -> list[dict]:
                                           "output_records")})
     set_typical(rows)
     return rows
+
+
+def inherit_run_keys(queries: list[dict]) -> int:
+    """In place, for an output built before this was done: a query that ran no Spark job takes the run of the query it
+    ran inside, and a root query the run of the queries inside it. Returns how many queries got a run."""
+    key = {(q["spark_context_id"], q["sql_execution_id"]): q["run_key"] for q in queries if q.get("run_key")}
+    for q in queries:
+        root = q.get("root_execution_id")
+        if q.get("run_key") and not is_null(root) and int(root) != q["sql_execution_id"]:
+            key.setdefault((q["spark_context_id"], int(root)), q["run_key"])
+    n = 0
+    for q in queries:
+        if q.get("run_key"):
+            continue
+        root = q.get("root_execution_id")
+        rk = key.get((q["spark_context_id"], q["sql_execution_id"])) or (
+            None if is_null(root) else key.get((q["spark_context_id"], int(root))))
+        if rk:
+            q["run_key"] = rk
+            n += 1
+    return n
+
+
+def widen_runs(rows: list[dict], queries: list[dict]) -> int:
+    """In place: a named run starts when its first query opened, not at its first Spark job (a notebook statement can
+    sit hours before it runs a job), and ends with its last query. Returns how many runs changed."""
+    span: dict[str, list] = {}
+    for q in queries:
+        rk = q.get("run_key")
+        a, z = _ms(q.get("start_time")), _ms(q.get("end_time"))
+        if rk is None or a is None:
+            continue
+        sp = span.setdefault(rk, [a, z if z is not None else a])
+        sp[0] = min(sp[0], a)
+        if z is not None:
+            sp[1] = max(sp[1], z)
+    n = 0
+    for r in rows:
+        sp = span.get(r["run_key"])
+        if not sp or r.get("kind") == "app" or str(r.get("label") or "").startswith("Outside any run"):
+            continue
+        a, z = _ms(r.get("start_time")), _ms(r.get("end_time"))
+        na = sp[0] if a is None else min(a, sp[0])
+        nz = sp[1] if z is None else max(z, sp[1])
+        if (na, nz) != (a, z):
+            r["start_time"], r["end_time"] = na, nz
+            r["duration_ms"] = nz - na
+            n += 1
+    if n:  # who overlapped whom changes with the spans
+        for r in rows:
+            if r.get("overlapping_runs") is None and str(r.get("label") or "").startswith("Outside any run"):
+                continue
+            ov = [o["run_key"] for o in rows if o is not r and o.get("spark_context_id") == r.get("spark_context_id")
+                  and not str(o.get("label") or "").startswith("Outside any run")
+                  and None not in (_ms(r.get("start_time")), _ms(r.get("end_time")), _ms(o.get("start_time")), _ms(o.get("end_time")))
+                  and _ms(o["start_time"]) < _ms(r["end_time"]) and _ms(r["start_time"]) < _ms(o["end_time"])]
+            r["overlapping_runs"] = ov or None
+    return n
 
 
 def set_typical(rows: list[dict]) -> None:
@@ -416,8 +476,10 @@ def default_run(runs: list[dict]) -> str | None:
         return None
     if len(runs) == 1:
         return runs[0]["run_key"]
-    failed = [r for r in runs if r["status"] == "failed"]
-    pool = failed or runs
+    # the catch-all "Outside any run" is what no run claimed, not a run to open first
+    named = [r for r in runs if not str(r.get("label") or "").startswith("Outside any run")] or runs
+    failed = [r for r in named if r["status"] == "failed"]
+    pool = failed or named
     return max(pool, key=lambda r: r["duration_ms"] or 0)["run_key"]
 
 

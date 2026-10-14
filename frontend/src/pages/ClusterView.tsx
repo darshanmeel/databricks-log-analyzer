@@ -432,7 +432,7 @@ ${mine.reduce((n, g) => n + g.rs.length, 0)} runs, ${myEx.length} executors`)}
           </g>
         )}
         <text x={4} y={spY + 14} fontSize={12} fontWeight={600} fill="var(--text)">Disk spill</text>
-        <text x={4} y={spY + 28} fontSize={11} fill="var(--text)" opacity={0.6}>per minute, max {fmtBytes(maxSp)}</text>
+        <text x={4} y={spY + 28} fontSize={11} fill="var(--text)" opacity={0.6}>{maxSp > 1 ? `per minute, max ${fmtBytes(maxSp)}` : 'no spill'}</text>
         <line x1={LABEL_W} x2={W - 12} y1={spY + spH} y2={spY + spH} stroke="var(--line)" />
         {d.minutes.filter((m) => m.disk_spill).map((m) => {
           const h = Math.max(1.5, ((m.disk_spill ?? 0) / maxSp) * spH);

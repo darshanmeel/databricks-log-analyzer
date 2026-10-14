@@ -16,8 +16,14 @@ export function useAsync<T>(fn: (signal: AbortSignal) => Promise<T>, deps: unkno
   const [tick, setTick] = useState(0);
   const fnRef = useRef(fn);
   fnRef.current = fn;
+  const prevDeps = useRef<unknown[] | null>(null);
 
   useEffect(() => {
+    // new inputs (another query, stage or run): drop the old answer, so a page never shows one query's header over
+    // another's numbers while it loads; a reload of the same inputs keeps it until the new one is in
+    const changed = prevDeps.current !== null && (prevDeps.current.length !== deps.length || deps.some((d, i) => !Object.is(d, prevDeps.current![i])));
+    prevDeps.current = deps;
+    if (changed) setData(undefined);
     if (!enabled) {
       setLoading(false);
       return;

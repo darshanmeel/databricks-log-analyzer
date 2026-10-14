@@ -26,6 +26,7 @@ from collections.abc import Mapping
 import pandas as pd
 
 from ..util import fmt_words, is_null
+from .contention import to_ms
 
 INCIDENT_COLS = ["cluster_id", "finding_id", "incident_id", "incident_rank", "incident_title", "incident_severity",
                  "incident_impact", "incident_start", "incident_end", "problem_id", "kind", "role", "caused_by",
@@ -57,7 +58,7 @@ CATEGORY_KIND = {
 # findings about the whole run or cluster (queueing, MERGE, counts, DDL loops, init scripts): no cause -> effect with
 # a failure, so they stay outside incidents (the cache and autoscaling findings above do take part)
 NOT_IN_INCIDENTS = {"capacity_bound", "autoscale_lag", "cores_full", "waited_for_cores", "merge_rewrite",
-                    "ddl_loop", "disk_cache", "init_script", "dedup_noop"}
+                    "ddl_loop", "disk_cache", "init_script", "dedup_noop", "jdbc_one_partition", "empty_input"}
 AUTOSCALED_RE = re.compile(r"removed \d+ executors? \(([\w, ]+)\)")
 PERF_KINDS = {"skew", "tiny", "large", "big_read", "idle", "driver", "count", "spill", "gc"}
 ERROR_KINDS = {"task_error", "driver_error", "other_error", "reported", "source_db"}
@@ -719,6 +720,10 @@ def build_incidents(cid: str, findings: list[dict], stages: list[dict], executor
             # merged repeats of one cause (a source database in several stages): every stage of it
             scs = inc["sc"] if all(p["kind"] in ("source_db", "retries") for p in inc["ps"]) else top["sc"]
             sid = sorted({k[1] for k in scs.stages})
+            # retries: the stages where tasks failed, not every stage the scope reached
+            hit = sorted({k[1] for k in inc["cost_stages"] if int((stage_by_key.get(k) or {}).get("failed_tasks") or 0) > 0})
+            if hit and any(p["kind"] in ("source_db", "retries") for p in inc["ps"]):
+                sid = hit
             return f"Stage {', '.join(map(str, sid[:3]))}: {', '.join(kinds)}"
         if top["kind"] in ERROR_KINDS:
             ent = top["lead"]["f"].get("entity")
@@ -753,8 +758,25 @@ def build_incidents(cid: str, findings: list[dict], stages: list[dict], executor
             parts.append(f"{len(lost)} executor{'s' if len(lost) != 1 else ''} lost")
         if wasted:
             parts.append(f"{fmt_words(wasted)} of task work thrown away")
+        if not parts:  # time the driver held the run: the finding measured it
+            for p in inc["ps"]:
+                ev = p["lead"]["f"].get("evidence") or ""
+                m = re.search(r"spent ([\d hms]+?) in all|No Spark stage ran for ([\d hms]+?) of", ev)
+                if p["lead"]["f"].get("category") == "no_spark_work" and m:
+                    parts.append(f"{(m.group(1) or m.group(2)).strip()} with no Spark work")
+                    break
         if not parts and st:
-            slow = sum(int(s.get("duration_ms") or 0) for s in st)
+            # the clock the stages held: from each one's first task (before that it waited for a core), overlaps once
+            iv = sorted((to_ms(s.get("first_task_time")) or to_ms(s.get("start_time")), to_ms(s.get("end_time")))
+                        for s in st)
+            slow, ce = 0, None
+            for a, z in iv:
+                if a is None or z is None or z <= a:
+                    continue
+                if ce is None or a > ce:
+                    slow, ce = slow + z - a, z
+                elif z > ce:
+                    slow, ce = slow + z - ce, z
             if slow:
                 parts.append(f"{len(st)} stage{'s' if len(st) != 1 else ''}, {fmt_words(slow)} of stage time")
         return "; ".join(parts)

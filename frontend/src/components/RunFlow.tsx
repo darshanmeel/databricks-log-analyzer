@@ -119,7 +119,24 @@ export function RunFlow({ cid, onPick }: { cid: string; onPick: (n: FlowNode) =>
     const idle = crit.slice(1).map((n, i) => ({ ms: Math.max(0, (n.start ?? 0) - (crit[i].end ?? 0)), from: crit[i], to: n }))
       .sort((a, b) => b.ms - a.ms)[0] ?? null;
     // inside the queries on the path: time a stage waited for a free core while none of the query's stages ran
-    const waited = crit.reduce((a, n) => a + (n.waits ?? []).reduce((b, [ws, we]) => b + (we - ws), 0), 0);
+    // a query that ran others inside it waited while they did: their waits count as its own (merged, within its span)
+    const insideOf = new Map<string, string[]>();
+    for (const e of edges) if (e.kind === 'inside') insideOf.set(e.from, [...(insideOf.get(e.from) ?? []), e.to]);
+    const waitsOf = (n: FlowNode, seen = new Set<string>()): [number, number][] => {
+      if (seen.has(n.key)) return [];
+      seen.add(n.key);
+      const own: [number, number][] = [...(n.waits ?? [])];
+      for (const k of insideOf.get(n.key) ?? []) { const c = nodeBy.get(k); if (c) own.push(...waitsOf(c, seen)); }
+      return own;
+    };
+    const merged = (n: FlowNode) => {
+      const s0 = n.start ?? 0, e0 = n.end ?? s0;
+      const iv = waitsOf(n).map(([a, b]) => [Math.max(a, s0), Math.min(b, e0)] as [number, number]).filter(([a, b]) => b > a).sort((x, y) => x[0] - y[0]);
+      let tot = 0, cs = -Infinity, ce = -Infinity;
+      for (const [a, b] of iv) { if (a > ce) { if (ce > cs) tot += ce - cs; cs = a; ce = b; } else ce = Math.max(ce, b); }
+      return tot + (ce > cs ? ce - cs : 0);
+    };
+    const waited = crit.reduce((a, n) => a + merged(n), 0);
     const critSet = new Set(crit.map((n) => n.key));
     const prevOnPath = new Map(crit.slice(1).map((n, i) => [n.key, crit[i]]));
     return { nodes, tree, kids, parent, parentKind, edges, row, t0, t1, hidden, up, down, truncated: f.truncated, crit, critSet, prevOnPath, busy, gaps, waited, idle };

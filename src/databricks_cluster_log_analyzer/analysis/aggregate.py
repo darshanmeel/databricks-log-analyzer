@@ -112,7 +112,13 @@ def dist_rows(tdf: pd.DataFrame, keys: list[str], sums: tuple[str, ...] = ()) ->
     d = task_dist(tdf, keys, nonzero=True)
     if sums:
         t = tdf[tdf[keys].notna().all(axis=1)]
-        tot = t.groupby(keys, sort=False, dropna=False)[list(sums)].sum(min_count=1)
+        # data read and written by the attempts that succeeded (a failed attempt's rows were read again by its
+        # retry); shuffle is a cost, every attempt's counts
+        io = [c for c in sums if c.startswith(("input_", "output_"))]
+        rest = [c for c in sums if c not in io]
+        ok = t[~t["failed"].fillna(False).astype(bool)] if "failed" in t else t
+        tot = pd.concat([ok.groupby(keys, sort=False, dropna=False)[io].sum(min_count=1),
+                         t.groupby(keys, sort=False, dropna=False)[rest].sum(min_count=1)], axis=1)[list(sums)]
         d = tot.assign(**{c: np.nan for c in DIST_COLS}) if d.empty else d.join(tot, how="outer")
     out = {}
     for k, row in d.iterrows():
@@ -170,11 +176,14 @@ def _stage_metrics(tdf: pd.DataFrame) -> dict[tuple, dict]:
         "min_task_ms": go["task_ms"].min(),
         "max_peak_mem": g["peak_mem"].max(),
         "executors_used": g["executor_id"].nunique(),
+        "first_task_time": g["launch_time"].min(),
     })
-    sums = g[["gc_ms", "run_ms", "mem_spill", "disk_spill", "input_bytes", "input_records", "output_bytes",
-              "shuffle_read", "shuffle_write", "task_ms", "shuffle_read_records", "shuffle_write_records",
-              "output_records"]].sum(min_count=1)
+    # the cost (GC, spill, shuffle, task time) counts every attempt; the data read and written only the attempts that
+    # succeeded (a failed attempt's rows were read again by its retry)
+    sums = g[["gc_ms", "run_ms", "mem_spill", "disk_spill", "shuffle_read", "shuffle_write", "task_ms",
+              "shuffle_read_records", "shuffle_write_records"]].sum(min_count=1)
     agg = agg.join(sums.rename(columns={"gc_ms": "_gc_ms", "run_ms": "_run_ms", "task_ms": "_task_ms_sum"}))
+    agg = agg.join(go[["input_bytes", "input_records", "output_bytes", "output_records"]].sum(min_count=1))
     # p50 = lower median (Spark percentile_approx(., 0.5) on small data); Revision 11/13: the data each task read
     # (storage input + shuffle read) as bytes and rows, and task time: min, p10, median, p90, max, average
     agg = agg.join(task_dist(ok, STAGE_KEY))
@@ -185,7 +194,7 @@ def _stage_metrics(tdf: pd.DataFrame) -> dict[tuple, dict]:
         for k in ("tasks", "failed_tasks", "max_task_ms", "max_peak_mem", "executors_used", "_gc_ms", "_run_ms",
                   "mem_spill", "disk_spill", "input_bytes", "input_records", "output_bytes", "shuffle_read",
                   "shuffle_write", "_task_ms_sum", "p50_task_ms", "min_task_ms", "shuffle_read_records",
-                  "shuffle_write_records", "output_records", *DIST_COLS):
+                  "shuffle_write_records", "output_records", "first_task_time", *DIST_COLS):
             d[k] = to_int(d.get(k))
         out[(ctx, int(sid), int(att))] = d
     return out
@@ -271,7 +280,7 @@ def stage_metric_cols(m: dict) -> dict:
         "disk_spill": m.get("disk_spill"), "input_bytes": m.get("input_bytes"),
         "input_records": m.get("input_records"), "output_bytes": m.get("output_bytes"),
         "shuffle_read": m.get("shuffle_read"), "shuffle_write": m.get("shuffle_write"),
-        "executors_used": m.get("executors_used"),
+        "executors_used": m.get("executors_used"), "first_task_time": m.get("first_task_time"),
         # internal (not written): used by query_profile
         "_gc_ms": m.get("_gc_ms"), "_run_ms": m.get("_run_ms"), "_task_ms_sum": m.get("_task_ms_sum"),
     }

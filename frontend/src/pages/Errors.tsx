@@ -328,7 +328,7 @@ function ProblemCard({ cid, p, d, focus, compact }: { cid: string; p: Prob; d: J
         <SeverityBadge sev={sev} />
         <span className={`err-kind sev-${sev}`}>{kind}</span>
         <ErrClassChip e={{ exception_class: h.full, sample_message: h.msg }} />
-        {lead?.stages && <span className="muted small">stage {lead.stages}</span>}
+        {lead?.stages && <span className="muted small">stage {String(lead.stages).replace(/(\d+)\.0\b/g, '$1')}</span>}
         <span className="grow" />
         {lead && <span className="muted small nowrap">{fmtTime(p.first)}</span>}
       </header>
@@ -414,7 +414,7 @@ function ProblemCard({ cid, p, d, focus, compact }: { cid: string; p: Prob; d: J
             <b>Where to fix:</b> <span className="mono">{userFrame.trim()}</span>
           </span>
         ) : (
-          <span className="muted">No frame from your code: all frames are Spark or JVM code. Start from the stage and query above.</span>
+          <span className="muted">No frame from your code in the frames logged: it was thrown inside Spark, the JVM or a library (a JDBC driver, a tooling package). Start from the stage and query above.</span>
         )}
       </div>}
       <FixTips kind={kind} fix={p.leadF?.fix} compact={compact} />
