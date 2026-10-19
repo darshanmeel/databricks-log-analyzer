@@ -1,6 +1,8 @@
 // Revision 20: what a query joins on and filters by, read from its physical plan: the joins (how, type, keys,
 // null-safe), the filters, what each scan pushed down to the files, the group-by keys and the windows.
+import { useState } from 'react';
 import type { PlanLogic } from '../api';
+import { truncate } from '../format';
 
 const short = (t: string | null) => (t && /^[a-z]+:\/\/|^\//.test(t) ? `…/${t.split('/').filter(Boolean).pop()}` : t ?? 'a source');
 const HOW: Record<string, string> = {
@@ -42,12 +44,14 @@ export function QueryLogic({ l, compact }: { l: PlanLogic; compact?: boolean }) 
       ))}
       {l.windows.map((w, i) => (
         <li key={`w${i}`}>
-          <span className="ql-k">keeps</span> {w.keeps.replace('the top 1 by dense_rank per key', 'one row per key').replace('the top 1 by rank per key', 'one row per key')} {keys(w.partition_by)}
-          <span className="muted"> · ordered by {w.order_by.join(', ')}</span>
+          {w.limit ? <><span className="ql-k">keeps</span> {w.limit === 1 ? 'one row' : `the top ${w.limit} rows`} {w.partition_by.length ? <>per {keys(w.partition_by)}</> : 'of the whole result'}</>
+            : <><span className="ql-k">ranks</span> {fnName(w)} per {w.partition_by.length ? keys(w.partition_by) : 'the whole result'}</>}
+          <span className="muted"> · {w.limit ? `${fnName(w)}, ` : ''}ordered by {orderText(w.order_by)}</span>
+          {w.ties ? <div className="bad small">{tieText(w)}</div> : null}
         </li>
       ))}
       {l.groups.map((g, i) => <li key={`g${i}`}><span className="ql-k">groups by</span> {keys(g.keys)}</li>)}
-      {l.filters.map((f, i) => <li key={`f${i}`}><span className="ql-k">filters</span> <code className="ql-expr">{f.condition}</code></li>)}
+      {l.filters.map((f, i) => <li key={`f${i}`}><span className="ql-k">filters</span> <code className="ql-expr" title={f.condition}>{condText(f.condition)}</code></li>)}
       {/* a note with a cost stays a line; the rest (table features with no number) fold into one line of chips */}
       {(l.facts ?? []).filter(hasCost).map((f, i) => <li key={`x${i}`}><span className="ql-k">cost</span> {f}</li>)}
       {(l.facts ?? []).some((f) => !hasCost(f)) && (
@@ -62,5 +66,99 @@ export function QueryLogic({ l, compact }: { l: PlanLogic; compact?: boolean }) 
         </li>
       ))}
     </ul>
+  );
+}
+
+const orderText = (ob: string[]) => ob.map((o) => o.replace(/ ASC NULLS FIRST$/, '').replace(/ NULLS LAST$/, '')).join(', ') || 'nothing';
+const fnName = (w: PlanLogic['windows'][number]) => `${w.function ?? 'a window function'}()`;
+/** A rank or dense_rank that keeps the first row per key keeps every row tied for first. */
+export const tieText = (w: PlanLogic['windows'][number]) =>
+  `${fnName(w)} keeps every row tied for first: two rows with the same ${orderText(w.order_by)} both rank 1 and both stay. ` +
+  'Use row_number() for exactly one row per key, or add a column unique per row to the order.';
+
+/** A plan condition for a chip: Spark's inferred "isnotnull(x)" next to a condition on x goes, the outer brackets go. */
+export function condText(c: string): string {
+  const strip = (s: string) => { let x = s.trim(); while (/^\(.*\)$/.test(x) && balanced(x.slice(1, -1))) x = x.slice(1, -1).trim(); return x; };
+  const parts = splitAnd(strip(c));
+  const keep = parts.filter((p) => {
+    const m = p.match(/^isnotnull\(([\w.`]+)\)$/);
+    return !m || parts.filter((q) => q !== p && q.includes(m[1])).length === 0;
+  });
+  return keep.map((p) => strip(p).replace(/\bisnotnull\(([\w.`]+)\)/g, '$1 IS NOT NULL')).join(' AND ');
+}
+const balanced = (s: string) => { let d = 0; for (const ch of s) { d += ch === '(' ? 1 : ch === ')' ? -1 : 0; if (d < 0) return false; } return d === 0; };
+/** Split on the ANDs outside brackets. */
+function splitAnd(s: string): string[] {
+  const out: string[] = []; let d = 0, cur = '';
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    d += ch === '(' ? 1 : ch === ')' ? -1 : 0;
+    if (d === 0 && s.startsWith(' AND ', i)) { out.push(cur); cur = ''; i += 4; continue; }
+    cur += ch;
+  }
+  return [...out, cur].filter((x) => x.trim());
+}
+
+export interface LogicChip { k: string; text: string; bad?: boolean; title?: string }
+
+/** The logic in a few chips, for a list row: what it keeps per key, groups by, filters and joins on. */
+export function logicChips(l: PlanLogic | null | undefined): LogicChip[] {
+  if (!l) return [];
+  const out: LogicChip[] = [];
+  for (const w of l.windows ?? []) {
+    const per = w.partition_by.join(', ') || 'all rows';
+    const text = w.limit ? `keeps ${w.limit === 1 ? '1 row' : `top ${w.limit}`} per ${per} · ${w.function ?? 'rank'} by ${orderText(w.order_by)}`
+      : `${w.function ?? 'window'}() per ${per} by ${orderText(w.order_by)}`;
+    out.push({ k: 'window', text, bad: !!w.ties, title: w.ties ? tieText(w) : undefined });
+  }
+  for (const g of l.groups ?? []) out.push({ k: 'group', text: `groups by ${g.keys.join(', ')}` });
+  for (const f of l.filters ?? []) out.push({ k: 'filter', text: `where ${condText(f.condition)}`, title: f.condition });
+  for (const s of l.scans ?? []) {
+    if (s.partition_filters.length) out.push({ k: 'filter', text: `partition filter ${s.partition_filters.join(' AND ')}` });
+  }
+  for (const j of userJoins(l)) {
+    const type = (j.type ?? 'Inner').replace(/(Outer|Semi|Anti)$/, ' $1').replace(/^LeftOuter$/, 'left').toLowerCase();
+    out.push({ k: 'join', text: `${type} join on ${j.left_keys.join(', ')}${j.null_safe ? ' (null-safe)' : ''}` });
+  }
+  return out;
+}
+
+/** The logic chips of a row; each is cut short, its tooltip has it all. */
+export function LogicChips({ l, max = 6 }: { l: PlanLogic | null | undefined; max?: number }) {
+  const cs = logicChips(l);
+  if (!cs.length) return null;
+  return (
+    <div className="logic-chips">
+      {cs.slice(0, max).map((c, i) => (
+        <span key={i} className={`lchip lchip-${c.k}${c.bad ? ' bad' : ''}`} title={c.title ?? c.text}>
+          {c.bad ? '⚠ ' : ''}{truncate(c.text, 90)}
+        </span>
+      ))}
+      {cs.length > max && <span className="muted small">+{cs.length - max} more</span>}
+    </div>
+  );
+}
+
+/** Said wherever SQL or a cause is rebuilt from the plans: they are our reading of them, not Spark's own words. */
+export const REBUILT_NOTE = 'Rebuilt from the physical plan, to the best of our knowledge: it may not be 100% correct or match the original code.';
+
+// a string literal first, so a "--" or a keyword inside one is not marked
+const KW = /('(?:[^']|'')*'|--[^\n]*|\b(?:SELECT|FROM|WHERE|AND|OR|NOT|GROUP BY|ORDER BY|LIMIT|LEFT SEMI JOIN|LEFT ANTI JOIN|LEFT JOIN|RIGHT JOIN|FULL JOIN|CROSS JOIN|JOIN|ON|AS|OVER|PARTITION BY|UNION ALL|LATERAL VIEW|OUTER|EXCEPT|IN|IS|NULL|DESC|CASE|WHEN|THEN|ELSE|END)\b)/g;
+
+/** A query's SQL as rebuilt from its plan, with keywords and comments marked, and a copy button. */
+export function SqlBlock({ sql, maxHeight = 420 }: { sql: string; maxHeight?: number }) {
+  const [copied, setCopied] = useState(false);
+  const copy = () => {
+    navigator.clipboard?.writeText(sql).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); }, () => undefined);
+  };
+  const parts = sql.split(KW);
+  return (
+    <div className="sql-wrap">
+      <button className="btn small ghost sql-copy" onClick={copy}>{copied ? 'Copied' : 'Copy'}</button>
+      <pre className="sql-block" style={{ maxHeight }}>
+        <code>{parts.map((p, i) => (i % 2 ? <span key={i} className={p.startsWith('--') ? 'sql-c' : p.startsWith("'") ? 'sql-s' : 'sql-k'}>{p}</span> : p))}</code>
+      </pre>
+      <div className="muted small sql-note">{REBUILT_NOTE}</div>
+    </div>
   );
 }

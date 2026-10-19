@@ -365,6 +365,10 @@ def create_app(output_root: Path, cache_root: Path, *, frontend_dist: Optional[P
     def run_steps(cid: str, run: str):
         return Q.run_steps(store, cid, run)
 
+    @app.get("/api/clusters/{cid}/run-sql")
+    def run_sql(cid: str, run: str):
+        return Q.run_sql(store, cid, run)
+
     @app.get("/api/clusters/{cid}/query-time")
     def query_time(cid: str, ctx: str, query: int):
         return Q.query_time(store, cid, ctx, query)

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode, useRef } from 'react';
-import { hasLogic, QueryLogic } from '../components/QueryLogic';
+import { hasLogic, QueryLogic, SqlBlock } from '../components/QueryLogic';
 import { Link } from 'react-router-dom';
 import { api, isMissing, type AppRow, type ConnectOperationRow, type Flow, type FlowEdge, type FlowNode, type Graph, type IncidentRow, type TaskRetryRow } from '../api';
 import type { FlowAround, FlowCtx } from '../graph/layout';
@@ -439,6 +439,12 @@ function UnitHeader({ u, cid }: { u: WorkUnit; cid: string }) {
       )}
       {reads.length > 0 && <ReadsTable tables={reads} stages={u.stages} />}
       {hasLogic(lg.data) && <div className="unit-logic"><QueryLogic l={lg.data} compact /></div>}
+      {lg.data?.sql && (
+        <details className="unit-sql">
+          <summary className="small"><b>As SQL</b> <span className="muted">rebuilt from the plan: what it reads, filters, ranks, groups and joins</span></summary>
+          <SqlBlock sql={lg.data.sql} maxHeight={360} />
+        </details>
+      )}
     </div>
   );
 }

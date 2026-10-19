@@ -13,6 +13,8 @@ export interface ErrorClass {
 const CLASSES: [RegExp, ErrorClass][] = [
   [/instead|deprecat|not supported in this version/i,
     { key: 'warning', label: 'warning', effect: 0, hint: 'A notice about an option or API; nothing failed because of it.' }],
+  [/MULTIPLE_SOURCE_ROW_MATCHING_TARGET_ROW|multiple source rows matched/i,
+    { key: 'merge-dup', label: 'duplicate source rows in MERGE', effect: 2, hint: 'Two source rows had the same MERGE keys and matched one target row. Dedupe the source on the MERGE keys first, with row_number() (rank and dense_rank keep ties).' }],
   [/SAS token|AuthorizationPermissionMismatch|AuthenticationFailed|AccessDenied|access denied|forbidden|unauthori[sz]ed|\b403\b|\b401\b|PERMISSION_DENIED|credential|InvalidAuthenticationInfo|token.*expired/i,
     { key: 'access', label: 'credentials or access', effect: 2, hint: 'Storage or a service refused the request: an expired token or SAS, a missing grant, or the wrong identity.' }],
   [/FAILED_READ_FILE|FileNotFound|No such file|PathNotFound|does not exist|DELTA_FILE_NOT_FOUND|FileReadException/i,

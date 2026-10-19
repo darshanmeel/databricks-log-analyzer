@@ -438,17 +438,23 @@ export interface QueryDetail {
   engine?: EngineUse | null;
   /** Revision 20: what it joins on and filters by */
   logic?: PlanLogic | null;
+  /** Revision 23: the SQL its plan amounts to */
+  sql?: string | null;
 }
 export interface PlanLogic {
   joins: { node: number; how: string; type: string | null; left_keys: string[]; right_keys: string[]; null_safe: boolean; condition: string | null }[];
   filters: { node: number; condition: string }[];
   scans: { node: number; table: string | null; partition_filters: string[]; data_filters: string[]; pushed_filters: string[] }[];
   groups: { node: number; keys: string[] }[];
-  windows: { node: number; partition_by: string[]; order_by: string[]; keeps: string }[];
+  /** a window: its ranking (or other) function and, when Spark keeps only the top rows per key, how many; ties: a
+   * rank or dense_rank that keeps the first row per key keeps every row tied for first */
+  windows: { node: number; partition_by: string[]; order_by: string[]; keeps: string | null; function?: string | null; alias?: string | null; limit?: number | null; ties?: boolean }[];
   /** plan signals in a sentence: Change Data Feed, optimized write, deletion vectors */
   facts?: string[];
   /** the joins come from the initial plan: adaptive execution replaced them (an empty side) */
   from_initial?: boolean;
+  /** Revision 23: the SQL the plan amounts to (the query-logic call) */
+  sql?: string | null;
 }
 export interface EngineState { state: 'used' | 'no' | 'na'; why: string; share?: number | null }
 export interface EngineUse { aqe: EngineState; photon: EngineState }
@@ -716,6 +722,7 @@ export const api = {
   taskColumns: (cid: string, ctx: string, scope: { stage?: number; attempt?: number; job?: number; query?: number }, s?: AbortSignal) =>
     get<TaskColumns>(`${c(cid)}/task-columns`, { ctx, ...scope }, s),
   runSteps: (cid: string, run: string, s?: AbortSignal) => get<RunSteps>(`${c(cid)}/run-steps`, { run }, s),
+  runSql: (cid: string, run: string, s?: AbortSignal) => get<RunSql>(`${c(cid)}/run-sql`, { run }, s),
   stageWhy: (cid: string, ctx: string, by: { query?: number; job?: number }, s?: AbortSignal) => get<{ stages: StageWhy[] }>(`${c(cid)}/stage-why`, { ctx, ...by }, s),
   runEnd: (cid: string, run: string, s?: AbortSignal) => get<RunEnd>(`${c(cid)}/run-end`, { run }, s),
   queryLogic: (cid: string, ctx: string, id: number, s?: AbortSignal) => get<PlanLogic>(`${c(cid)}/query-logic`, { ctx, id: String(id) }, s),
@@ -955,7 +962,17 @@ export interface RunStepGroup {
   tasks?: number | null; failed_tasks?: number | null; input_bytes?: number | null; shuffle_read?: number | null; shuffle_write?: number | null;
   output_bytes?: number | null; mem_spill?: number | null; disk_spill?: number | null;
   causes?: Causes | null;
+  /** Revision 23: what it filters, ranks, groups and joins by (a query) */
+  logic?: PlanLogic | null;
 }
+/** Revision 23: one query of a run as the SQL its plan amounts to */
+export interface RunSqlQuery {
+  ctx: string; id: number; start: number | null; end: number | null; status: string | null; description: string; op: string;
+  error: string | null; sql: string | null; logic: PlanLogic;
+  /** why it failed, when the plans of its MERGE say (duplicate source rows) */
+  cause: string | null;
+}
+export interface RunSql { run_key: string; queries: RunSqlQuery[] }
 /** Where task time went, summed over tasks: CPU, GC, waiting for shuffle data, the rest (storage, network, Python),
  * failed or cancelled attempts; disk spill in bytes. */
 export interface Causes {

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { hasLogic, QueryLogic } from '../components/QueryLogic';
+import { hasLogic, QueryLogic, SqlBlock } from '../components/QueryLogic';
 import { Link, useParams } from 'react-router-dom';
 import { api, optional, type PlanCandidate, type QueryDetail, type QueryProfileRow } from '../api';
 import { DiffView, PlanView } from '../components/PlanView';
@@ -59,6 +59,11 @@ export function QueryPlanTab({ cid, ctx, id }: { cid: string; ctx: string; id: s
           {hasLogic(d.logic) && (
             <Panel title="Joins and filters" note="From the final plan: what it joins on, what it filters, what each read pushed down to the files, how it groups.">
               <QueryLogic l={d.logic} />
+            </Panel>
+          )}
+          {d.sql && (
+            <Panel title="As SQL" note="Rebuilt from the physical plan: the SQL it amounts to (not the original text). Spark's own steps are left out; Delta's bookkeeping is a comment.">
+              <SqlBlock sql={d.sql} />
             </Panel>
           )}
           <PlanGraph cid={cid} ctx={ctx} id={id} />
@@ -203,6 +208,11 @@ function QueryView({ cid, ctx, id, d }: { cid: string; ctx: string; id: string; 
       {hasLogic(d.logic) && (
         <Panel title="Joins and filters" note="From the final plan: what it joins on, what it filters, what each read pushed down to the files, how it groups.">
           <QueryLogic l={d.logic} />
+        </Panel>
+      )}
+      {d.sql && (
+        <Panel title="As SQL" note="Rebuilt from the physical plan: the SQL it amounts to (not the original text). Spark's own steps are left out; Delta's bookkeeping is a comment.">
+          <SqlBlock sql={d.sql} />
         </Panel>
       )}
 

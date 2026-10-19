@@ -79,8 +79,14 @@ def stage(key, tasks, ms, *, scan_node=None, table_bytes=0, files=0, pruned_file
 def q_load_customers(day: str):
     src = scan("shop.raw.customer_updates", "customer_id#1,name#2,email#3,segment#4,updated_at#5", "json")
     tgt = scan("shop.sales.customer", "customer_id#11,name#12,email#13,segment#14,updated_at#15")
+    # the source keeps the latest update per customer: dense_rank, so two updates at the same time both stay
+    latest = Node("Filter", "Filter (isnotnull(rn#9) AND (rn#9 = 1))", [("number of output rows", "sum")], [
+        Node("Window", "Window [dense_rank(updated_at#5) windowspecdefinition(customer_id#1, updated_at#5 DESC NULLS LAST, "
+                       "specifiedwindowframe(RowFrame, unboundedpreceding$(), currentrow$())) AS rn#9], [customer_id#1], "
+                       "[updated_at#5 DESC NULLS LAST]", [], [
+            Node("Sort", "Sort [customer_id#1 ASC NULLS FIRST, updated_at#5 DESC NULLS LAST], false, 0", [], [exchange("customer_id#1", src)])])])
     join = Node("SortMergeJoin", "SortMergeJoin [customer_id#1], [customer_id#11], FullOuter",
-                [("number of output rows", "sum"), ("spill size", "size")], [exchange("customer_id#1", src), exchange("customer_id#11", tgt)])
+                [("number of output rows", "sum"), ("spill size", "size")], [latest, exchange("customer_id#11", tgt)])
     merge = Node("Execute MergeIntoCommandEdge", "Execute MergeIntoCommandEdge shop.sales.customer",
                  [("number of source rows", "sum"), ("number of updated rows", "sum"), ("number of inserted rows", "sum"),
                   ("number of target rows rewritten unmodified", "sum"), ("number of output rows", "sum")], [join])

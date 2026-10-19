@@ -28,6 +28,7 @@ import pyarrow as pa
 import pyarrow.compute as pc
 
 from ..analysis.merge import SCAN_FILES, cycle_of, files_text, merge_facts, merge_fix, wrote_text
+from ..parsing.plan_sql import keeps_ties, plan_nodes, plan_sql, window_spec
 from ..parsing.plans import jdbc_source, name_paths_in_text, name_tables, table_names
 from ..util import is_null, is_worker
 
@@ -502,7 +503,7 @@ class Store:
         if named:
             for r in out:
                 scopes = r.pop("__scopes", None)
-                if not r.get("stage_name") or "<unknown>" in r["stage_name"]:
+                if not r.get("stage_name") or _NO_SITE.search(r["stage_name"]):
                     r["stage_name"] = stage_what(scopes, r) or r.get("stage_name")
         return out
 
@@ -513,6 +514,10 @@ class Store:
         sch = self.schema(con, path)
         return all(c in sch for c in cols)
 
+
+#: a stage name that says nothing: no call site, or PySpark's (every PySpark stage is "start at
+#: NativeMethodAccessorImpl.java:0")
+_NO_SITE = re.compile(r"<unknown>|NativeMethodAccessorImpl\.java|DirectMethodHandleAccessor|GeneratedMethodAccessor")
 
 # free-text columns that can carry a table's storage path
 _NAMED_TEXT = {"findings": ("evidence", "entity"), "run_story": ("detail",), "stages": ("rdd_names",)}
@@ -542,14 +547,20 @@ def stage_what(scopes, s: Mapping[str, Any]) -> str | None:
     joins = {"SortMergeJoin": "sort-merge join", "BroadcastHashJoin": "broadcast join", "ShuffledHashJoin": "hash join",
              "BroadcastNestedLoopJoin": "nested-loop join", "CartesianProduct": "cartesian join"}
     for k, v in joins.items():
-        if k in sc:
+        if any(x == k or x == f"Photon{k}" for x in sc):
             bits.append(v)
             break
+    if any(x in ("Filter", "PhotonFilter") for x in sc):
+        bits.append("filter")
     # the last aggregate of a count says little next to the cache or scan it ran on
-    if any("Aggregate" in x for x in sc) and not any(b.endswith("DataFrame cache") for b in bits):
+    if any("Aggregate" in x or "GroupingAgg" in x for x in sc) and not any(b.endswith("DataFrame cache") for b in bits):
         bits.append("aggregate")
-    if "Window" in sc:
+    if any(x in ("WindowGroupLimit", "PhotonWindowGroupLimit") for x in sc):
+        bits.append("keep the top rows per key")
+    elif any(x in ("Window", "RunningWindowFunction", "PhotonWindow") for x in sc):
         bits.append("window")
+    if "Union" in sc:
+        bits.append("union")
     if any(x in ("WriteFiles", "Execute WriteIntoDeltaCommand") or x.startswith("Write") for x in sc):
         bits.append("write")
     if not bits and sc:
@@ -1721,6 +1732,7 @@ def query_detail(store: Store, cid: str, ctx: str, exec_id: int) -> dict[str, An
         "stages": stages,
         "findings": findings,
         "logic": query_logic(q[0]) if q else None,
+        "sql": query_sql(q[0]) if q else None,
     }
 
 
@@ -3517,8 +3529,7 @@ def run_steps(store: Store, cid: str, run: str) -> dict[str, Any]:
         stages = store.select(con, cid, "stages", "run_key = ?", [run], order="start_time",
                               exclude=("details", "rdd_scopes", "rdd_names", "failure_reason", "job_description"))
         queries = {q["sql_execution_id"]: q for q in store.select(
-            con, cid, "sql_queries", "run_key = ?", [run], truncate={"description": 200},
-            exclude=("final_plan", "initial_plan", "details"))}
+            con, cid, "sql_queries", "run_key = ?", [run], truncate={"description": 200}, exclude=("details",))}
         jobs = {j["spark_job_id"]: j for j in store.select(con, cid, "spark_jobs", "run_key = ?", [run],
                                                             truncate={"description": 200, "call_site": 200})} \
             if store.dataset_path(cid, "spark_jobs", required=False) is not None else {}
@@ -3573,6 +3584,9 @@ def run_steps(store: Store, cid: str, run: str) -> dict[str, Any]:
                              "operators": list((src or {}).get("operators") or [])[:24],
                              "input_records": (src or {}).get("input_records"), "output_records": (src or {}).get("output_records")}
             if k[0] == "query" and src:
+                # what it filters, ranks, groups and joins by: the step says it without opening the plan
+                lg = query_logic(src)
+                g["logic"] = {x: lg[x] for x in ("joins", "filters", "scans", "groups", "windows") if x in lg}
                 g["start"] = min(s0, _as_ms(src.get("start_time")) or s0)
                 g["end"] = max(s1, _as_ms(src.get("end_time")) or s1)
         g["start"], g["end"] = min(g["start"], s0), max(g["end"], s1)
@@ -4271,10 +4285,21 @@ def plan_logic(plan: str | None) -> dict[str, Any]:
             k, v = line.split(": ", 1)
             k = re.sub(r"\s*\[\d+\]$", "", k.strip())
             cur["attrs"][k] = v.strip()
+    if not nodes and plan:
+        # a simple-mode plan (no detail sections): its tree lines carry the arguments, bottom (data source) first
+        tree, _ = plan_nodes(plan)
+        nodes = [{"id": n["id"], "name": n["name"], "attrs": {k: _EXPR_ID.sub("", v) for k, v in n["attrs"].items()},
+                  "kind": n["kind"]}
+                 for n in sorted(tree.values(), key=lambda n: -n["id"])]
     joins, filters, scans, groups, windows = [], [], [], [], []
     for n in nodes:
         name, a = n["name"], n["attrs"]
-        kind = name.split(" ")[0]
+        # Photon names its operators PhotonFilter, PhotonBroadcastHashJoin, ...: the same logic
+        kind = n.get("kind") or name.split(" ")[0]
+        kind = kind[6:] if kind.startswith("Photon") and kind not in ("PhotonScan", "Photon") else kind
+        if kind == "Scan" and not name.startswith("Scan "):
+            # FileScan parquet t[a,b] Batched: ... -> Scan parquet t
+            name = "Scan " + re.sub(r"\[.*$", "", re.sub(r"^(?:Photon)?(?:File|Batch)?Scan ", "", name)).strip()
         if kind in _JOINS:
             lk, ns1 = _keys(_list_of(a.get("Left keys", "")))
             rk, ns2 = _keys(_list_of(a.get("Right keys", "")))
@@ -4293,20 +4318,33 @@ def plan_logic(plan: str | None) -> dict[str, Any]:
             tbl, _, _ = _scan_table(name)
             scans.append({"node": n["id"], "table": tbl or name[5:].strip() or None, "partition_filters": pf,
                           "data_filters": df, "pushed_filters": pu})
-        elif kind in ("HashAggregate", "ObjectHashAggregate", "SortAggregate") and a.get("Keys"):
+        elif kind in ("HashAggregate", "ObjectHashAggregate", "SortAggregate", "GroupingAgg") and a.get("Keys"):
             ks = _list_of(a["Keys"])
             if ks and not any(_INTERNAL.search(k) for k in ks) and ks not in [g["keys"] for g in groups]:
                 groups.append({"node": n["id"], "keys": ks})
         elif kind in ("Window", "WindowGroupLimit", "RunningWindowFunction") and a.get("Arguments"):
-            parts = _split_top(a["Arguments"])
-            lists = [_list_of(x) for x in parts if x.startswith("[")]
-            if kind == "WindowGroupLimit" and len(lists) >= 2:
-                w = {"node": n["id"], "partition_by": lists[0], "order_by": lists[1], "keeps": "the first rows per key"}
-                rank = re.search(r"(\w+)\(.*?\), (\d+),", a["Arguments"])
-                if rank:
-                    w["keeps"] = f"the top {rank.group(2)} by {rank.group(1)} per key"
-                if w["partition_by"] not in [x["partition_by"] for x in windows]:
-                    windows.append(w)
+            ws = window_spec(kind, a["Arguments"])
+            if not ws or not ws["partition_by"] and not ws["order_by"]:
+                continue
+            w = {"node": n["id"], "partition_by": ws["partition_by"], "order_by": ws["order_by"],
+                 "function": ws["function"], "alias": ws["alias"], "limit": ws["limit"],
+                 "keeps": f"the top {ws['limit']} by {ws['function']} per key" if ws["limit"] else None}
+            same = next((x for x in windows if x["partition_by"] == w["partition_by"] and x["function"] == w["function"]), None)
+            if same is None:
+                windows.append(w)
+            else:
+                # the limit that keeps the top rows (Partial, then Final) and the Window that computes the rank: one window
+                for k in ("alias", "limit", "keeps"):
+                    same[k] = same[k] or w[k]
+    conds = [f["condition"] for f in filters]
+    for w in windows:
+        # a filter on the rank over a plain Window ("rn = 1", "rn <= 3") keeps the top rows per key, as a group limit does
+        m = next((m for c in conds if w.get("alias") and not w.get("limit")
+                  and (m := re.search(rf"\b{re.escape(w['alias'])} (=|<=|<) (\d+)\b", c))), None)
+        if m and w.get("function") in ("row_number", "rank", "dense_rank"):
+            w["limit"] = int(m.group(2)) - (1 if m.group(1) == "<" else 0)
+            w["keeps"] = f"the top {w['limit']} by {w['function']} per key"
+        w["ties"] = keeps_ties(w, conds)
     # plan signals worth a sentence: Delta features that add work
     p = plan or ""
     facts = []
@@ -4398,6 +4436,112 @@ def query_logic(q: Mapping[str, Any]) -> dict[str, Any]:
     return lg
 
 
+def query_sql(q: Mapping[str, Any]) -> str | None:
+    """Revision 23: the SQL a query's plan amounts to (the final plan; the initial one when the final has no tree)."""
+    return plan_sql(q.get("final_plan")) or plan_sql(q.get("initial_plan"))
+
+
+DUP_SOURCE = "DELTA_MULTIPLE_SOURCE_ROW_MATCHING_TARGET_ROW_IN_MERGE"
+_STREAM_BATCH = re.compile(r"Streaming batch (\d+)\W+stream ([0-9a-f]{6,})", re.I)
+
+
+def merge_dup_cause(failed: Mapping[str, Any], qs: list[dict], logic: Mapping[tuple, dict]) -> str | None:
+    """Why a MERGE failed with "multiple source rows matched": from the same MERGE's queries (the same stream batch;
+    else the queries under it, by root execution id, or that ran while it ran), how its source kept one row per key,
+    and the keys the MERGE matched on. A rank or dense_rank keeps every row tied for first; a dedup partitioned on a
+    column the MERGE does not match on keeps one row per that column, so two rows per MERGE key."""
+    if DUP_SOURCE not in (failed.get("error") or "") and "multiple source rows matched" not in (failed.get("error") or ""):
+        return None
+    m = _STREAM_BATCH.search(failed.get("description") or "")
+    t0, t1 = _as_ms(failed.get("start_time")), _as_ms(failed.get("end_time"))
+    root = failed.get("root_execution_id")
+    root = failed.get("sql_execution_id") if root is None or root != root else root
+
+    def same(q):
+        if q.get("spark_context_id") != failed.get("spark_context_id"):
+            return False
+        mq = _STREAM_BATCH.search(q.get("description") or "")
+        if m:
+            return bool(mq) and mq.groups() == m.groups()
+        if q.get("root_execution_id") is not None and root is not None and q.get("root_execution_id") == root:
+            return True
+        t = _as_ms(q.get("start_time"))
+        return t is not None and t0 is not None and t1 is not None and t0 <= t <= t1
+
+    mine = [q for q in qs if same(q)]
+    src = [q for q in mine if "materialize source" in (q.get("description") or "")] or \
+        [q for q in mine if q.get("sql_execution_id") != failed.get("sql_execution_id")]
+    scan = [q for q in mine if "scanning files for matches" in (q.get("description") or "")
+            or any(not _delta_join(j) for j in (logic.get((q["spark_context_id"], q["sql_execution_id"])) or {}).get("joins", []))]
+    keys: list[str] = []
+    for q in reversed(scan):
+        js = [j for j in (logic.get((q["spark_context_id"], q["sql_execution_id"])) or {}).get("joins", []) if not _delta_join(j)]
+        if js:
+            keys = js[0]["left_keys"]
+            break
+    on = f" The MERGE matches on {', '.join(keys)}." if keys else ""
+    for q in reversed(src):
+        for w in (logic.get((q["spark_context_id"], q["sql_execution_id"])) or {}).get("windows", []):
+            # only a ranking that keeps the first row per key is a dedup (a running sum or a top 3 keeps more)
+            if w.get("function") not in ("row_number", "rank", "dense_rank") or w.get("limit") != 1:
+                continue
+            fn, pb, ob = w["function"], w.get("partition_by") or [], w.get("order_by") or []
+            order = ", ".join(re.sub(r" NULLS (FIRST|LAST)$", "", o) for o in ob) or "nothing"
+            per = ", ".join(pb) or "the whole batch"
+            if w.get("ties"):
+                return (f"Query {q['sql_execution_id']} keeps the first row per {per} with {fn}() ordered by {order}: "
+                        f"rows that tie on that order all rank 1 and all stay, so two source rows for one key reached the "
+                        f"MERGE.{on} Use row_number() instead of {fn}(), or add a column that is unique per row (a Kafka "
+                        f"offset and partition, an ingest id) to the ORDER BY.")
+            extra = sorted(set(pb) - set(keys)) if keys else []
+            if extra:
+                return (f"Query {q['sql_execution_id']} keeps one row per {per} ({fn}), but the MERGE matches on "
+                        f"{', '.join(keys)} only: rows that differ in {', '.join(extra)} are each kept and all match one "
+                        f"target row. Partition the dedup by the MERGE keys.")
+            return None  # one row per MERGE key (or fewer columns): this dedup is not the cause
+    if src:
+        return ("No query of this MERGE keeps one row per key before it: two source rows with the same keys both match "
+                f"one target row.{on} Dedupe the source first: row_number() OVER (PARTITION BY the MERGE keys ORDER BY the "
+                "newest first) = 1.")
+    return None
+
+
+def _delta_join(j: Mapping[str, Any]) -> bool:
+    """Delta's own join (on a file path or a deletion vector), not the MERGE's match."""
+    return any(re.search(r"deletionVector|^path$|_extract_uniqueKey", k) for k in j.get("left_keys") or [])
+
+
+def run_sql(store: Store, cid: str, run: str) -> dict[str, Any]:
+    """Revision 23: every query of one run in start order as the SQL its plan amounts to, with what it filters, joins,
+    groups and ranks by; a failed one with its error, and for a MERGE that failed on duplicate source rows, why."""
+    store.cluster_dir(cid)
+    with store.connect() as con:
+        qs = store.select(con, cid, "sql_queries", "run_key = ?", [run], order="start_time NULLS LAST, sql_execution_id",
+                          exclude=("details",))
+    return {"run_key": run, "queries": _sql_rows(qs)}
+
+
+def _sql_rows(qs: list[dict]) -> list[dict[str, Any]]:
+    logic = {(q["spark_context_id"], q["sql_execution_id"]): query_logic(q) for q in qs}
+    out = []
+    for q in qs:
+        k = (q["spark_context_id"], q["sql_execution_id"])
+        lg = {x: logic[k][x] for x in ("joins", "filters", "scans", "groups", "windows", "facts", "from_initial") if x in logic[k]}
+        out.append({"ctx": k[0], "id": k[1], "start": _as_ms(q.get("start_time")), "end": _as_ms(q.get("end_time")),
+                    "status": q.get("status"), "description": (q.get("description") or "")[:300],
+                    "op": _op_of(q.get("description") or "", list(q.get("operators") or [])),
+                    "error": (q.get("error") or "")[:600] or None, "sql": query_sql(q), "logic": lg,
+                    "cause": merge_dup_cause(q, qs, logic) if q.get("error") else None})
+    # a foreachBatch failure wraps the failure of a query of its batch: the same cause
+    for o in out:
+        m = _STREAM_BATCH.search(o["description"]) if o["error"] and not o["cause"] else None
+        by = next((x for x in out if m and x["cause"] and x["ctx"] == o["ctx"] and _STREAM_BATCH.search(x["description"])
+                   and _STREAM_BATCH.search(x["description"]).groups() == m.groups()), None)
+        if by:
+            o["cause"] = f"The same failure as query {by['id']} of this batch: {by['cause']}"
+    return out
+
+
 def query_logic_view(store: Store, cid: str, ctx: str, exec_id: int) -> dict[str, Any]:
     """Revision 20: what one query joins on and filters by, for the query header."""
     store.cluster_dir(cid)
@@ -4408,6 +4552,7 @@ def query_logic_view(store: Store, cid: str, ctx: str, exec_id: int) -> dict[str
         lg = query_logic(q[0])
         # a note with what it cost, in place of the bare sentence
         lg["facts"] = [(_FACT_COST[f](store, con, cid, q[0]) if f in _FACT_COST else None) or f for f in lg["facts"]]
+    lg["sql"] = query_sql(q[0])
     return lg
 
 

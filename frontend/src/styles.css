@@ -1835,3 +1835,29 @@ details.sub[open] > summary { margin-bottom: 4px; }
 /* skip link: off screen until it has the keyboard focus */
 .skip-link { position: absolute; left: -9999px; top: 4px; z-index: 100; padding: 6px 10px; background: var(--panel); color: var(--text); border: 1px solid var(--border, currentColor); border-radius: 4px; }
 .skip-link:focus { left: 8px; }
+
+/* Revision 23: the logic of a query as chips, and its SQL rebuilt from the plan */
+.logic-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.lchip { display: inline-block; max-width: 100%; padding: 1px 7px; border-radius: 9px; font-size: 11.5px; line-height: 1.5;
+  font-family: var(--font-mono, ui-monospace, monospace); background: var(--surface-3); color: var(--text-2); cursor: help;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lchip-window { background: color-mix(in srgb, var(--series-1) 16%, transparent); color: var(--text-1); }
+.lchip-filter { background: color-mix(in srgb, var(--series-3) 16%, transparent); color: var(--text-1); }
+.lchip-group { background: color-mix(in srgb, var(--c5, var(--series-1)) 14%, transparent); }
+.lchip.bad { background: var(--st-crit-tint); color: var(--st-crit-ink); font-weight: 600; }
+.sql-wrap { position: relative; }
+.sql-copy { position: absolute; top: 6px; right: 6px; z-index: 1; }
+.sql-block { margin: 0; padding: 10px 12px; overflow: auto; background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: 6px; font-size: 12px; line-height: 1.5; white-space: pre; }
+.sql-block .sql-k { color: var(--series-1); font-weight: 600; }
+.sql-block .sql-c { color: var(--text-3); font-style: italic; }
+.run-sql-q { border-top: 1px solid var(--border); padding: 10px 0; }
+.run-sql-q:first-of-type { border-top: 0; }
+.run-sql-head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; cursor: pointer; }
+.cause-box { border-left: 3px solid var(--st-crit); background: var(--st-crit-tint); color: var(--text-1); padding: 10px 12px; border-radius: 4px; }
+.unit-sql { margin-top: 8px; } .unit-sql > summary { cursor: pointer; margin-bottom: 6px; }
+/* a step's logic and SQL, opened inside the wide step table: stays in view while the table scrolls sideways */
+.step-logic { position: sticky; left: 0; display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px;
+  max-width: min(1100px, calc(100vw - 380px)); white-space: normal; }
+.sql-block .sql-s { color: var(--series-3); }
+.sql-note { margin-top: 4px; font-size: 11px; }

@@ -19,6 +19,8 @@ import { ErrClassChip } from '../components/ClusterTop';
 import { CauseBar, CauseHeadline, CauseLegend, causeOf, causeParts, type CauseKey } from '../components/CauseBar';
 import { WhatBroke, useTopFailure, type TopFailure } from '../components/WhatBroke';
 import { FlowPanel } from '../components/RunFlow';
+import { LogicChips } from '../components/QueryLogic';
+import { FailureCause, RunSqlPanel, useRunSql } from '../components/RunSql';
 
 const TOP = 5; // queries listed in "where the time went"
 const GB = 1024 ** 3;
@@ -60,6 +62,7 @@ export function RunOverview({ run }: { run: RunRow }) {
   const scope = useRunScopeCtx();
   const end = useAsync((s) => api.runEnd(cid, run.run_key, s), [cid, run.run_key]);
   const steps = useAsync((s) => api.runSteps(cid, run.run_key, s), [cid, run.run_key]);
+  const sql = useRunSql(cid, run.run_key);
   const fs = useAsync((s) => api.datasetOpt<FindingRow>(cid, 'findings', { limit: 500 }, s), [cid, run.run_key]);
   // executor findings about GC belong to the cluster: the executors are shared by every run, so they are on the
   // cluster's page, not counted as this run's problems. An executor lost or out of memory while the run went is kept.
@@ -97,6 +100,7 @@ export function RunOverview({ run }: { run: RunRow }) {
       <div className="stack">
         {/* first screen: what broke, the verdict, the numbers, the causes, the fixes, the steps. The rest is under "Details" */}
         <WhatBroke cid={cid} top={top.data} run={run.run_key} />
+        <FailureCause cid={cid} d={sql.data} />
         <div className="ro-hero">
           <section className="ro-hero-box">
             <span className={`ro-eyebrow ${run.status === 'failed' ? 'bad' : slowish ? 'warn' : ''}`}>{run.status === 'failed' ? 'Why it failed' : slowish ? 'Why it was slow' : 'Where the time went'}</span>
@@ -134,7 +138,9 @@ export function RunOverview({ run }: { run: RunRow }) {
         {a && <Fixes run={run} a={a} spill={spill} findings={findings} failure={top.data} hog={hog} />}
 
         {a && d && <TimeWent cid={cid} d={d} a={a} allSteps={allSteps} setAllSteps={setAllSteps} />}
-        {allSteps && <RunStepsPanel cid={cid} run={run.run_key} />}
+        {allSteps && <RunStepsPanel cid={cid} run={run.run_key} sql={sql.loading ? undefined : sql.data} />}
+
+        <RunSqlPanel cid={cid} d={sql.data} />
 
         <TablesRead cid={cid} scope={{ run: run.run_key }} />
         {/* one place for tables: what it read (above), and table by table what it read and wrote, folded */}
@@ -345,6 +351,7 @@ function TimeWent({ cid, d, a, allSteps, setAllSteps }: { cid: string; d: RunSte
                     <td style={{ whiteSpace: 'normal', minWidth: 220 }}>
                       {g.kind === 'query' && g.id !== null ? <Link to={to.query(cid, g.ctx, g.id)}><b>{gname(g)}</b></Link> : <b>{gname(g)}</b>}
                       {what ? <span className="muted"> · {truncate(what, 60)}</span> : null}
+                      <LogicChips l={g.logic} max={3} />
                     </td>
                     <td className="mono small">{fmtTime(g.start)}</td>
                     <td><WaitRanBar took={took(g)} wait={g.waiting_ms} ran={g.running_ms} max={maxT} /></td>

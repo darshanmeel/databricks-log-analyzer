@@ -47,6 +47,13 @@ FIX = {
                        "or use fewer, smaller workers for this job."),
 }
 
+#: a MERGE that failed because two source rows matched one target row
+DUP_SOURCE_FIX = ("Two or more source rows have the same MERGE keys. Make the source one row per key before the MERGE: "
+                  "row_number() OVER (PARTITION BY <the MERGE keys> ORDER BY <newest first>) = 1. rank() and "
+                  "dense_rank() keep every row tied for first, so a tie on the ORDER BY still leaves two rows; add a "
+                  "column unique per row (a Kafka offset and partition, an ingest id) to the ORDER BY. The run's "
+                  "overview names the query that deduplicated and how.")
+
 
 def stage_gc_ms(s: dict) -> float:
     """A stage's GC time over all its tasks (ms): its own sum, else the share times its task time."""
@@ -442,7 +449,8 @@ def _event_findings(cid: str, stages, executors, queries, rules: Rules, retries=
         if q["error"]:
             out.append(_f(cid, q["spark_context_id"], "high", "query_failed",
                           f"query {q['sql_execution_id']}: {(q['description'] or '')[:80]}", q["error"][:300],
-                          FIX["query_failed"], q["end_time"], sql_execution_id=q["sql_execution_id"]))
+                          DUP_SOURCE_FIX if "MULTIPLE_SOURCE_ROW_MATCHING" in q["error"] else FIX["query_failed"],
+                          q["end_time"], sql_execution_id=q["sql_execution_id"]))
     for g in gc_profile or []:
         full, pause, life = g.get("full_gcs") or 0, g.get("gc_pause_ms"), g.get("lifetime_ms")
         share = (pause / life) if pause and life else None

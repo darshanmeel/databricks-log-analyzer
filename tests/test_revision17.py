@@ -304,7 +304,7 @@ def test_stage_what_names_stages_by_what_they_do():
     from databricks_cluster_log_analyzer.api.queries import stage_what
     GB_ = 1 << 30
     assert stage_what(["Exchange", "Scan parquet my_catalog.sales.orders", "Filter"], {"input_bytes": 408 * GB_}) \
-        == "scan my_catalog.sales.orders, read 408 GiB"
+        == "scan my_catalog.sales.orders, filter, read 408 GiB"
     assert stage_what(["AQEShuffleRead", "Sort", "SortMergeJoin"], {"shuffle_read": 34 * GB_, "disk_spill": 67 * GB_}) \
         == "sort-merge join, shuffle read 34.0 GiB, spilled 67.0 GiB"
     assert stage_what(["WriteFiles", "AQEShuffleRead", "Sort"], {"output_bytes": 45 * GB_}) == "write 45.0 GiB"

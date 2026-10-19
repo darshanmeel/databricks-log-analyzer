@@ -5,11 +5,13 @@
 import { Fragment, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { RowsFlow } from './LevelSummary';
-import { api, type RunStepGroup, type RunStepStage, type RunSteps } from '../api';
+import { api, type RunSql, type RunStepGroup, type RunStepStage, type RunSteps } from '../api';
 import { useAsync } from '../hooks';
 import { fmtBytes, fmtDuration, fmtNum, fmtPct, fmtTime, truncate } from '../format';
 import { to } from '../links';
 import { Panel, StatusBadge } from './ui';
+import { hasLogic, LogicChips, QueryLogic, SqlBlock } from './QueryLogic';
+import { useRunSql } from './RunSql';
 import { SIGN } from './VCards';
 
 type Sort = 'order' | 'wait' | 'took' | 'read' | 'spill';
@@ -41,14 +43,18 @@ export function whatItDid(g: RunStepGroup): string {
   return bits.join(' · ');
 }
 
-export function RunStepsPanel({ cid, run }: { cid: string; run: string }) {
+export function RunStepsPanel({ cid, run, sql }: { cid: string; run: string; sql?: RunSql | null }) {
   const st = useAsync((s) => api.runSteps(cid, run, s), [cid, run]);
+  // the overview has the run's SQL already; on its own the panel loads it
+  const own = useRunSql(cid, sql === undefined ? run : null);
+  const data = sql === undefined ? own.data : sql;
+  const sqlOf = useMemo(() => new Map((data?.queries ?? []).map((q) => [`query:${q.ctx}:${q.id}`, q.sql])), [data]);
   if (st.loading && !st.data) return <div className="panel panel-body muted small">Loading the run step by step…</div>;
   if (st.error || !st.data || !st.data.groups.length || st.data.start === null || st.data.end === null) return null;
-  return <Steps cid={cid} d={st.data} />;
+  return <Steps cid={cid} d={st.data} sqlOf={sqlOf} />;
 }
 
-function Steps({ cid, d: data }: { cid: string; d: RunSteps }) {
+function Steps({ cid, d: data, sqlOf }: { cid: string; d: RunSteps; sqlOf: Map<string, string | null> }) {
   const [sort, setSort] = useState<Sort>('order');
   const key = (g: RunStepGroup) => `${g.kind}:${g.ctx}:${g.id}`;
   // the long ones open at first: they are where the time went
@@ -145,6 +151,7 @@ function Steps({ cid, d: data }: { cid: string; d: RunSteps }) {
                       {g.status && g.status !== 'succeeded' && g.status !== 'completed' ? <> <StatusBadge status={g.status} /></> : null}
                       {what && <span> · {what}</span>}
                       <div className="muted small">{truncate((g.description ?? '').replace(/\s+/g, ' '), 110)}</div>
+                      <LogicChips l={g.logic} max={4} />
                     </td>
                     <td className="mono small">{fmtTime(g.start)}</td>
                     <td className="num">{fmtDuration(took)}</td>
@@ -165,7 +172,15 @@ function Steps({ cid, d: data }: { cid: string; d: RunSteps }) {
                   </tr>
                   {isOpen && (
                     <tr className="stage-detail-row">
-                      <td colSpan={COLS}><StageTable cid={cid} g={g} /></td>
+                      <td colSpan={COLS}>
+                        {(hasLogic(g.logic) || sqlOf.get(key(g))) && (
+                          <div className="step-logic">
+                            <div>{hasLogic(g.logic) ? <QueryLogic l={g.logic} compact /> : <span className="muted small">No filter, window, group or join in its plan.</span>}</div>
+                            <div>{sqlOf.get(key(g)) ? <SqlBlock sql={sqlOf.get(key(g))!} maxHeight={300} /> : null}</div>
+                          </div>
+                        )}
+                        <StageTable cid={cid} g={g} />
+                      </td>
                     </tr>
                   )}
                 </Fragment>
